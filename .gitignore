@@ -1,0 +1,4 @@
+# where buildable objects are kept
+bin/*
+# ignore object files
+*.o
