@@ -84,14 +84,15 @@ all 3?
 
 | Type | Pros | Cons |
 | --- | --- | --- |
-| **Compiled** | | |
-| **Byte-code** | | |
-| **Interpreted** | | |
+| **Compiled** | Fastest code execution | Complex to implement garbage collection<br>Need to find a way to interface with other libraries (linking) |
+| **Byte-code** | Simplified Garbage collection<br>Platform independant (if runtime env is as well) | Needs to build both intermediate-compiler and runtime env |
+| **Interpreted** | Simplest way to leverage another language's features<br>Simplest way to implement syscalls (using another language)<br>Platform independant | SLOOOOWWWW<br>Least learning potential |
 
-### If code is ultimately compiled ###
+## Byte-Code ##
 
-- All objects contain a (hidden) field that indicates their type and size to be able to easily handle polymorphism.
-- Switch/case builds a jumping table?
+### Runtime env ###
+
+### Intermediate Representation ###
 
 ## Limitations ##
 
@@ -109,4 +110,4 @@ For now :
 - Private functions/methods and fields should be *camelCase*
 - Local scope variables should be *snake_case* (this includes lambda functions used in a local scope)
 
-*Indentation*: should be a single tab or 4 spaces. Compiler/interpreter ignores blank space. 
+*Indentation*: should be a single tab or 4 spaces. Compiler/interpreter ignores blank space.
