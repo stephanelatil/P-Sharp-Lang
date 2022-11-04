@@ -18,7 +18,7 @@
   - All objects must have an explicit to_string cast defined
 
 - C# features:
-  - Boolean type with it's own operators (`+` is equivalent to OR, `*` equivalent to AND, `-` equivalent to an implication (`A-B` is equivalent to A implies B, aka `(not A) or B`). Division is not defined). Note that boolean is the lowest 
+  - Boolean type with it's own operators (`+` is equivalent to OR, `*` equivalent to AND, `-` equivalent to an implication (`A-B` is equivalent to A implies B, aka `(not A) or B`). Division is not defined). Note that boolean is the lowest
   - with brackets
   - No Function definition keyword:
     - Example
@@ -54,8 +54,17 @@ A line or "statement" is terminated by a semicolon (like in C,C#...)
   - `float32`, `float64` (*Note:* The decimal included in c# will not be implemented here, and will be added as a library later)
   - `string`
 
-- **Other**
-  - `null` Not a type but a constant threadsafe readonly object kept in memory. It cannot be garbage collected. it has the value of 0 (Zero) and only access to its ToString method is allowed. All other attempts will lead to a NullPtrException
+- **NULL**
+  `null` Not a type but a constant threadsafe readonly object kept in memory. It is handled differently depending if ti is compiled in Release or Debug mode.
+  
+  In **Release** Mode:
+  - It cannot be garbage collected.
+  - It has the value of 0 (Zero)
+  - Only access to its ToString method or Equal operator is allowed, all other attempts will lead to a NullPtrException
+  In **Debug** Mode:
+  - It can be garbage collected
+  - Its value is line/col to where this null value was SET last. (Or linked list with last times Set? First element is the latest). This makes better error messages to help with nullptrexceptions.
+  - Only access to its ToString method or Equal operator is allowed, all other attempts will lead to a NullPtrException
 
 - **Control structures**
   - `for`
