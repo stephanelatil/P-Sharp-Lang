@@ -22,7 +22,6 @@ class PS_Lexer(RegexLexer):
             (r'if',Keyword.Control.If),
             (r'else',Keyword.Control.Else),
             (r'return',Keyword.Control.Return),
-            (r'when', Keyword.Control.When),
             (r'for',Keyword.Control.For),
             (r'while',Keyword.Control.While),
             (r'continue',Keyword.Control.Continue),
