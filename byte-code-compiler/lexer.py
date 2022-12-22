@@ -1,139 +1,330 @@
-from pygments.lexer import RegexLexer
-from pygments.token import *
-import pygments
+import ply.lex as lex
 
-class PS_Lexer(RegexLexer):
-    name = 'P_Sharp'
-    aliases = ['P#', 'PS']
-    filenames = ['*.psc']
-
-    _identifier = r'[_a-zA-Z]\w*'
-
-    tokens = {
-        'root': [
-            # Comments
-            (r'//.*$', Comment.Singleline),                             
-            (r'/[*]([^*]|([*][^/]))*[*]+/', Comment.Multiline),
-
-            # String
-            (r'\$?"(\\\\|\\[^\\]|[^"\\n])*["\n]', String),            
-            
-            # Keywords
-            (r'if',Keyword.Control.If),
-            (r'else',Keyword.Control.Else),
-            (r'return',Keyword.Control.Return),
-            (r'for',Keyword.Control.For),
-            (r'while',Keyword.Control.While),
-            (r'continue',Keyword.Control.Continue),
-            (r'break',Keyword.Control.Break),
-            (r'public', Keyword.Access.Public),
-            (r'private', Keyword.Access.Private),
-            (r'static', Keyword.Access.Static),
-            (r'const', Keyword.Access.Const),
-            (r'from', Keyword.Import.From),
-            (r'import', Keyword.Import.From),
-            (r'as', Keyword.Import.From),
-            (r'unsigned', Keyword.Type.Mod_Unsigned),
-            (r'ref', Keyword.Type.ArgRef),
-            (r'class', Keyword.Object.Class),
-            (r'enum', Keyword.Object.Enum),
-            (r'null', Keyword.Object.Null),
-            (r'and', Operator.Binary.Bool_And),
-            (r'or', Operator.Binary.Bool_Or),
-            (r'not', Operator.Unary.Not),
-            
-            # type
-            (r'void', Keyword.Type.Void),
-            (r'int_16', Keyword.Type.Int16),
-            (r'int_32', Keyword.Type.Int32),
-            (r'int_64', Keyword.Type.Int64),
-            (r'string', Keyword.Type.String),
-            (r'float_32', Keyword.Type.Float_32),
-            (r'float_64', Keyword.Type.Float_64),
-            (r'char', Keyword.Type.Char),
-            (r'bool', Keyword.Type.Boolean),
-            
-            # Numbers
-            (r"'(.|\\[\da-fA-F][\da-fA-F])'", Number.Char),
-            (r'0x[\da-fA-F_]+', Number.Hex),
-            (r'[1-9][\d_]*', Number.Int),
-            (r'0', Number.Int),
-            (r'(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+\-]?\d+)?', Number.Float),
-
-            # Punctuation
-            (r'\(', Punctuation.OpenParen),
-            (r'\)', Punctuation.CloseParen),
-            (r'\[', Punctuation.OpenBracket),
-            (r'\]', Punctuation.CloseBracket),
-            (r'{', Punctuation.OpenBrace),
-            (r'}', Punctuation.CloseBrace),
-
-            # Operators
-            (r'--', Operator.Unary.Dec),
-            (r'\+\+', Operator.Unary.Inc),
-            (r'==', Operator.Binary.Bool_Eq),
-            (r'!=', Operator.Binary.Bool_Neq),
-            (r'>=', Operator.Binary.Bool_Geq),
-            (r'<=', Operator.Binary.Bool_Leq),
-            (r'>', Operator.Binary.Bool_Gt),
-            (r'<', Operator.Binary.Bool_Lt),
-            (r':=', Operator.Binary.Copy),
-            (r'\+=', Operator.Binary.PlusEq),
-            (r'-=', Operator.Binary.MinusEq),
-            (r'\*=', Operator.Binary.TimesEq),
-            (r'/=', Operator.Binary.DivEq),
-            (r'&=', Operator.Binary.AndEq),
-            (r'\|=', Operator.Binary.OrEq),
-            (r'\^=', Operator.Binary.XorEq),
-            (r'<<=', Operator.Binary.ShlEq),
-            (r'>>=', Operator.Binary.ShrEq),
-            (r'=', Operator.Binary.Affectation),
-            (r'\+', Operator.Binary.Plus),
-            (r'-', Operator.Minus),
-            (r'\*', Operator.Binary.Times),
-            (r'/', Operator.Binary.Div),
-            (r'%', Operator.Binary.Mod),
-            (r'&', Operator.Binary.And),
-            (r'\|', Operator.Binary.Or),
-            (r'\^', Operator.Binary.Xor),
-            (r'<<', Operator.Binary.Shl),
-            (r'>>', Operator.Binary.Shr),
-            (r';', Punctuation.EoL),
-            (r'\?', Punctuation.TernaryConditional),
-            (r':', Punctuation.TernarySeparator),
-            (r'[^\S]+', Whitespace),
-
-            # Identifier
-            (r'[a-zA-Z_][a-zA-Z_\d]*', Name.ID),
-            (r'.', Error)
-        ]
+class PS_Lexer:
+    reserved = {
+        'if': 'Keyword_Control_If',
+        'else': 'Keyword_Control_Else',
+        'return': 'Keyword_Control_Return',
+        'for': 'Keyword_Control_For',
+        'while': 'Keyword_Control_While',
+        'continue': 'Keyword_Control_Continue',
+        'break': 'Keyword_Control_Break',
+        'public': 'Keyword_Access_Public',
+        'private': 'Keyword_Access_Private',
+        'static': 'Keyword_Access_Static',
+        'const': 'Keyword_Access_Const',
+        'from': 'Keyword_Import_From',
+        'import': 'Keyword_Import_Import',
+        'as': 'Keyword_Import_As',
+        'unsigned': 'Keyword_Type_Mod_Unsigned',
+        'ref': 'Keyword_Type_ArgRef',
+        'class': 'Keyword_Object_Class',
+        'enum': 'Keyword_Object_Enum',
+        'null': 'Keyword_Object_Null',
+        'and': 'Operator_Binary_Bool_And',
+        'or': 'Operator_Binary_Bool_Or',
+        'not': 'Operator_Unary_Not',
+        'void': 'Keyword_Type_Void',
+        'int_16': 'Keyword_Type_Int16',
+        'int_32': 'Keyword_Type_Int32',
+        'int_64': 'Keyword_Type_Int64',
+        'string': 'Keyword_Type_String',
+        'float_32': 'Keyword_Type_Float_32',
+        'float_64': 'Keyword_Type_Float_64',
+        'char': 'Keyword_Type_Char',
+        'bool': 'Keyword_Type_Boolean'
     }
 
-class Lexeme:
-    CurrLine = 1
-    CurrLineStartOffset = 0
+    tokens = [
+        'Comment_Singleline',
+        'Comment_Multiline',
+        'Literal_String',
+        'Number_Char',
+        'Number_Hex',
+        'Number_Int',
+        'Number_Int',
+        'Number_Float',
+        'Punctuation_OpenParen',
+        'Punctuation_CloseParen',
+        'Punctuation_OpenBracket',
+        'Punctuation_CloseBracket',
+        'Punctuation_OpenBrace',
+        'Punctuation_CloseBrace',
+        'Operator_Unary_Dec',
+        'Operator_Unary_Inc',
+        'Operator_Binary_Bool_Eq',
+        'Operator_Binary_Bool_Neq',
+        'Operator_Binary_Bool_Geq',
+        'Operator_Binary_Bool_Leq',
+        'Operator_Binary_Bool_Gt',
+        'Operator_Binary_Bool_Lt',
+        'Operator_Binary_Copy',
+        'Operator_Binary_PlusEq',
+        'Operator_Binary_MinusEq',
+        'Operator_Binary_TimesEq',
+        'Operator_Binary_DivEq',
+        'Operator_Binary_AndEq',
+        'Operator_Binary_OrEq',
+        'Operator_Binary_XorEq',
+        'Operator_Binary_ShlEq',
+        'Operator_Binary_ShrEq',
+        'Operator_Binary_Affectation',
+        'Operator_Binary_Plus',
+        'Operator_Minus',
+        'Operator_Binary_Times',
+        'Operator_Binary_Div',
+        'Operator_Binary_Mod',
+        'Operator_Binary_And',
+        'Operator_Binary_Or',
+        'Operator_Binary_Xor',
+        'Operator_Binary_Shl',
+        'Operator_Binary_Shr',
+        'Punctuation_EoL',
+        'Punctuation_TernaryConditional',
+        'Punctuation_TernarySeparator',
+        'Whitespace',
+        'ID',
+        'Error'
+    ] + list(reserved.values())
 
-    def __init__(self, unprocessed_token) -> None:
-        assert(len(unprocessed_token) == 3)
-        self.token_type = unprocessed_token[1]
-        self.value = unprocessed_token[2]
-        self.line_no = Lexeme.CurrLine
-        self.col = 1 + unprocessed_token[0] - Lexeme.CurrLineStartOffset
-        if '\n' in self.value:
-            Lexeme.CurrLine += self.value.count('\n')
-            Lexeme.CurrLineStartOffset = unprocessed_token[0] + self.value.rfind('\n') + 1
-    
-    def getLocStr(self):
-        return f"Line: {' '*(5-len(str(self.line_no)))}{self.line_no} column {' '*(5-len(str(self.col)))}{self.col}"
+    def __init__(self):
+        self.isBuilt = False
+        self.lexer = None
 
-    def __str__(self) -> str:
-        return f"Line: {self.line_no:02} col: {self.col:02} | {repr(self.value)}{' '*(20-len(repr(self.value)))}| {self.token_type}"
+    def t_Comment_Singleline(self,t):
+        r'//.*'
+        t.lexer.lineno += 1
+        pass
+        #Discard comment
 
-def lex(path:str):
-    tokens = []
-    for t in PS_Lexer().get_tokens_unprocessed(open(path, 'r').read()):
-        tokens.append(Lexeme(t))
-    return tokens
+    def t_Comment_Multiline(self,t):
+        r'/[*]([^*]|([*][^/]))*[*]+/'
+        t.lexer.lineno += t.value.count('\n')
+        pass
+        #Discard comment
 
-from sys import argv
-print('\n'.join([str(x) for x in lex(argv[1])]))
+    def t_Literal_String(self,t):
+        r'"((?:[^\n"\\]*|\\.)*)"'
+        return t
+
+    def t_Number_Char(self,t):
+        r"'(.|\\\[\da-fA-F][\da-fA-F])'" # single char or char hex escaped ex: '\00' for null char
+        length = 0
+        t.value = t.value.strip("'")
+        if len(t.value) == 1:
+            t.value = ord(t.value)
+        elif t.value[0] == '\\':
+            t.value = int(t.value[1:], 16)
+        if isinstance(t.value, str):
+            raise SyntaxError(f"Unable to parse char: {repr(t.value)}")
+            t.lexer.skip(length)
+            return
+        if t.value > 255 or t.value < 0:
+            raise SyntaxError("Invalid character, must have a value between 0 and 255 (inclusive)")
+        return t
+
+    def t_Number_Hex(self,t):
+        r'0x[\da-fA-F_]+'
+        t.value = int(t.value[2:],16)
+        return t
+
+    def t_Number_Int(self,t):
+        r'(0|[1-9][\d_]*)'
+        t.value = int(t.value.replace('_', ''))
+        return t
+
+    def t_Number_Float(self,t):
+        r'(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
+        t.value = float(t.value)
+        return t
+
+    def t_Punctuation_OpenParen(self,t):
+        r'\('
+        return t
+
+    def t_Punctuation_CloseParen(self,t):
+        r'\)'
+        return t
+
+    def t_Punctuation_OpenBracket(self,t):
+        r'\['
+        return t
+
+    def t_Punctuation_CloseBracket(self,t):
+        r'\]'
+        return t
+
+    def t_Punctuation_OpenBrace(self,t):
+        r'{'
+        return t
+
+    def t_Punctuation_CloseBrace(self,t):
+        r'}'
+        return t
+
+    def t_Operator_Unary_Dec(self,t):
+        r'--'
+        return t
+
+    def t_Operator_Unary_Inc(self,t):
+        r'\+\+'
+        return t
+
+    def t_Operator_Binary_Bool_Eq(self,t):
+        r'=='
+        return t
+
+    def t_Operator_Binary_Bool_Neq(self,t):
+        r'!='
+        return t
+
+    def t_Operator_Binary_Bool_Geq(self,t):
+        r'>='
+        return t
+
+    def t_Operator_Binary_Bool_Leq(self,t):
+        r'<='
+        return t
+
+    def t_Operator_Binary_Bool_Gt(self,t):
+        r'>'
+        return t
+
+    def t_Operator_Binary_Bool_Lt(self,t):
+        r'<'
+        return t
+
+    def t_Operator_Binary_Copy(self,t):
+        r':='
+        return t
+
+    def t_Operator_Binary_PlusEq(self,t):
+        r'\+='
+        return t
+
+    def t_Operator_Binary_MinusEq(self,t):
+        r'-='
+        return t
+
+    def t_Operator_Binary_TimesEq(self,t):
+        r'\*='
+        return t
+
+    def t_Operator_Binary_DivEq(self,t):
+        r'/='
+        return t
+
+    def t_Operator_Binary_AndEq(self,t):
+        r'&='
+        return t
+
+    def t_Operator_Binary_OrEq(self,t):
+        r'\|='
+        return t
+
+    def t_Operator_Binary_XorEq(self,t):
+        r'\^='
+        return t
+
+    def t_Operator_Binary_ShlEq(self,t):
+        r'<<='
+        return t
+
+    def t_Operator_Binary_ShrEq(self,t):
+        r'>>='
+        return t
+
+    def t_Operator_Binary_Affectation(self,t):
+        r'='
+        return t
+
+    def t_Operator_Binary_Plus(self,t):
+        r'\+'
+        return t
+
+    def t_Operator_Minus(self,t):
+        r'-'
+        return t
+
+    def t_Operator_Binary_Times(self,t):
+        r'\*'
+        return t
+
+    def t_Operator_Binary_Div(self,t):
+        r'/'
+        return t
+
+    def t_Operator_Binary_Mod(self,t):
+        r'%'
+        return t
+
+    def t_Operator_Binary_And(self,t):
+        r'&'
+        return t
+
+    def t_Operator_Binary_Or(self,t):
+        r'\|'
+        return t
+
+    def t_Operator_Binary_Xor(self,t):
+        r'\^'
+        return t
+
+    def t_Operator_Binary_Shl(self,t):
+        r'<<'
+        return t
+
+    def t_Operator_Binary_Shr(self,t):
+        r'>>'
+        return t
+
+    def t_Punctuation_EoL(self,t):
+        r';'
+        return t
+
+    def t_Punctuation_TernaryConditional(self,t):
+        r'\?'
+        return t
+
+    def t_Punctuation_TernarySeparator(self,t):
+        r':'
+        return t
+
+    def t_newline(self,t):
+        r'\n+'
+        t.lexer.lineno += len(t.value)
+
+    def t_Whitespace(self,t):
+        r'[^\S]+'
+        pass
+        #Discard whitespace
+
+    def t_ID(self,t):
+        r'[a-zA-Z_][a-zA-Z_\d]*'
+        t.type = self.reserved.get(t.value, 'ID')    # Check for reserved words
+        return t
+
+    def t_error(self,t):
+        line = str(t.lineno)
+        col = t.lexpos - input.rfind('\n', 0, t.lexpos)
+
+        raise SyntaxError(f"Illegal character '{t.value}' on Line "
+                        + f"{' '*(5-len(line))+line} and column {' '*(5-len(col))+col}")
+
+    def t_eof(self,t):
+        return None
+
+     # Build the lexer
+    def build(self,**kwargs):
+        self.isBuilt = True
+        self.lexer = lex.lex(module=self, **kwargs)
+
+    def lexCode(self, code):
+        if not self.isBuilt:
+            self.build()
+        self.lexer.input(code)
+        while True:
+            token = self.lexer.token()
+            if not token:
+                break
+            yield token
