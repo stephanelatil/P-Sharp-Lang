@@ -30,6 +30,9 @@ class PS_Lexer(RegexLexer):
             (r'private', Keyword.Access.Private),
             (r'static', Keyword.Access.Static),
             (r'const', Keyword.Access.Const),
+            (r'from', Keyword.Import.From),
+            (r'import', Keyword.Import.From),
+            (r'as', Keyword.Import.From),
             (r'unsigned', Keyword.Type.Mod_Unsigned),
             (r'ref', Keyword.Type.ArgRef),
             (r'class', Keyword.Object.Class),
@@ -119,6 +122,9 @@ class Lexeme:
         if '\n' in self.value:
             Lexeme.CurrLine += self.value.count('\n')
             Lexeme.CurrLineStartOffset = unprocessed_token[0] + self.value.rfind('\n') + 1
+    
+    def getLocStr(self):
+        return f"Line: {' '*(5-len(str(self.line_no)))}{self.line_no} column {' '*(5-len(str(self.col)))}{self.col}"
 
     def __str__(self) -> str:
         return f"Line: {self.line_no:02} col: {self.col:02} | {repr(self.value)}{' '*(20-len(repr(self.value)))}| {self.token_type}"
