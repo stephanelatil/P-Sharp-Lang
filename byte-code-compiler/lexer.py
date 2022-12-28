@@ -15,7 +15,7 @@ class PS_Lexer:
         'const': 'Keyword_Access_Const',
         'from': 'Keyword_Import_From',
         'import': 'Keyword_Import_Import',
-        'as': 'Keyword_Import_As',
+#        'as': 'Keyword_Import_As',
         'unsigned': 'Keyword_Type_Mod_Unsigned',
         'ref': 'Keyword_Type_ArgRef',
         'class': 'Keyword_Object_Class',
