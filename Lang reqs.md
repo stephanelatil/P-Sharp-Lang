@@ -16,12 +16,12 @@
     - `A is B`: A and B are pointers to the same object (Not the same as == which does an equality check). Cannot be overridden
     - `A and B / A or B / not A`: Boolean operator with short circuiting
   - All objects must have an explicit to_string cast defined
+  - Can have code directly run without a *main* function
+  - Some sort of `if __name__ == "__main__"` region definitions with preprocessor directives (`#module/#end` or `#main/#end`)
 
 - C# features:
   - Boolean type with it's own operators (`+` is equivalent to OR, `*` equivalent to AND, `-` equivalent to an implication (`A-B` is equivalent to A implies B, aka `(not A) or B`). Division is not defined). Note that boolean is the lowest
-  - with brackets
-  - No Function definition keyword:
-    - Example
+  - Brackets used for scope definition
   - strong & static typing
   - Setting a variable value returns the set value : `x = (y *= 2)` sets both x and y to the same value
   - bounds checking on arrays
@@ -31,6 +31,7 @@
   - implicit/explicit type casting
   - ternary operator : `condition ? action if true : action if false`
   - readonly keyword
+  - public/private keywords
 
 - Other features:
   - Implicit type conversion bool -> int8..64 -> float16..64 and unsigned -> signed.
@@ -46,6 +47,10 @@
 Scopes are defined by brackets `{}` (like in C, C#...)  
 A line or "statement" is terminated by a semicolon (like in C,C#...)
 
+### Comments ###
+
+Comments will keep the standard C format: `//` for single line comments and `/* */` for multiline comments
+
 ### Keywords ###
 
 - **Primitive Types** are considered to be special keywords like in C#, they are objects (thus nullable!) they include:
@@ -55,7 +60,7 @@ A line or "statement" is terminated by a semicolon (like in C,C#...)
   - `string`
 
 - **NULL**
-  `null` Not a type but a constant threadsafe readonly object kept in memory. It is handled differently depending if ti is compiled in Release or Debug mode.
+  `null` Not a type but a constant threadsafe readonly object kept in memory. It is handled differently depending if it is compiled in Release or Debug mode.
   
   In **Release** Mode:
   - It cannot be garbage collected.
