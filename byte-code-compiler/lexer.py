@@ -88,8 +88,8 @@ class PS_Lexer:
     ] + list(reserved.values())
 
     def __init__(self):
-        self.isBuilt = False
         self.lexer = None
+        self.build()
 
     def t_Comment_Singleline(self,t):
         r'//.*'
@@ -315,16 +315,21 @@ class PS_Lexer:
         return None
 
      # Build the lexer
-    def build(self,**kwargs):
-        self.isBuilt = True
+    def build(self, **kwargs):
         self.lexer = lex.lex(module=self, **kwargs)
 
     def lexCode(self, code):
-        if not self.isBuilt:
-            self.build()
         self.lexer.input(code)
         while True:
             token = self.lexer.token()
             if not token:
                 break
             yield token
+
+    def input(self, code , **kwargs):
+        self.lexer.input(code, **kwargs)
+
+    def token(self):
+        return self.lexer.token()
+
+tokens = PS_Lexer().tokens
