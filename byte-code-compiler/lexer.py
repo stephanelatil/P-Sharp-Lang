@@ -34,7 +34,8 @@ class PS_Lexer:
         'float_32': 'Keyword_Type_Float_32',
         'float_64': 'Keyword_Type_Float_64',
         'char': 'Keyword_Type_Char',
-        'bool': 'Keyword_Type_Boolean'
+        'bool': 'Keyword_Type_Boolean',
+#        'var': 'Keyword_Type_Autoassign'
     }
 
     tokens = [
@@ -43,7 +44,6 @@ class PS_Lexer:
         'Literal_String',
         'Number_Char',
         'Number_Hex',
-        'Number_Int',
         'Number_Int',
         'Number_Float',
         'Punctuation_OpenParen',
@@ -111,24 +111,21 @@ class PS_Lexer:
         return t
 
     def t_Number_Char(self,t):
-        r"'(.|\\\[\da-fA-F][\da-fA-F])'" # single char or char hex escaped ex: '\00' for null char
-        length = 0
+        r"'(.|\\x[\da-fA-F][\da-fA-F])'" # single char or char hex escaped ex: '\00' for null char
         t.value = t.value.strip("'")
         if len(t.value) == 1:
             t.value = ord(t.value)
-        elif t.value[0] == '\\':
+        elif t.value[:2] == '\\x':
             t.value = int(t.value[1:], 16)
         if isinstance(t.value, str):
             raise SyntaxError(f"Unable to parse char: {repr(t.value)}")
-            t.lexer.skip(length)
-            return
         if t.value > 255 or t.value < 0:
             raise SyntaxError("Invalid character, must have a value between 0 and 255 (inclusive)")
         return t
 
     def t_Number_Hex(self,t):
         r'0x[\da-fA-F_]+'
-        t.value = int(t.value[2:],16)
+        t.value = int(t.value[2:].replace('_', ''), 16)
         return t
 
     def t_Number_Int(self,t):
@@ -325,7 +322,7 @@ class PS_Lexer:
     def t_eof(self,t):
         return None
 
-     # Build the lexer
+    # Build the lexer
     def build(self, **kwargs):
         self.lexer = lex.lex(module=self, **kwargs)
 
