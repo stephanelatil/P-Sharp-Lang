@@ -21,6 +21,8 @@ class PS_Lexer:
         'class': 'Keyword_Object_Class',
         'enum': 'Keyword_Object_Enum',
         'null': 'Keyword_Object_Null',
+        'true': 'Keyword_Object_True',
+        'false': 'Keyword_Object_False',
         'and': 'Operator_Binary_Bool_And',
         'or': 'Operator_Binary_Bool_Or',
         'not': 'Operator_Unary_Not',
