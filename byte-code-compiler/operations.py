@@ -11,7 +11,11 @@ class BinaryOperation(Enum):
     LOGIC_AND = "&"
     LOGIC_OR = "|"
     LOGIC_XOR = "^"
+    SHIFT_LEFT = "<<"
+    SHIFT_RIGHT = ">>"
 
 class UnaryOperation(Enum):
     MINUS = '-'
     LOGIC_NOT = "!"
+    INCREMENT = "++"
+    DECRMENT = "--"
