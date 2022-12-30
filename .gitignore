@@ -5,3 +5,6 @@ bin/*
 
 #ignore python cache bytecode
 *.pyc
+
+#ignore output from yacc.py
+*.out
