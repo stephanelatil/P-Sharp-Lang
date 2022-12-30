@@ -19,7 +19,7 @@ class PS_Lexer:
         'unsigned': 'Keyword_Type_Mod_Unsigned',
 #        'ref': 'Keyword_Type_ArgRef',        # Will be implemented later
         'class': 'Keyword_Object_Class',
-        'enum': 'Keyword_Object_Enum',
+#        'enum': 'Keyword_Object_Enum',       # Will be implemented later
         'null': 'Keyword_Object_Null',
         'true': 'Keyword_Object_True',
         'false': 'Keyword_Object_False',
