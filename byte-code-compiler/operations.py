@@ -18,4 +18,4 @@ class UnaryOperation(Enum):
     MINUS = '-'
     LOGIC_NOT = "!"
     INCREMENT = "++"
-    DECRMENT = "--"
+    DECREMENT = "--"
