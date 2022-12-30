@@ -85,8 +85,7 @@ class PS_Lexer:
         'Punctuation_TernaryConditional',
         'Punctuation_TernarySeparator',
         'Whitespace',
-        'ID',
-        'Error'
+        'ID'
     ] + list(reserved.values())
 
     def __init__(self):
