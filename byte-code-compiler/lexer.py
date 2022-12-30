@@ -50,6 +50,7 @@ class PS_Lexer:
         'Punctuation_CloseBracket',
         'Punctuation_OpenBrace',
         'Punctuation_CloseBrace',
+        'Punctuation_Comma',
         'Operator_Unary_Dec',
         'Operator_Unary_Inc',
         'Operator_Binary_Bool_Eq',
@@ -79,6 +80,7 @@ class PS_Lexer:
         'Operator_Binary_Xor',
         'Operator_Binary_Shl',
         'Operator_Binary_Shr',
+        'Operator_Dot',
         'Punctuation_EoL',
         'Punctuation_TernaryConditional',
         'Punctuation_TernarySeparator',
@@ -288,6 +290,14 @@ class PS_Lexer:
 
     def t_Punctuation_TernarySeparator(self,t):
         r':'
+        return t
+
+    def t_Punctuation_Comma(self, t):
+        r','
+        return t
+
+    def t_Operator_Dot(self, t):
+        r'\.'
         return t
 
     def t_newline(self,t):
