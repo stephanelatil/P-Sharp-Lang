@@ -9,15 +9,15 @@ class PS_Lexer:
         'while': 'Keyword_Control_While',
         'continue': 'Keyword_Control_Continue',
         'break': 'Keyword_Control_Break',
-        'public': 'Keyword_Access_Public',
-        'private': 'Keyword_Access_Private',
-        'static': 'Keyword_Access_Static',
-        'const': 'Keyword_Access_Const',
-        'from': 'Keyword_Import_From',
-        'import': 'Keyword_Import_Import',
+#        'public': 'Keyword_Access_Public',   # Will be implemented later
+#        'private': 'Keyword_Access_Private', # Will be implemented later
+#        'static': 'Keyword_Access_Static',   # Will be implemented later
+#        'const': 'Keyword_Access_Const',     # Will be added later when declare+define can be donc on a single line
+#        'from': 'Keyword_Import_From',       # Will be implemented later
+#        'import': 'Keyword_Import_Import',   # Will be implemented later
 #        'as': 'Keyword_Import_As',
         'unsigned': 'Keyword_Type_Mod_Unsigned',
-        'ref': 'Keyword_Type_ArgRef',
+#        'ref': 'Keyword_Type_ArgRef',        # Will be implemented later
         'class': 'Keyword_Object_Class',
         'enum': 'Keyword_Object_Enum',
         'null': 'Keyword_Object_Null',
