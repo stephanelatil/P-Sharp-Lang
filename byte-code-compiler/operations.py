@@ -14,8 +14,15 @@ class BinaryOperation(Enum):
     SHIFT_LEFT = "<<"
     SHIFT_RIGHT = ">>"
 
+    def __repr__(self):
+        return "BinaryOperation."+self.name
+
 class UnaryOperation(Enum):
     MINUS = '-'
     LOGIC_NOT = "!"
     INCREMENT = "++"
     DECREMENT = "--"
+
+    def __repr__(self):
+        return "UnaryOperation."+self.name
+    
