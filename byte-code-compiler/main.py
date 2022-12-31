@@ -36,7 +36,7 @@ if args.print_tokens:
     l = PS_Lexer()
     print("Printing tokens:")
     for tok in l.lexCode(code):
-        print('\t'+tok, flush=False)
+        print('\t'+str(tok), flush=False)
     print('\n', flush=True)
 
 if args.print_reconstructed_code:
