@@ -18,9 +18,9 @@ def parse_args():
                         help="Prints the code reconstructed from the token list (Removes white space and comments)")
     args.add_argument("--print-ast", required=False, default=False, action='store_true', dest='print_ast',
                         help="Prints the abstract syntax tree on a single line")
-    args.add_argument('-C','--compile-to', required=False, choices=['L', 'P', 'T', 'R', 'E', 'L', 'B'],dest='stage',
+    args.add_argument('-C','--compile-to', required=False, choices=['L', 'P', 'T', 'R', 'E', 'L', 'B'], dest='stage', default='B',
                       help="Compiles until the given stage: L=Lexer, P=Parser, T=Typing, R=RTL, E=ERTL, L=LTL, B=ByteCode (default)")
-    args.add_argument("filepath", metavar='FILE', required=True, help="The code file to pass to the compiler")
+    args.add_argument("filepath", metavar='FILE', help="The code file to pass to the compiler")
 
     return args.parse_args()
 
