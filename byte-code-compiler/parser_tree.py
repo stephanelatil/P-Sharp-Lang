@@ -13,8 +13,8 @@ class Location:
         self.col = str(col)
 
     def __str__(self) -> str:
-        return f"Line {' '*(5-len(self.line))+self.line} " +\
-            f"and column {' '*(5-len(self.col))+self.col}"
+        return f"Line {self.line} " +\
+            f"and column {self.col}"
 
     def __repr__(self) -> str:
         return '"'+str(self)+'"'
@@ -269,15 +269,13 @@ precedence = (
         'Operator_Binary_AndEq', 'Operator_Binary_OrEq',
         'Operator_Binary_XorEq', 'Operator_Binary_ShlEq',
         'Operator_Binary_ShrEq'),
-    ('left', 'Operator_Binary_Mod', 'Operator_Binary_And',
-        'Operator_Binary_Or', 'Operator_Binary_Xor', 'Operator_Binary_Shl',
+    ('right', 'Operator_Binary_Mod', 'Operator_Binary_And',
+        'Operator_Binary_Or'),
+    ('left', 'Operator_Binary_Xor', 'Operator_Binary_Shl',
      'Operator_Binary_Shr'),
     ('left', 'Operator_Binary_Plus', 'Operator_Minus'),
     ('left', 'Operator_Binary_Times', 'Operator_Binary_Div'),
-    ('right', 'UMINUS'),            # Unary minus operator
-    ('right', 'UNOT'),            # Unary not operator
-    ('right', 'UDEC'),            # Unary dec operator
-    ('right', 'UINC')            # Unary inc operator
+    ('right', 'UNOP'),           # Unary operator precedence
 )
 
 start = 'Module'
@@ -292,7 +290,6 @@ def p_statement(p: YaccProduction):
     """Statement : VarDecl
                  | VarAssign
                  | FuncDecl
-                 | FuncCall
                  | IfBloc
                  | ForBloc
                  | WhileBloc
@@ -300,6 +297,7 @@ def p_statement(p: YaccProduction):
                  | Return
                  | Break
                  | Continue
+                 | Expr
                  | ignore"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     if p[1] is None:
@@ -392,20 +390,32 @@ def p_type(p: YaccProduction):
             | Keyword_Type_Float_32
             | Keyword_Type_Float_64
             | Keyword_Type_Char
-            | Keyword_Type_Boolean
-            | ID"""
+            | Keyword_Type_Boolean"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PType(loc, p[1])
 
 
 def p_var_declaration(p: YaccProduction):
+    """VarDecl : Ident Ident Punctuation_EoL"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
+    typ = PType(loc, p[1].identifier)
+    p[0] = PVarDecl(loc, p[1], PIdentifier(loc2,p[2]))
+    
+def p_var_declaration_2(p: YaccProduction):
     """VarDecl : Type ID Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = PVarDecl(loc, p[1], PIdentifier(loc2,p[2]))
 
 def p_var_declaration_and_assignment(p:YaccProduction):
-    """VarDecl : Type ID Operator_Binary_Affectation Expr Punctuation_EoL"""
+    """VarDecl : Ident Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
+    p[0] = PAssign(loc, PVarDecl(loc, PType(loc, p[1].identifier),PIdentifier(loc2,p[2])), p[4])
+
+def p_var_declaration_and_assignment_2(p:YaccProduction):
+    """VarDecl : Type Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = PAssign(loc, PVarDecl(loc, p[1],PIdentifier(loc2,p[2])), p[4])
@@ -436,13 +446,13 @@ def p_return_value(p: YaccProduction):
 
 
 def p_var_assignment(p: YaccProduction):
-    """VarAssign : Var Operator_Binary_Affectation Expr Punctuation_EoL"""
+    """VarAssign : Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PAssign(loc, p[1], p[3])
 
 
 def p_expr(p: YaccProduction):
-    """Expr : Var
+    """Expr : Ident
             | Number
             | ArrayLiteral
             | ArrayIndex
@@ -474,9 +484,7 @@ def p_expr_list(p: YaccProduction):
 
 
 def p_index(p: YaccProduction):
-    """ArrayIndex : Var Punctuation_OpenBracket Expr Punctuation_CloseBracket
-                  | Expr Punctuation_OpenBracket Expr Punctuation_CloseBracket
-                  | ArrayLiteral Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
+    """ArrayIndex : Expr Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PIndex(loc, p[1], p[3])
 
@@ -504,18 +512,25 @@ def p_binop(p: YaccProduction):
     p[0] = PBinOp(loc, p[1], BinaryOperation(p[2]), p[3])
 
 
+def p_paren(p: YaccProduction):
+    """Expr : Punctuation_OpenParen Expr Punctuation_CloseParen"""
+    p[0] = p[1]
+
+
 def p_UnOp(p: YaccProduction):
-    '''Expr : Operator_Minus Expr %prec UMINUS
-            | Operator_Unary_Not Expr %prec UNOT
-            | Operator_Unary_Dec Expr %prec UDEC
-            | Operator_Unary_Inc Expr %prec UINC'''
+    '''Expr : Operator_Minus Expr
+            | Operator_Unary_Not Expr %prec UNOP'''
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PUnOp(loc, UnaryOperation(p[1]), p[2])
 
 
-def p_paren(p: YaccProduction):
-    """Expr : Punctuation_OpenParen Expr Punctuation_CloseParen"""
-    p[0] = p[1]
+def p_UnOp_IncDec(p: YaccProduction):
+    '''Expr : Ident Operator_Unary_Dec %prec UNOP
+            | Ident Operator_Unary_Inc %prec UNOP
+            | ArrayIndex Operator_Unary_Dec %prec UNOP
+            | ArrayIndex Operator_Unary_Inc %prec UNOP'''
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PUnOp(loc, UnaryOperation(p[2]), p[1])
 
 
 def p_ignore(p: YaccProduction):
@@ -528,22 +543,32 @@ def p_ignore(p: YaccProduction):
 
 
 def p_binop_assign(p: YaccProduction):
-    """ VarAssign : Var Operator_Binary_MinusEq Expr
-                  | Var Operator_Binary_PlusEq Expr
-                  | Var Operator_Binary_TimesEq Expr
-                  | Var Operator_Binary_DivEq Expr
-                  | Var Operator_Binary_AndEq Expr
-                  | Var Operator_Binary_OrEq Expr
-                  | Var Operator_Binary_XorEq Expr
-                  | Var Operator_Binary_ShlEq Expr
-                  | Var Operator_Binary_ShrEq Expr"""
+    """ VarAssign : Ident Operator_Binary_MinusEq Expr
+                  | Ident Operator_Binary_PlusEq Expr
+                  | Ident Operator_Binary_TimesEq Expr
+                  | Ident Operator_Binary_DivEq Expr
+                  | Ident Operator_Binary_AndEq Expr
+                  | Ident Operator_Binary_OrEq Expr
+                  | Ident Operator_Binary_XorEq Expr
+                  | Ident Operator_Binary_ShlEq Expr
+                  | Ident Operator_Binary_ShrEq Expr
+                  | ArrayIndex Operator_Binary_MinusEq Expr
+                  | ArrayIndex Operator_Binary_PlusEq Expr
+                  | ArrayIndex Operator_Binary_TimesEq Expr
+                  | ArrayIndex Operator_Binary_DivEq Expr
+                  | ArrayIndex Operator_Binary_AndEq Expr
+                  | ArrayIndex Operator_Binary_OrEq Expr
+                  | ArrayIndex Operator_Binary_XorEq Expr
+                  | ArrayIndex Operator_Binary_ShlEq Expr
+                  | ArrayIndex Operator_Binary_ShrEq Expr"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PAssign(loc, p[1], PBinOp(
         loc, p[1], BinaryOperation(p[2].strip('=')), p[3]))
 
 
 def p_copy_assign(p: YaccProduction):
-    """VarAssign : Var Operator_Binary_Copy Expr Punctuation_EoL"""
+    """VarAssign : Ident Operator_Binary_Copy Expr Punctuation_EoL
+                 | ArrayIndex Operator_Binary_Copy Expr Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PCopyAssign(loc, p[1], p[3])
 
@@ -555,7 +580,7 @@ def p_array_literal(p: YaccProduction):
 
 
 def p_call(p: YaccProduction):
-    """FuncCall : ID Punctuation_OpenParen ExprList Punctuation_CloseParen"""
+    """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PCall(loc, p[1], p[3])
 
@@ -583,17 +608,29 @@ def p_typed_args_none(p: YaccProduction):
     p[0] = []
 
 def p_typed_args_single(p: YaccProduction):
-    """TypedArgs : Type ID"""
+    """TypedArgs : Type Ident"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = [PVarDecl(loc, p[1], PIdentifier(loc2, p[2]))]
+    
+def p_typed_args_single_2(p: YaccProduction):
+    """TypedArgs : Ident Ident"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
+    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier), PIdentifier(loc2, p[2]))]
 
 def p_typed_args_multiple(p: YaccProduction):
-    """TypedArgs : Type ID Punctuation_Comma TypedArgs"""
+    """TypedArgs : Type Ident Punctuation_Comma TypedArgs"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = [PVarDecl(loc, p[1], PIdentifier(loc2, p[2]))] + deepcopy(p[4])
 
+def p_typed_args_multiple_2(p: YaccProduction):
+    """TypedArgs : Ident Ident Punctuation_Comma TypedArgs"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
+    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier),
+                     PIdentifier(loc2, p[2]))] + deepcopy(p[4])
 
 def p_func_declaration(p: YaccProduction):
     """FuncDecl : Type ID Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
@@ -601,6 +638,12 @@ def p_func_declaration(p: YaccProduction):
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = PFuncDecl(loc, p[1], PIdentifier(loc2,p[2]), p[4], p[7])
 
+def p_func_declaration_2(p: YaccProduction):
+    """FuncDecl : Ident ID Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
+    p[0] = PFuncDecl(loc, PType(loc, p[1].identifier),
+                     PIdentifier(loc2, p[2]), p[4], p[7])
 
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class ID Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
@@ -608,7 +651,7 @@ def p_class_declaration(p: YaccProduction):
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = PClassDecl(loc, PIdentifier(loc2,p[2]), p[4])
 
-# For
+# For extension / implementing interfaces
 # def p_class_declaration(p:YaccProduction):
 #     """ClassDecl : Keyword_Object_Class ID Punctuation_OpenParen ID Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
 #     loc = Location(p.lineno(1), p.lexspan(1)[0])
@@ -628,7 +671,7 @@ def p_if_else(p: YaccProduction):
 
 
 def p_for(p: YaccProduction):
-    """ForBloc : Keyword_Control_For Punctuation_OpenParen Statement Statement Statement Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    """ForBloc : Keyword_Control_For Punctuation_OpenParen VarDecl Expr Statement Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PFor(loc, p[3], p[4], p[5], p[8])
 
@@ -650,14 +693,17 @@ def p_assert(p: YaccProduction):
     p[0] = PAssert(loc, p[3])
 
 def p_var(p: YaccProduction):
-    """Var : ID"""
+    """Ident : ID"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PIdentifier(loc, p[1])
 
 
 def p_dot(p: YaccProduction):
-    """Var : Var Operator_Dot Var"""
+    """Ident : Ident Operator_Dot Ident"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
+    if isinstance(p[3], PDot):
+        p[1] = PDot(p[3].location, p[1], p[3].left)
+        p[3] = p[3].rvalue
     p[0] = PDot(loc, p[1], p[3])
 
 
