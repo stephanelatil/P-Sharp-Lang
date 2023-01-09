@@ -1,4 +1,5 @@
 import ply.lex as lex
+from ply.yacc import NullLogger
 
 class PS_Lexer:
     reserved = {
@@ -329,7 +330,7 @@ class PS_Lexer:
 
     # Build the lexer
     def build(self, **kwargs):
-        self.lexer = lex.lex(module=self, **kwargs)
+        self.lexer = lex.lex(module=self, errorlog=NullLogger(), **kwargs)
 
     def lexCode(self, code):
         self.lexer.input(code)
