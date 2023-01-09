@@ -95,6 +95,8 @@ class PS_Lexer:
 
     def __init__(self):
         self.lexer = None
+        self.lineno = 0
+        self.lexpos = 0
         self.build()
 
     def t_Comment_Singleline(self,t):
@@ -341,6 +343,8 @@ class PS_Lexer:
         self.lexer.input(code, **kwargs)
 
     def token(self):
+        self.lexpos = self.lexer.lexpos
+        self.lineno = self.lexer.lineno
         return self.lexer.token()
 
 tokens = PS_Lexer().tokens

@@ -87,13 +87,8 @@ class PEnum(PScope):
         self.enum_values = values
         super().__init__(statements=values)
 
-
-class PVarDecl(PTreeElem):
-    def __init__(self, location, typ: PType, id: PIdentifier):
-        self.typ = typ
-        self.id = id
-        super().__init__(location)
-
+class PVarDecl:
+    pass
 
 class PFuncDecl(PTreeElem):
     def __init__(self, location, returnType: PType, id: PIdentifier, args: list[PVarDecl], body: PScope):
@@ -105,8 +100,8 @@ class PFuncDecl(PTreeElem):
 
 
 class PlValue(PExpression):
-    def __init__(self, location, rvalue):
-        super().__init__(location, rvalue)
+    def __init__(self, location, lvalue):
+        super().__init__(location, lvalue)
 
 
 class PType(PTreeElem):
@@ -144,6 +139,13 @@ class PDot(PlValue):
         self.left = left
         super().__init__(location, rvalue=right)
 
+
+class PVarDecl(PlValue):
+    def __init__(self, location, typ: PType, id: PIdentifier):
+        self.typ = typ
+        self.id = id
+        super().__init__(location, id)
+        
 
 class PBinOp(PExpression):
     def __init__(self, location, left: PExpression, op: BinaryOperation, right: PExpression):
@@ -346,7 +348,12 @@ def p_all_statements_addSClassDecl(p: YaccProduction):
 def p_bloc_single(p: YaccProduction):
     """StatementList : Statement"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PScope(loc, functions=[], varDecl=[], statements=[p[1]])
+    if isinstance(p[1], PVarDecl):
+        p[0] = PScope(loc, functions=[], varDecl=[p[1]], statements=[])
+    elif isinstance(p[1], PFuncDecl):
+        p[0] = PScope(loc, functions=[p[1]], varDecl=[], statements=[])
+    else:
+        p[0] = PScope(loc, functions=[], varDecl=[], statements=[p[1]])
 
 
 def p_bloc_list(p: YaccProduction):
@@ -355,7 +362,7 @@ def p_bloc_list(p: YaccProduction):
     if isinstance(p[1], PVarDecl):
         p[0] = PScope(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
             p[2].varDecl), statements=deepcopy(p[2].statements))
-    elif isinstance(p[1], PVarDecl):
+    elif isinstance(p[1], PFuncDecl):
         p[0] = PScope(loc, functions=[p[1]]+deepcopy(p[2].funcDecl), varDecl=deepcopy(
             p[2].varDecl), statements=deepcopy(p[2].statements))
     else:
@@ -591,13 +598,15 @@ def p_typed_args_multiple(p: YaccProduction):
 def p_func_declaration(p: YaccProduction):
     """FuncDecl : Type ID Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PFuncDecl(loc, p[1], p[2], p[4], p[7])
+    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
+    p[0] = PFuncDecl(loc, p[1], PIdentifier(loc2,p[2]), p[4], p[7])
 
 
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class ID Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PClassDecl(loc, p[2], p[4])
+    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
+    p[0] = PClassDecl(loc, PIdentifier(loc2,p[2]), p[4])
 
 # For
 # def p_class_declaration(p:YaccProduction):
