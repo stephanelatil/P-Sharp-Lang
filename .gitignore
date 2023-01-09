@@ -8,3 +8,6 @@ bin/*
 
 #ignore output from yacc.py
 *.out
+
+#ignores vscode files
+.vscode
