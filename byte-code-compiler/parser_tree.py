@@ -180,12 +180,15 @@ class PSkip(PStatement):
         super().__init__(location)
         # do nothing empty block
 
-
 class PReturn(PStatement):
     def __init__(self, location, returnVal: PExpression):
         self.returnVal = returnVal
         super().__init__(location)
 
+class PAssert(PStatement):
+    def __init__(self, location, assertExpr: PExpression):
+        self.assertExpr = assertExpr
+        super().__init__(location)
 
 class PString(PExpression):
     def __init__(self, location, value: str):
@@ -633,6 +636,10 @@ def p_while(p: YaccProduction):
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PWhile(loc, p[3], p[6])
 
+def p_assert(p: YaccProduction):
+    """Statement : Keyword_Control_Assert Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_EoL"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PAssert(loc, p[3])
 
 def p_var(p: YaccProduction):
     """Var : ID"""
