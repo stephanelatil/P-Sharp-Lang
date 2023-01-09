@@ -31,7 +31,7 @@ class PTreeElem:
 
 
 class PIdentifier(PTreeElem):
-    def __init__(self, location, identifier):
+    def __init__(self, location, identifier:str):
         self.identifier = identifier
         super().__init__(location)
 
@@ -408,7 +408,7 @@ def p_var_declaration_and_assignment(p:YaccProduction):
     """VarDecl : Type ID Operator_Binary_Affectation Expr Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = PAssign(loc, PVarDecl(p[1],PIdentifier(loc2,p[2])), p[4])
+    p[0] = PAssign(loc, PVarDecl(loc, p[1],PIdentifier(loc2,p[2])), p[4])
 
 
 def p_break(p: YaccProduction):
