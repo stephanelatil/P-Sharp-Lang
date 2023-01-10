@@ -236,6 +236,11 @@ class PFor(PStatement):
         self.postExpr = postExpr
         self.bloc = bloc
         super().__init__(location)
+        
+class PCast(PExpression):
+    def __init__(self, location, cast_to:PType, rvalue:PExpression):
+        self.cast_to = cast_to
+        super().__init__(location, rvalue)
 
 
 class PForeach(PStatement):
@@ -402,32 +407,41 @@ def p_type(p: YaccProduction):
             | Keyword_Type_Boolean"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PType(loc, p[1])
+    
+    
+def p_cast(p:YaccProduction):
+    """Expr : Punctuation_OpenParen Type Punctuation_CloseParen Expr"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PCast(loc, p[2], p[4])
+    
+    
+def p_cast_2(p:YaccProduction):
+    """Expr : Punctuation_OpenParen Ident Punctuation_CloseParen Expr"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    typ = PType(loc, p[2].identifier)
+    p[0] = PCast(loc, typ, p[4])
 
 
 def p_var_declaration(p: YaccProduction):
     """VarDecl : Ident Ident Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     typ = PType(loc, p[1].identifier)
-    p[0] = PVarDecl(loc, p[1], PIdentifier(loc2,p[2]))
+    p[0] = PVarDecl(loc, p[1], p[2])
     
 def p_var_declaration_2(p: YaccProduction):
     """VarDecl : Type Ident Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = PVarDecl(loc, p[1], PIdentifier(loc2,p[2]))
+    p[0] = PVarDecl(loc, p[1], p[2])
 
 def p_var_declaration_and_assignment(p:YaccProduction):
     """VarDecl : Ident Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = PAssign(loc, PVarDecl(loc, PType(loc, p[1].identifier),PIdentifier(loc2,p[2])), p[4])
+    p[0] = PAssign(loc, PVarDecl(loc, PType(loc, p[1].identifier),p[2]), p[4])
 
 def p_var_declaration_and_assignment_2(p:YaccProduction):
     """VarDecl : Type Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = PAssign(loc, PVarDecl(loc, p[1],PIdentifier(loc2,p[2])), p[4])
+    p[0] = PAssign(loc, PVarDecl(loc, p[1],p[2]), p[4])
 
 
 def p_break(p: YaccProduction):
@@ -498,26 +512,26 @@ def p_index(p: YaccProduction):
     p[0] = PIndex(loc, p[1], p[3])
 
 
-def P_new_array(p: YaccProduction):
+def p_new_array(p: YaccProduction):
     """Expr : Keyword_Object_New Ident Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PNewArray(loc, PType(p[2].location, p[2].identifier), p[4])
 
 
-def P_new_array_2(p: YaccProduction):
-    """Expr : Keyword_Object_New Typ Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
+def p_new_array_2(p: YaccProduction):
+    """Expr : Keyword_Object_New Type Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PNewArray(loc, p[2], p[4])
 
 
-def P_new_obj(p: YaccProduction):
+def p_new_obj(p: YaccProduction):
     """Expr : Keyword_Object_New Ident Punctuation_OpenParen ExprList Punctuation_CloseParen"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier), p[4])
 
 
-def P_new_obj_2(p: YaccProduction):
-    """Expr : Keyword_Object_New Typ Punctuation_OpenParen ExprList Punctuation_CloseParen"""
+def p_new_obj_2(p: YaccProduction):
+    """Expr : Keyword_Object_New Type Punctuation_OpenParen ExprList Punctuation_CloseParen"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PNewObj(loc, p[2], p[4])
 
@@ -643,50 +657,42 @@ def p_typed_args_none(p: YaccProduction):
 def p_typed_args_single(p: YaccProduction):
     """TypedArgs : Type Ident"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = [PVarDecl(loc, p[1], PIdentifier(loc2, p[2]))]
+    p[0] = [PVarDecl(loc, p[1], p[2])]
     
 def p_typed_args_single_2(p: YaccProduction):
     """TypedArgs : Ident Ident"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier), PIdentifier(loc2, p[2]))]
+    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier), p[2])]
 
 def p_typed_args_multiple(p: YaccProduction):
     """TypedArgs : Type Ident Punctuation_Comma TypedArgs"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = [PVarDecl(loc, p[1], PIdentifier(loc2, p[2]))] + deepcopy(p[4])
+    p[0] = [PVarDecl(loc, p[1], p[2])] + deepcopy(p[4])
 
 def p_typed_args_multiple_2(p: YaccProduction):
     """TypedArgs : Ident Ident Punctuation_Comma TypedArgs"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier),
-                     PIdentifier(loc2, p[2]))] + deepcopy(p[4])
+    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier),p[2])] + deepcopy(p[4])
 
 def p_func_declaration(p: YaccProduction):
-    """FuncDecl : Type ID Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    """FuncDecl : Type Ident Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = PFuncDecl(loc, p[1], PIdentifier(loc2,p[2]), p[4], p[7])
+    p[0] = PFuncDecl(loc, p[1], p[2], p[4], p[7])
 
 def p_func_declaration_2(p: YaccProduction):
-    """FuncDecl : Ident ID Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    """FuncDecl : Ident Ident Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = PFuncDecl(loc, PType(loc, p[1].identifier),
-                     PIdentifier(loc2, p[2]), p[4], p[7])
+                     p[2], p[4], p[7])
 
 def p_class_declaration(p: YaccProduction):
-    """ClassDecl : Keyword_Object_Class ID Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    loc2 = Location(p.lineno(2), p.lexspan(2)[0])
-    p[0] = PClassDecl(loc, PIdentifier(loc2,p[2]), p[4])
+    p[0] = PClassDecl(loc, p[2], p[4])
 
 # For extension / implementing interfaces
 # def p_class_declaration(p:YaccProduction):
-#     """ClassDecl : Keyword_Object_Class ID Punctuation_OpenParen ID Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+#     """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenParen Ident Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
 #     loc = Location(p.lineno(1), p.lexspan(1)[0])
 #     p[0] = PClassDecl(loc, p[1], p[2], p[4], p[7])
 
