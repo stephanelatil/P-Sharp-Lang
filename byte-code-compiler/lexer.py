@@ -27,6 +27,7 @@ class PS_Lexer:
         'null': 'Keyword_Object_Null',
         'true': 'Keyword_Object_True',
         'false': 'Keyword_Object_False',
+        'new': 'Keyword_Object_New',
         'and': 'Operator_Binary_Bool_And',
         'or': 'Operator_Binary_Bool_Or',
         'not': 'Operator_Unary_Not',
@@ -348,4 +349,4 @@ class PS_Lexer:
         self.lineno = self.lexer.lineno
         return self.lexer.token()
 
-tokens = PS_Lexer().tokens
+tokens = PS_Lexer.tokens

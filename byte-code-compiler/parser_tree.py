@@ -44,7 +44,7 @@ class PType(PTreeElem):
 
 class PArray(PType):
     def __init__(self, location, arrType: PType) -> None:
-        super().__init__(arrType)
+        super().__init__(location, arrType)
 
 
 class PScope(PTreeElem):
@@ -122,8 +122,7 @@ class PNumeric(PExpression):
         else:
             self.typ = "int"
         super().__init__(location, value)
-
-
+        
 class PIndex(PExpression):
     """for indexing : array[idx]"""
 
@@ -245,7 +244,17 @@ class PForeach(PStatement):
         self.iterable = iterable
         self.bloc = bloc
         super().__init__(location)
-
+        
+class PNewObj(PExpression):
+    def __init__(self, location, object:PType, arguments:list[PExpression]):
+        self.object = object
+        self.args = arguments
+        super().__init__(location, object)
+        
+class PNewArray(PExpression):
+    def __init__(self, location, typ:PType, array_length:PExpression):
+        self.typ = typ
+        super().__init__(location,array_length)
 
 class PImport(PStatement):
     def __init__(self, location, module: PIdentifier, item: PIdentifier):
@@ -403,7 +412,7 @@ def p_var_declaration(p: YaccProduction):
     p[0] = PVarDecl(loc, p[1], PIdentifier(loc2,p[2]))
     
 def p_var_declaration_2(p: YaccProduction):
-    """VarDecl : Type ID Punctuation_EoL"""
+    """VarDecl : Type Ident Punctuation_EoL"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     loc2 = Location(p.lineno(2), p.lexspan(2)[0])
     p[0] = PVarDecl(loc, p[1], PIdentifier(loc2,p[2]))
@@ -487,6 +496,30 @@ def p_index(p: YaccProduction):
     """ArrayIndex : Expr Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PIndex(loc, p[1], p[3])
+
+
+def P_new_array(p: YaccProduction):
+    """Expr : Keyword_Object_New Ident Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PNewArray(loc, PType(p[2].location, p[2].identifier), p[4])
+
+
+def P_new_array_2(p: YaccProduction):
+    """Expr : Keyword_Object_New Typ Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PNewArray(loc, p[2], p[4])
+
+
+def P_new_obj(p: YaccProduction):
+    """Expr : Keyword_Object_New Ident Punctuation_OpenParen ExprList Punctuation_CloseParen"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier), p[4])
+
+
+def P_new_obj_2(p: YaccProduction):
+    """Expr : Keyword_Object_New Typ Punctuation_OpenParen ExprList Punctuation_CloseParen"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PNewObj(loc, p[2], p[4])
 
 
 def p_binop(p: YaccProduction):
