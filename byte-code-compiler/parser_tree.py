@@ -1,12 +1,20 @@
 import ply.yacc as yacc
+from ply.lex import LexToken
 from ply.yacc import YaccProduction
 from lexer import tokens, Location
 from operations import BinaryOperation, UnaryOperation
 from copy import deepcopy
 
 
-# P.... classes are there to build the abstract syntax tree
+class ParsingError(SyntaxError):
+    def __init__(self, *args: object, location:Location=Location(-1,-1), tokens=None) -> None:
+        self.location = location
+        super().__init__(*args)
+    
+    def __str__(self) -> str:
+        return f"Parsing error on line {self.location.line} and column {self.location.col}.\nStack:\n"+self.tokens
 
+# P.... classes are there to build the abstract syntax tree
 
 class PTreeElem:
     def __init__(self, location) -> None:
@@ -343,6 +351,11 @@ def p_all_statements_addSClassDecl(p: YaccProduction):
     p[0] = PModule(loc, functions=deepcopy(p[2].funcDecl), varDecl=deepcopy(
         p[2].varDecl), classDecl=[p[1]]+deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
 
+def p_bloc_empty(p: YaccProduction):
+    """StatementList : empty"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PScope(loc, functions=[], varDecl=[], statements=[])
+
 def p_bloc_single(p: YaccProduction):
     """StatementList : Statement"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
@@ -523,13 +536,14 @@ def p_new_obj_2(p: YaccProduction):
 
 
 def p_binop(p: YaccProduction):
-    """Expr : Expr Operator_Binary_Bool_Eq Expr
+    #prec avoids a-b being reduced to a (-b) and ending up with 'Expr Expr'
+    """Expr : Expr Operator_Minus Expr %prec UNOP
+            | Expr Operator_Binary_Bool_Eq Expr
             | Expr Operator_Binary_Bool_Neq Expr
             | Expr Operator_Binary_Bool_Geq Expr
             | Expr Operator_Binary_Bool_Leq Expr
             | Expr Operator_Binary_Bool_Gt Expr
             | Expr Operator_Binary_Bool_Lt Expr
-            | Expr Operator_Minus Expr
             | Expr Operator_Binary_Plus Expr
             | Expr Operator_Binary_Times Expr
             | Expr Operator_Binary_Div Expr
@@ -613,7 +627,8 @@ def p_array_literal(p: YaccProduction):
 
 
 def p_call(p: YaccProduction):
-    """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen"""
+    """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP""" 
+    #add precedence to avoid 'Ident (Expr)' getting reduced to 'Ident Expr'
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PCall(loc, p[1], p[3])
 
@@ -738,10 +753,11 @@ def p_ternary(p: YaccProduction):
     p[0] = PTernary(loc, p[1], p[3], p[5])
 
 
-def p_error(p: YaccProduction):
+def p_error(p: LexToken):
     if p is None:
-        raise SyntaxError("Missing Terminating symbol")
-    raise SyntaxError(str(p) + "\n" + repr(p))
+        print("Expected symbol but end of file found!") 
+        return
+    print(f"Unexpected symbol '{p.value}' on "+str(Location(p.line, p.col)))
 
 
 parser = yacc.yacc()
