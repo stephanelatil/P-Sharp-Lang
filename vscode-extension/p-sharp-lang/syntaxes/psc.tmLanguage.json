@@ -19,11 +19,23 @@
 		}
 	],
 	"repository": {
+		"comments": {
+			"patterns": [
+				{
+					"name": "comment.block.psc",
+					"match": "/[*]([^*]|([*][^/]))*[*]+/"
+				},
+				{
+					"name": "comment.line.psc",
+					"match": "//.*$"
+				}
+			]
+		},
 		"keywords": {
 			"patterns": [
 				{
 					"name": "keyword.control.psc",
-					"match": "\\b(class|if|else|while|for|return|continue|break|assert)\\b"
+					"match": "\\b(class|if|else|while|for|return|continue|break|assert|and|or|not)\\b"
 				}
 			]
 		},
@@ -55,7 +67,7 @@
 			]
 		},
 		"numbers": {
-			"name": "number.literal.psc",
+			"name": "constant.numeric.psc",
 			"match": "\\b(0x_*[\\da-fA-F][\\da-fA-F_]*|'(.|\\\\x[\\da-fA-F][\\da-fA-F])'|(0|[1-9][\\d_]*)|(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+\\-]?\\d+)?)\\b"
 		}
 	},
