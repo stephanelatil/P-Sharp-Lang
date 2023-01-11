@@ -139,11 +139,11 @@ class PS_Lexer:
         #Discard comment
 
     def t_Literal_String(self,t):
-        r'"((?:[^\n"\\]*|\\.)*)"'
+        r'\b"((?:[^\n"\\]*|\\.)*)"\b'
         return t
 
     def t_Number_Char(self,t):
-        r"'(.|\\x[\da-fA-F][\da-fA-F])'" # single char or char hex escaped ex: '\00' for null char
+        r"\b'(.|\\x[\da-fA-F][\da-fA-F])'\b" # single char or char hex escaped ex: '\00' for null char
         t.value = t.value.strip("'")
         if len(t.value) == 1:
             t.value = ord(t.value)
@@ -156,17 +156,17 @@ class PS_Lexer:
         return t
 
     def t_Number_Hex(self,t):
-        r'0x[\da-fA-F_]+'
+        r'\b0x[\da-fA-F_]+\b'
         t.value = int(t.value[2:].replace('_', ''), 16)
         return t
 
     def t_Number_Int(self,t):
-        r'(0|[1-9][\d_]*)'
+        r'\b(0|[1-9][\d_]*)\b'
         t.value = int(t.value.replace('_', ''))
         return t
 
     def t_Number_Float(self,t):
-        r'(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
+        r'\b(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+\-]?\d+)?\b'
         t.value = float(t.value)
         return t
 
@@ -340,7 +340,7 @@ class PS_Lexer:
         #Discard whitespace
 
     def t_ID(self,t):
-        r'[a-zA-Z_][a-zA-Z_\d]*'
+        r'\b[a-zA-Z_][a-zA-Z_\d]*\b'
         t.type = self.reserved.get(t.value, 'ID')    # Check for reserved words
         return t
 
