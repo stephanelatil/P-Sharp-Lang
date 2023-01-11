@@ -382,7 +382,7 @@ class PS_Lexer:
             col = self.lexpos
         if tok is not None:
             # offset correctly to point to first char of token
-            col += 1 - len(tok.value)
+            col += 1 - len(str(tok.value))
             #add location info
             setattr(tok, "line", line)
             setattr(tok, "col", col)
