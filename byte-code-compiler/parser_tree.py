@@ -7,8 +7,9 @@ from copy import deepcopy
 
 
 class ParsingError(SyntaxError):
-    def __init__(self, *args: object, location:Location=Location(-1,-1), tokens=None) -> None:
+    def __init__(self, *args: object, location:Location=Location(-1,-1), problem_token=None) -> None:
         self.location = location
+        self.problem_token = problem_token
         super().__init__(*args)
     
     def __str__(self) -> str:
@@ -305,13 +306,12 @@ def p_statement(p: YaccProduction):
                  | Return
                  | Break
                  | Continue
-                 | Expr
+                 | Expr Punctuation_EoL
                  | ignore"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     if p[1] is None:
-        p[0] = PSkip(loc)
-    else:
-        p[0] = p[1]
+        raise ParsingError()
+    p[0] = p[1]
 
 
 def p_scope(p: YaccProduction):
@@ -561,7 +561,7 @@ def p_binop(p: YaccProduction):
 
 def p_paren(p: YaccProduction):
     """Expr : Punctuation_OpenParen Expr Punctuation_CloseParen"""
-    p[0] = p[1]
+    p[0] = p[2]
 
 
 def p_UnOp(p: YaccProduction):
@@ -650,11 +650,6 @@ def p_null(p: YaccProduction):
     loc = Location(p.lineno(1), p.lexspan(1)[0])
     p[0] = PExpression(loc, None)
 
-
-def p_typed_args_none(p: YaccProduction):
-    """TypedArgs : empty"""
-    p[0] = []
-
 def p_typed_args_single(p: YaccProduction):
     """TypedArgs : Type Ident"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
@@ -686,6 +681,18 @@ def p_func_declaration_2(p: YaccProduction):
     p[0] = PFuncDecl(loc, PType(loc, p[1].identifier),
                      p[2], p[4], p[7])
 
+def p_func_declaration_no_args(p: YaccProduction):
+    """FuncDecl : Type Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PFuncDecl(loc, p[1], p[2], [], p[6])
+
+
+def p_func_declaration_no_args_2(p: YaccProduction):
+    """FuncDecl : Ident Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    p[0] = PFuncDecl(loc, PType(loc, p[1].identifier),
+                     p[2], [], p[6])
+
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
@@ -707,7 +714,7 @@ def p_if(p: YaccProduction):
 def p_if_else(p: YaccProduction):
     """IfBloc : Keyword_Control_If Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace Keyword_Control_Else Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PIf(loc, p[3], p[6], PSkip())
+    p[0] = PIf(loc, p[3], p[6], p[10])
 
 
 def p_for(p: YaccProduction):
@@ -755,9 +762,10 @@ def p_ternary(p: YaccProduction):
 
 def p_error(p: LexToken):
     if p is None:
-        print("Expected symbol but end of file found!") 
+        raise ParsingError("Expected symbol but end of file found!") 
         return
-    print(f"Unexpected symbol '{p.value}' on "+str(Location(p.line, p.col)))
+    loc = Location(p.line, p.col)
+    raise ParsingError(f"Unexpected symbol '{p.value}' on "+str(loc), location=loc, problem_token=p.value)
 
 
 parser = yacc.yacc()
