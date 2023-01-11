@@ -371,8 +371,21 @@ class PS_Lexer:
         self.lexer.input(code, **kwargs)
 
     def token(self):
+        tok = self.lexer.token()
         self.lexpos = self.lexer.lexpos
         self.lineno = self.lexer.lineno
-        return self.lexer.token()
+        
+        line = self.lineno
+        if self.code.rfind('\n', 0, self.lexpos) >= 0:
+            col = self.lexpos - self.code.rfind('\n', 0, self.lexpos)
+        else:
+            col = self.lexpos
+        if tok is not None:
+            # offset correctly to point to first char of token
+            col += 1 - len(tok.value)
+            #add location info
+            setattr(tok, "line", line)
+            setattr(tok, "col", col)
+        return tok
 
 tokens = PS_Lexer.tokens
