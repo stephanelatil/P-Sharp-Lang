@@ -1,6 +1,30 @@
 import ply.lex as lex
 from ply.yacc import NullLogger
 
+class Location:
+    """Track the location of a token in the code"""
+
+    def __init__(self, lineno, col) -> None:
+        self.line = str(lineno)
+        self.col = str(col)
+
+    def __str__(self) -> str:
+        return f"Line {self.line} " +\
+            f"and column {self.col}"
+
+    def __repr__(self) -> str:
+        return '"'+str(self)+'"'
+
+class LexerError(SyntaxError):
+    def __init__(self, *args: object, location:Location=None, token=None) -> None:
+        super().__init__(*args)
+        self.location = location
+        self.token = token
+        
+    def __str__(self) -> str:
+        return super().__str__() + \
+               f"\nLocation: {self.location} on string {repr(self.token[:6])}..."
+
 class PS_Lexer:
     reserved = {
         'if': 'Keyword_Control_If',
@@ -99,6 +123,7 @@ class PS_Lexer:
         self.lexer = None
         self.lineno = 0
         self.lexpos = 0
+        self.code = ""
         self.build()
 
     def t_Comment_Singleline(self,t):
@@ -321,10 +346,9 @@ class PS_Lexer:
 
     def t_error(self,t):
         line = str(t.lineno)
-        col = t.lexpos - input.rfind('\n', 0, t.lexpos)
+        col = t.lexpos - self.code.rfind('\n', 0, t.lexpos)
 
-        raise SyntaxError(f"Illegal character '{t.value}' on Line "
-                        + f"{' '*(5-len(line))+line} and column {' '*(5-len(col))+col}")
+        raise LexerError("Illegal character", location=Location(line, col), token=t.value)
 
     def t_eof(self,t):
         return None
@@ -334,6 +358,7 @@ class PS_Lexer:
         self.lexer = lex.lex(module=self, errorlog=NullLogger(), **kwargs)
 
     def lexCode(self, code):
+        self.code = code
         self.lexer.input(code)
         while True:
             token = self.lexer.token()
@@ -341,7 +366,8 @@ class PS_Lexer:
                 break
             yield token
 
-    def input(self, code , **kwargs):
+    def input(self, code, **kwargs):
+        self.code = code
         self.lexer.input(code, **kwargs)
 
     def token(self):

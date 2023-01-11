@@ -1,23 +1,9 @@
 import ply.yacc as yacc
 from ply.yacc import YaccProduction
-from lexer import tokens
+from lexer import tokens, Location
 from operations import BinaryOperation, UnaryOperation
 from copy import deepcopy
 
-
-class Location:
-    """Track the location of a token in the code"""
-
-    def __init__(self, lineno, col) -> None:
-        self.line = str(lineno)
-        self.col = str(col)
-
-    def __str__(self) -> str:
-        return f"Line {self.line} " +\
-            f"and column {self.col}"
-
-    def __repr__(self) -> str:
-        return '"'+str(self)+'"'
 
 # P.... classes are there to build the abstract syntax tree
 
