@@ -25,7 +25,7 @@ class BinaryOperation(Enum):
 
 class UnaryOperation(Enum):
     MINUS = '-'
-    LOGIC_NOT = "!"
+    LOGIC_NOT = "not"
     INCREMENT = "++"
     DECREMENT = "--"
 
