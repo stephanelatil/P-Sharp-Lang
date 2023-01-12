@@ -13,13 +13,27 @@ class ParsingError(SyntaxError):
         super().__init__(*args)
     
     def __str__(self) -> str:
-        return f"Parsing error on line {self.location.line} and column {self.location.col}.\nStack:\n"+self.tokens
+        return f"Parsing error on line {self.location.line} and column {self.location.col}.\Problem Token:{repr(self.tokens)}\n"
+    
+
+class MultiParsingException(ParsingError):
+    def __init__(self, *args: object, exceptions=None) -> None:
+        super().__init__(args)
+        self.exceptions = exceptions
+
+    def __str__(self) -> str:
+        return "\n**********\n".join([str(x) for x in self.exceptions])
+
 
 # P.... classes are there to build the abstract syntax tree
 
 class PTreeElem:
     def __init__(self, location) -> None:
         self.location = location
+        self.parsing_errors = []
+        for attr in self.__dict__.values():
+            if isinstance(attr, PTreeElem):
+                self.parsing_errors += getattr(attr, "parsing_errors", [])
 
     def __repr__(self):
         return self.__class__.__name__+f"({self.__dict__})"
@@ -55,6 +69,8 @@ class PModule(PScope):
         self.classDecl = classDecl
         super().__init__(location, functions=functions,
                          varDecl=varDecl, statements=statements)
+        if len(self.parsing_errors) > 0:
+            raise MultiParsingException(self.parsing_errors)
 
 
 class PClassDecl(PScope):
@@ -317,6 +333,10 @@ def p_statement(p: YaccProduction):
 def p_scope(p: YaccProduction):
     """Scope : Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     p[0] = p[2]
+    
+def p_scope_err(p: YaccProduction):
+    """Scope : Punctuation_OpenBrace error Punctuation_CloseBrace"""
+    p[0] = PSkip()
 
 
 def p_all_statements_statement(p: YaccProduction):
