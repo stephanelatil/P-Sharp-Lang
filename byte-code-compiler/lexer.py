@@ -5,8 +5,8 @@ class Location:
     """Track the location of a token in the code"""
 
     def __init__(self, lineno, col) -> None:
-        self.line = str(lineno)
-        self.col = str(col)
+        self.line = int(lineno)
+        self.col = int(col)
 
     def __str__(self) -> str:
         return f"Line {self.line} " +\
@@ -331,8 +331,8 @@ class PS_Lexer:
         return t
 
     def t_newline(self,t):
-        r'\n+'
-        t.lexer.lineno += len(t.value)
+        r'\n\r?'
+        t.lexer.lineno += 1
 
     def t_Whitespace(self,t):
         r'[^\S]+'
@@ -361,7 +361,7 @@ class PS_Lexer:
         self.code = code
         self.lexer.input(code)
         while True:
-            token = self.lexer.token()
+            token = self.token()
             if not token:
                 break
             yield token
@@ -373,11 +373,11 @@ class PS_Lexer:
     def token(self):
         tok = self.lexer.token()
         self.lexpos = self.lexer.lexpos
-        self.lineno = self.lexer.lineno
+        self.lineno = self.code.count("\n", 0, self.lexpos)+1
         
         line = self.lineno
         if self.code.rfind('\n', 0, self.lexpos) >= 0:
-            col = self.lexpos - self.code.rfind('\n', 0, self.lexpos)
+            col = self.lexpos - self.code.rfind('\n', 0, self.lexpos)-1
         else:
             col = self.lexpos
         if tok is not None:
@@ -385,6 +385,7 @@ class PS_Lexer:
             col += 1 - len(str(tok.value))
             #add location info
             setattr(tok, "line", line)
+            setattr(tok, "lineno", line)
             setattr(tok, "col", col)
         return tok
 
