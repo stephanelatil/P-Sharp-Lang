@@ -139,7 +139,8 @@ class PS_Lexer:
         #Discard comment
 
     def t_Literal_String(self,t):
-        r'\b"((?:[^\n"\\]*|\\.)*)"\b'
+        r'"((?:[^\n"\\]*|\\.)*)"'
+        t.value = t.value[1:-1]
         return t
 
     def t_Number_Char(self,t):
