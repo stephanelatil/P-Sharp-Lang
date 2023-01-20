@@ -13,7 +13,7 @@ class ParsingError(SyntaxError):
         super().__init__(*args)
     
     def __str__(self) -> str:
-        return f"Parsing error on line {self.location.line} and column {self.location.col}.\Problem Token:{repr(self.tokens)}\n"
+        return f"Parsing error on line {self.location.line} and column {self.location.col}.\nProblem Token:{repr(self.problem_token)}"
     
 
 class MultiParsingException(ParsingError):
@@ -28,27 +28,48 @@ class MultiParsingException(ParsingError):
 # P.... classes are there to build the abstract syntax tree
 
 class PTreeElem:
-    def __init__(self, location) -> None:
+    def __init__(self, location:Location, *, last_token_end=None) -> None:
+        def max_loc(loc:Location):
+            return 100000*loc.line+loc.col if loc is not None else 1
+        def min_loc(loc:Location):
+            return 100000*loc.line+loc.col if loc is not None else 9999999999999999
+        
         self.location = location
         self.parsing_errors = []
+        self.location_end = last_token_end
         for attr in self.__dict__.values():
             if isinstance(attr, PTreeElem):
                 self.parsing_errors += getattr(attr, "parsing_errors", [])
+                self.location_end = max(self.location_end, attr.location_end, key=max_loc)
+                self.location = min(self.location, attr.location, key=min_loc)
+            elif isinstance(attr, list):
+                for elem in attr:
+                    self.parsing_errors += getattr(elem, "parsing_errors", [])
+                    self.location_end = max(
+                        self.location_end, elem.location_end, key=max_loc)
+                    self.location = min(self.location, elem.location, key=min_loc)
+                    
+        if self.location is None:
+            self.location = Location(-1,-1)
+        if self.location_end is None:
+            if last_token_end is None:
+                self.location_end = Location(self.location.line, self.location.col)
+            else:
+                self.location_end = last_token_end
 
     def __repr__(self):
-        return self.__class__.__name__+f"({self.__dict__})"
+        inner = str(self.__dict__).replace("\'", "\"")
+        return f'{{"{self.__class__.__name__}" : {inner}}}'
 
 
 class PIdentifier(PTreeElem):
-    def __init__(self, location, identifier:str):
+    def __init__(self, location, identifier:str, last_token_end=None):
         self.identifier = identifier
-        super().__init__(location)
+        super().__init__(location, last_token_end=last_token_end)
 
 
-class PType(PTreeElem):
-    def __init__(self, location, typ: str) -> None:
-        self.typ = typ
-        super().__init__(location)
+class PType:
+    pass
 
 
 class PArray(PType):
@@ -57,11 +78,11 @@ class PArray(PType):
 
 
 class PScope(PTreeElem):
-    def __init__(self, location, *, functions=None, varDecl=None, statements=None):
+    def __init__(self, location, *, functions, varDecl, statements, last_token_end=None):
         self.funcDecl = functions
         self.varDecl = varDecl
         self.statements = statements
-        super().__init__(location)
+        super().__init__(location, last_token_end=last_token_end)
 
 
 class PModule(PScope):
@@ -82,62 +103,62 @@ class PClassDecl(PScope):
 
 
 class PStatement(PTreeElem):
-    def __init__(self, location):
-        super().__init__(location)
+    def __init__(self, location, last_token_end=None):
+        super().__init__(location, last_token_end=last_token_end)
 
 
 class PExpression(PStatement):
-    def __init__(self, location, rvalue):
+    def __init__(self, location, rvalue, last_token_end=None):
         self.rvalue = rvalue
-        super().__init__(location)
+        super().__init__(location, last_token_end = last_token_end)
 
 
 class PEnum(PScope):
-    def __init__(self, location, identifier, values: list[PStatement]):
+    def __init__(self, location, identifier, values: list[PStatement], last_token_end=None):
         self.identifier = identifier
         self.enum_values = values
-        super().__init__(statements=values)
+        super().__init__(location, statements = values, last_token_end = last_token_end)
 
 class PVarDecl:
     pass
 
 class PFuncDecl(PTreeElem):
-    def __init__(self, location, returnType: PType, id: PIdentifier, args: list[PVarDecl], body: PScope):
+    def __init__(self, location, returnType: PType, id: PIdentifier, args: list[PVarDecl], body: PScope, last_token_end=None):
         self.returnType = returnType
         self.id = id
         self.args = args
         self.body = body
-        super().__init__(location)
+        super().__init__(location, last_token_end = last_token_end)
 
 
 class PlValue(PExpression):
-    def __init__(self, location, lvalue):
-        super().__init__(location, lvalue)
+    def __init__(self, location, lvalue, last_token_end=None):
+        super().__init__(location, lvalue, last_token_end=last_token_end)
 
 
 class PType(PTreeElem):
-    def __init__(self, location, type_identifier):
+    def __init__(self, location, type_identifier, last_token_end=None):
         self.type_identifier = type_identifier
-        super().__init__(location)
+        super().__init__(location, last_token_end=last_token_end)
 
 
 class PUType(PType):
-    def __init__(self, location, type_identifier):
-        super().__init__(location, type_identifier)
+    def __init__(self, location, type_identifier, last_token_end=None):
+        super().__init__(location, type_identifier, last_token_end=last_token_end)
 
 
 class PNumeric(PExpression):
-    def __init__(self, location, value):
+    def __init__(self, location, value, last_token_end=None):
         if isinstance(value, float):
             self.typ = "float"
         else:
             self.typ = "int"
-        super().__init__(location, value)
+        super().__init__(location, value, last_token_end=last_token_end)
         
 class PIndex(PExpression):
     """for indexing : array[idx]"""
 
-    def __init__(self, location, array: PExpression, idx: PExpression):
+    def __init__(self, location, array: PExpression, idx: PExpression,  last_token_end:tuple=None):
         if location is None:
             location = idx.location
         self.index = idx.rvalue
@@ -151,10 +172,11 @@ class PDot(PlValue):
 
 
 class PVarDecl(PlValue):
-    def __init__(self, location, typ: PType, id: PIdentifier):
+    def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression=None,  last_token_end=None):
         self.typ = typ
         self.id = id
-        super().__init__(location, id)
+        self.init_value = init_value;
+        super().__init__(location, id,  last_token_end=last_token_end)
         
 
 class PBinOp(PExpression):
@@ -165,26 +187,26 @@ class PBinOp(PExpression):
 
 
 class PAssign(PBinOp):
-    def __init__(self, location, lvalue: PlValue, rvalue: PExpression):
-        super().__init__(location, left=lvalue, right=rvalue, op=None)
+    def __init__(self, location, lvalue: PlValue, rvalue: PExpression, last_token_end=None):
+        super().__init__(location, left=lvalue, right=rvalue, op=None, last_token_end=last_token_end)
 
 
 class PCopyAssign(PBinOp):
-    def __init__(self, location, lvalue: PlValue, rvalue: PExpression):
-        super().__init__(location, left=lvalue, right=rvalue, op=None)
+    def __init__(self, location, lvalue: PlValue, rvalue: PExpression, last_token_end=None):
+        super().__init__(location, left=lvalue, right=rvalue, op=None, last_token_end=last_token_end)
 
 
 class PUnOp(PExpression):
-    def __init__(self, location, op: UnaryOperation, right: PExpression):
+    def __init__(self, location, op: UnaryOperation, right: PExpression, last_token_end=None):
         self.op = op
         super().__init__(location, right)
 
 
 class PCall(PExpression):
-    def __init__(self, location, id: PIdentifier, args=list[PExpression]):
+    def __init__(self, location, id: PIdentifier, args=list[PExpression], last_token_end=None):
         self.id = id
         self.args = args
-        super().__init__(location, id)
+        super().__init__(location, id, last_token_end=last_token_end)
 
 
 class PSkip(PStatement):
@@ -193,90 +215,90 @@ class PSkip(PStatement):
         # do nothing empty block
 
 class PReturn(PStatement):
-    def __init__(self, location, returnVal: PExpression):
+    def __init__(self, location, returnVal: PExpression, last_token_end=None):
         self.returnVal = returnVal
-        super().__init__(location)
+        super().__init__(location, last_token_end=last_token_end)
 
 class PAssert(PStatement):
-    def __init__(self, location, assertExpr: PExpression):
+    def __init__(self, location, assertExpr: PExpression, last_token_end=None):
         self.assertExpr = assertExpr
-        super().__init__(location)
+        super().__init__(location, last_token_end = last_token_end)
 
 class PString(PExpression):
-    def __init__(self, location, value: str):
-        super().__init__(location, value)
+    def __init__(self, location, value: str, last_token_end=None):
+        super().__init__(location, value, last_token_end = last_token_end)
 
 
 class PContinue(PStatement):
-    def __init__(self, location):
-        super().__init__(location)
+    def __init__(self, location, last_token_end=None):
+        super().__init__(location, last_token_end=last_token_end)
 
 
 class PBreak(PStatement):
-    def __init__(self, location):
-        super().__init__(location)
+    def __init__(self, location, last_token_end=None):
+        super().__init__(location, last_token_end = last_token_end)
 
 
 class PIf(PStatement):
-    def __init__(self, location, condition: PExpression, if_true: PScope, if_false: PScope = None):
+    def __init__(self, location, condition: PExpression, if_true: PScope, if_false: PScope = None, last_token_end=None):
         self.condition = condition
         self.if_true = if_true
         self.if_false = if_false
-        super().__init__(location)
+        super().__init__(location, last_token_end = last_token_end)
 
 
 class PTernary(PStatement):
-    def __init__(self, location, condition: PExpression, if_true: PReturn, if_false: PReturn):
+    def __init__(self, location, condition: PExpression, if_true: PReturn, if_false: PReturn, last_token_end=None):
         self.condition = condition
         self.if_true = if_true
         self.if_false = if_false
-        super().__init__(location)
+        super().__init__(location, last_token_end=last_token_end)
 
 
 class PWhile(PStatement):
-    def __init__(self, location, condition: PExpression, bloc: PScope):
+    def __init__(self, location, condition: PExpression, bloc: PScope, last_token_end=None):
         self.condition = condition
         self.bloc = bloc
-        super().__init__(location)
+        super().__init__(location, last_token_end=last_token_end)
 
 
 class PFor(PStatement):
-    def __init__(self, location, init: PStatement, condition: PExpression, postExpr: PStatement, bloc: PScope):
+    def __init__(self, location, init: PStatement, condition: PExpression, postExpr: PStatement, bloc: PScope, last_token_end=None):
         self.init = init
         self.condition = condition
         self.postExpr = postExpr
         self.bloc = bloc
-        super().__init__(location)
+        super().__init__(location, last_token_end = last_token_end)
         
 class PCast(PExpression):
-    def __init__(self, location, cast_to:PType, rvalue:PExpression):
+    def __init__(self, location, cast_to:PType, rvalue:PExpression, last_token_end=None):
         self.cast_to = cast_to
-        super().__init__(location, rvalue)
+        super().__init__(location, rvalue, last_token_end=last_token_end)
 
 
 class PForeach(PStatement):
-    def __init__(self, location, varDecl: PVarDecl, iterable: PIdentifier, bloc: PScope):
+    def __init__(self, location, varDecl: PVarDecl, iterable: PIdentifier, bloc: PScope, last_token_end=None):
         self.varDecl = varDecl
         self.iterable = iterable
         self.bloc = bloc
-        super().__init__(location)
+        super().__init__(location, last_token_end = last_token_end)
         
 class PNewObj(PExpression):
-    def __init__(self, location, object:PType, arguments:list[PExpression]):
+    def __init__(self, location, object:PType, arguments:list[PExpression], last_token_end=None):
         self.object = object
         self.args = arguments
-        super().__init__(location, object)
+        super().__init__(location, object, last_token_end=last_token_end)
         
 class PNewArray(PExpression):
-    def __init__(self, location, typ:PType, array_length:PExpression):
+    def __init__(self, location, typ:PType, array_length:PExpression, last_token_end=None):
         self.typ = typ
-        super().__init__(location,array_length)
+        super().__init__(location, array_length, last_token_end = last_token_end)
 
 class PImport(PStatement):
-    def __init__(self, location, module: PIdentifier, item: PIdentifier):
+    def __init__(self, location, module: PIdentifier, item: PIdentifier, last_token_end=None):
         self.module = module
         self.item = item
-        super().__init__(location)
+        super().__init__(location, last_token_end = last_token_end)
 
 
 # p_..... functions are for building the grammar
@@ -305,10 +327,9 @@ precedence = (
 
 start = 'Module'
 
-
 def p_module(p: YaccProduction):
     """Module : GlobalStatementList"""
-    p[0] = deepcopy(p[1])
+    p[0] = p[1]
 
 
 def p_statement(p: YaccProduction):
@@ -322,39 +343,40 @@ def p_statement(p: YaccProduction):
                  | Return
                  | Break
                  | Continue
-                 | Expr Punctuation_EoL
                  | ignore"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    if p[1] is None:
-        raise ParsingError()
     p[0] = p[1]
+    
+def p_statement_2(p: YaccProduction):
+    """Statement : Expr Punctuation_EoL"""
+    p[0] = p[1]
+    p[0].location_end =  p.slice[2].location_end
 
 
 def p_scope(p: YaccProduction):
     """Scope : Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     p[0] = p[2]
+    p[0].location_end = p.slice[3].location_end
+    p[0].location= p.slice[1].location
+    
     
 def p_scope_err(p: YaccProduction):
     """Scope : Punctuation_OpenBrace error Punctuation_CloseBrace"""
     p[0] = PSkip()
 
-
 def p_all_statements_statement(p: YaccProduction):
     """GlobalStatementList : StatementList"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PModule(loc, functions=deepcopy(p[1].funcDecl), varDecl=deepcopy(
-        p[1].varDecl), classDecl=[], statements=deepcopy(p[1].statements))
+    p[0] = PModule(None, functions=deepcopy(p[1].funcDecl), varDecl=deepcopy(
+        p[1].varDecl), classDecl=list(), statements=deepcopy(p[1].statements))
 
 
 def p_all_statements_classDecl(p: YaccProduction):
     """GlobalStatementList : ClassDecl"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PModule(loc, functions=[], varDecl=[],
+    p[0] = PModule(None, functions=[], varDecl=[],
                    classDecl=[p[1]], statements=[])
 
 def p_all_statements_addStatement(p: YaccProduction):
     """GlobalStatementList : Statement GlobalStatementList"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc = None
     if isinstance(p[1], PVarDecl):
         p[0] = PModule(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
             p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
@@ -367,24 +389,25 @@ def p_all_statements_addStatement(p: YaccProduction):
 
 def p_all_statements_addSClassDecl(p: YaccProduction):
     """GlobalStatementList : ClassDecl GlobalStatementList"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc = None
     p[0] = PModule(loc, functions=deepcopy(p[2].funcDecl), varDecl=deepcopy(
         p[2].varDecl), classDecl=[p[1]]+deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
 
 def p_bloc_empty(p: YaccProduction):
     """StatementList : empty"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PScope(loc, functions=[], varDecl=[], statements=[])
+    p[0] = PScope(parser.symstack[-1].location, functions=[], varDecl=[], statements=[])
 
 def p_bloc_single(p: YaccProduction):
     """StatementList : Statement"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
     if isinstance(p[1], PVarDecl):
-        p[0] = PScope(loc, functions=[], varDecl=[p[1]], statements=[])
+        p[0] = PScope(p[1].location, functions=[], varDecl=[
+                      p[1]], statements=[], last_token_end=p[1].location_end)
     elif isinstance(p[1], PFuncDecl):
-        p[0] = PScope(loc, functions=[p[1]], varDecl=[], statements=[])
+        p[0] = PScope(p[1].location, functions=[p[1]], varDecl=[], statements=[],
+                      last_token_end=p[1].location_end)
     else:
-        p[0] = PScope(loc, functions=[], varDecl=[], statements=[p[1]])
+        p[0] = PScope(p[1].location, functions=[],
+                      varDecl=[], statements=[p[1]], last_token_end=p[1].location_end)
 
 
 def p_bloc_list(p: YaccProduction):
@@ -410,8 +433,8 @@ def p_utype(p: YaccProduction):
             | Keyword_Type_Mod_Unsigned Keyword_Type_Int32
             | Keyword_Type_Mod_Unsigned Keyword_Type_Int64
             | Keyword_Type_Mod_Unsigned Keyword_Type_Char"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PUType(loc, p[2])
+    loc, loc2 = p.slice[1].location, p.slice[2].location_end
+    p[0] = PUType(loc, p[2], loc2)
 
 
 def p_type(p: YaccProduction):
@@ -424,73 +447,73 @@ def p_type(p: YaccProduction):
             | Keyword_Type_Float_64
             | Keyword_Type_Char
             | Keyword_Type_Boolean"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PType(loc, p[1])
+    loc, loc2 = p.slice[1].location, p.slice[1].location_end
+    p[0] = PType(loc, p[1], last_token_end=loc2)
     
     
 def p_cast(p:YaccProduction):
     """Expr : Punctuation_OpenParen Type Punctuation_CloseParen Expr"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc = p.slice[1].location
     p[0] = PCast(loc, p[2], p[4])
     
     
 def p_cast_2(p:YaccProduction):
     """Expr : Punctuation_OpenParen Ident Punctuation_CloseParen Expr"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    typ = PType(loc, p[2].identifier)
+    loc = p.slice[1].location
+    typ = PType(None, p[2].identifier)
     p[0] = PCast(loc, typ, p[4])
 
 
 def p_var_declaration(p: YaccProduction):
     """VarDecl : Ident Ident Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    typ = PType(loc, p[1].identifier)
-    p[0] = PVarDecl(loc, p[1], p[2])
+    loc2 = p.slice[3].location_end
+    typ = PType(None, p[1].identifier)
+    p[0] = PVarDecl(None, typ, p[2], last_token_end=loc2)
     
 def p_var_declaration_2(p: YaccProduction):
     """VarDecl : Type Ident Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PVarDecl(loc, p[1], p[2])
+    loc2 = p.slice[3].location_end
+    p[0] = PVarDecl(None, p[1], p[2], last_token_end=loc2)
 
 def p_var_declaration_and_assignment(p:YaccProduction):
     """VarDecl : Ident Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PAssign(loc, PVarDecl(loc, PType(loc, p[1].identifier),p[2]), p[4])
+    loc2 = p.slice[5].location_end
+    p[0] = PVarDecl(None, PType(None, p[1].identifier), p[2], p[4], last_token_end=loc2)
 
 def p_var_declaration_and_assignment_2(p:YaccProduction):
     """VarDecl : Type Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PAssign(loc, PVarDecl(loc, p[1],p[2]), p[4])
+    loc2 = p.slice[5].location_end
+    p[0] = PVarDecl(None, p[1], p[2], p[4], last_token_end=loc2)
 
 
 def p_break(p: YaccProduction):
     """Break : Keyword_Control_Break Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PBreak(loc)
+    loc2 = p[2].location_end
+    p[0] = PBreak(None, last_token_end=loc2)
 
 
 def p_continue(p: YaccProduction):
     """Continue : Keyword_Control_Continue Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PContinue(loc)
+    loc2 = p[2].location_end
+    p[0] = PContinue(None, last_token_end=loc2)
 
 
 def p_return_void(p: YaccProduction):
     """Return : Keyword_Control_Return Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PReturn(loc, None)
+    loc2 = p[2].location_end
+    p[0] = PReturn(None, None, last_token_end=loc2)
 
 
 def p_return_value(p: YaccProduction):
     """Return : Keyword_Control_Return Expr Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PReturn(loc, p[2])
+    loc2 = p[3].location_end
+    p[0] = PReturn(None, p[2], last_token_end=loc2)
 
 
 def p_var_assignment(p: YaccProduction):
     """VarAssign : Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PAssign(loc, p[1], p[3])
+    loc2 = p[4].location_end
+    p[0] = PAssign(None, p[1], p[3], loc2)
 
 
 def p_expr(p: YaccProduction):
@@ -500,13 +523,12 @@ def p_expr(p: YaccProduction):
             | ArrayIndex
             | FuncCall
             | String"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PExpression(loc, p[1])
+    p[0] = PExpression(None, p[1])
 
 def p_string(p: YaccProduction):
     """String : Literal_String"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PString(loc, p[1])
+    loc,loc2 = p.slice[1].location, p.slice[1].location_end
+    p[0] = PString(loc, p[1], last_token_end=loc2)
 
 
 def p_number(p: YaccProduction):
@@ -514,8 +536,8 @@ def p_number(p: YaccProduction):
               | Number_Hex
               | Number_Int
               | Number_Float"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PNumeric(loc, p[1])
+    loc, loc2 = p.slice[1].value.location, p.slice[1].value.location_end
+    p[0] = PNumeric(loc, p[1], loc2)
 
 
 def p_expr_list(p: YaccProduction):
@@ -527,32 +549,32 @@ def p_expr_list(p: YaccProduction):
 
 def p_index(p: YaccProduction):
     """ArrayIndex : Expr Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PIndex(loc, p[1], p[3])
+    loc2 = p.slice[4].value.location_end
+    p[0] = PIndex(None, p[1], p[3], last_token_end=loc2)
 
 
 def p_new_array(p: YaccProduction):
     """Expr : Keyword_Object_New Ident Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PNewArray(loc, PType(p[2].location, p[2].identifier), p[4])
+    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
+    p[0] = PNewArray(loc, PType(p[2].location, p[2].identifier), p[4], last_token_end=loc2)
 
 
 def p_new_array_2(p: YaccProduction):
     """Expr : Keyword_Object_New Type Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
     p[0] = PNewArray(loc, p[2], p[4])
 
 
 def p_new_obj(p: YaccProduction):
     """Expr : Keyword_Object_New Ident Punctuation_OpenParen ExprList Punctuation_CloseParen"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier), p[4])
+    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
+    p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier), p[4], last_token_end=loc2)
 
 
 def p_new_obj_2(p: YaccProduction):
     """Expr : Keyword_Object_New Type Punctuation_OpenParen ExprList Punctuation_CloseParen"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PNewObj(loc, p[2], p[4])
+    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
+    p[0] = PNewObj(loc, p[2], p[4], last_token_end=loc2)
 
 
 def p_binop(p: YaccProduction):
@@ -575,19 +597,21 @@ def p_binop(p: YaccProduction):
             | Expr Operator_Binary_Shr Expr
             | Expr Operator_Binary_Bool_Or Expr
             | Expr Operator_Binary_Bool_And Expr"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PBinOp(loc, p[1], BinaryOperation(p[2]), p[3])
+    p[0] = PBinOp(None, p[1], BinaryOperation(p[2]), p[3])
 
 
 def p_paren(p: YaccProduction):
     """Expr : Punctuation_OpenParen Expr Punctuation_CloseParen"""
+    loc, loc2 = p.slice[1].value.location, p.slice[3].value.location_end
     p[0] = p[2]
+    p[0].location, p[0].location_end = loc,loc2
+    
 
 
 def p_UnOp(p: YaccProduction):
     '''Expr : Operator_Minus Expr
             | Operator_Unary_Not Expr %prec UNOP'''
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc = p.slice[1].value.location
     p[0] = PUnOp(loc, UnaryOperation(p[1]), p[2])
 
 
@@ -596,8 +620,8 @@ def p_UnOp_IncDec(p: YaccProduction):
             | Ident Operator_Unary_Inc %prec UNOP
             | ArrayIndex Operator_Unary_Dec %prec UNOP
             | ArrayIndex Operator_Unary_Inc %prec UNOP'''
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PUnOp(loc, UnaryOperation(p[2]), p[1])
+    loc2 = p.slice[2].location_end
+    p[0] = PUnOp(None, UnaryOperation(p[2]), p[1], last_token_end=loc2)
 
 
 def p_ignore(p: YaccProduction):
@@ -605,8 +629,7 @@ def p_ignore(p: YaccProduction):
               | Comment_Multiline
               | Whitespace
               | Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PSkip(loc)
+    p[0] = PSkip(None)
 
 
 def p_binop_assign(p: YaccProduction):
@@ -628,95 +651,89 @@ def p_binop_assign(p: YaccProduction):
                   | ArrayIndex Operator_Binary_XorEq Expr
                   | ArrayIndex Operator_Binary_ShlEq Expr
                   | ArrayIndex Operator_Binary_ShrEq Expr"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PAssign(loc, p[1], PBinOp(
-        loc, p[1], BinaryOperation(p[2].strip('=')), p[3]))
+    p[0] = PAssign(None, p[1], 
+                   PBinOp(None, p[1], BinaryOperation(p[2].strip('=')), p[3]))
 
 
 def p_copy_assign(p: YaccProduction):
     """VarAssign : Ident Operator_Binary_Copy Expr Punctuation_EoL
                  | ArrayIndex Operator_Binary_Copy Expr Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PCopyAssign(loc, p[1], p[3])
+    loc2 = p.slice[4].location_end
+    p[0] = PCopyAssign(None, p[1], p[3], last_token_end=loc2)
 
 
 def p_array_literal(p: YaccProduction):
     """ArrayLiteral : Punctuation_OpenBracket ExprList Punctuation_CloseBracket"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PExpression(loc, p[1])
+    loc, loc2 = p.slice[1].value.location, p.slice[3].value.location_end
+    p[0] = PExpression(loc, p[1], last_token_end=loc2)
 
 
 def p_call(p: YaccProduction):
     """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP""" 
     #add precedence to avoid 'Ident (Expr)' getting reduced to 'Ident Expr'
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PCall(loc, p[1], p[3])
+    p[0] = PCall(None, p[1], p[3], p.slice[4].value.location_end)
 
 
 def p_true(p: YaccProduction):
     """Expr : Keyword_Object_True"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PExpression(loc, True)
+    loc = p.slice[1].value.location
+    last_token_end = p.slice[1].value.location_end
+    p[0] = PExpression(loc, True, last_token_end=last_token_end)
 
 
 def p_false(p: YaccProduction):
     """Expr : Keyword_Object_False"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PExpression(loc, False)
+    loc = p.slice[1].value.location
+    last_token_end = p.slice[1].value.location_end
+    p[0] = PExpression(loc, False, last_token_end=last_token_end)
 
 
 def p_null(p: YaccProduction):
     """Expr : Keyword_Object_Null"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PExpression(loc, None)
+    loc = p.slice[1].value.location
+    last_token_end = p.slice[1].value.location_end
+    p[0] = PExpression(loc, None, last_token_end=last_token_end)
 
 def p_typed_args_single(p: YaccProduction):
     """TypedArgs : Type Ident"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = [PVarDecl(loc, p[1], p[2])]
+    p[0] = [PVarDecl(None, p[1], p[2])]
     
 def p_typed_args_single_2(p: YaccProduction):
     """TypedArgs : Ident Ident"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier), p[2])]
+    p[0] = [PVarDecl(None, PType(p.slice[1].location, p[1].identifier, p.slice[1].last_token_end), p[2])]
 
 def p_typed_args_multiple(p: YaccProduction):
     """TypedArgs : Type Ident Punctuation_Comma TypedArgs"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = [PVarDecl(loc, p[1], p[2])] + deepcopy(p[4])
+    p[0] = [PVarDecl(None, p[1], p[2])] + deepcopy(p[4])
 
 def p_typed_args_multiple_2(p: YaccProduction):
     """TypedArgs : Ident Ident Punctuation_Comma TypedArgs"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = [PVarDecl(loc, PType(loc, p[1].identifier),p[2])] + deepcopy(p[4])
+    p[0] = [PVarDecl(None, PType(p.slice[1].location, p[1].identifier,
+                     p.slice[1].last_token_end), p[2])] + deepcopy(p[4])
 
 def p_func_declaration(p: YaccProduction):
     """FuncDecl : Type Ident Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PFuncDecl(loc, p[1], p[2], p[4], p[7])
+    p[0] = PFuncDecl(None, p[1], p[2], p[4], p[7], last_token_end=p.slice[8].location_end)
 
 def p_func_declaration_2(p: YaccProduction):
     """FuncDecl : Ident Ident Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PFuncDecl(loc, PType(loc, p[1].identifier),
-                     p[2], p[4], p[7])
+    p[0] = PFuncDecl(None, PType(p.slice[1].location, p[1].identifier,
+                     p.slice[1].last_token_end), p[2], p[4], p[7], last_token_end=p.slice[8].location_end)
 
 def p_func_declaration_no_args(p: YaccProduction):
     """FuncDecl : Type Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PFuncDecl(loc, p[1], p[2], [], p[6])
+    p[0] = PFuncDecl(p[1].location, p[1], p[2], [], p[6],
+                     last_token_end=p.slice[7].location_end)
 
 
 def p_func_declaration_no_args_2(p: YaccProduction):
     """FuncDecl : Ident Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PFuncDecl(loc, PType(loc, p[1].identifier),
-                     p[2], [], p[6])
+    p[0] = PFuncDecl(p[1].location, PType(p.slice[1].location, p[1].identifier, p.slice[1].last_token_end),
+                     p[2], [], p[6], last_token_end=p[7].value.location_end)
 
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PClassDecl(loc, p[2], p[4])
+    p[0] = PClassDecl(None, p[2], p[4], last_token_end=p[5].value.location_end)
 
 # For extension / implementing interfaces
 # def p_class_declaration(p:YaccProduction):
@@ -727,65 +744,59 @@ def p_class_declaration(p: YaccProduction):
 
 def p_if(p: YaccProduction):
     """IfBloc : Keyword_Control_If Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PIf(loc, p[3], p[6], PSkip())
+    p[0] = PIf(None, p[3], p[6], PSkip(), last_token_end=p[7].value.location_end)
 
 
 def p_if_else(p: YaccProduction):
     """IfBloc : Keyword_Control_If Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace Keyword_Control_Else Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PIf(loc, p[3], p[6], p[10])
+    p[0] = PIf(None, p[3], p[6], p[10], last_token_end=p[11].value.location_end)
 
 
 def p_for(p: YaccProduction):
     """ForBloc : Keyword_Control_For Punctuation_OpenParen VarDecl Expr Statement Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PFor(loc, p[3], p[4], p[5], p[8])
+    p[0] = PFor(None, p[3], p[4], p[5], p[8],
+                last_token_end=p[9].value.location_end)
 
 
 def p_foreach(p: YaccProduction):
     """ForBloc : Keyword_Control_For Punctuation_OpenParen VarDecl Punctuation_TernarySeparator Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PForeach(loc, p[3], p[5], p[8])
+    p[0] = PForeach(None, p[3], p[5], p[8], last_token_end=p[9].value.location_end)
 
 
 def p_while(p: YaccProduction):
     """WhileBloc : Keyword_Control_While Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PWhile(loc, p[3], p[6])
+    p[0] = PWhile(None, p[3], p[6], last_token_end=p[7].value.location_end)
 
 def p_assert(p: YaccProduction):
     """Statement : Keyword_Control_Assert Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_EoL"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PAssert(loc, p[3])
+    p[0] = PAssert(None, p[3], last_token_end=p[5].value.location_end)
 
 def p_var(p: YaccProduction):
     """Ident : ID"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PIdentifier(loc, p[1])
+    p[0] = PIdentifier(p.slice[1].location, p[1],
+                       last_token_end=p.slice[1].location_end)
 
 
 def p_dot(p: YaccProduction):
     """Ident : Ident Operator_Dot Ident"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    if isinstance(p[3], PDot):
-        p[1] = PDot(p[3].location, p[1], p[3].left)
-        p[3] = p[3].rvalue
-    p[0] = PDot(loc, p[1], p[3])
+    if isinstance(p.slice[3], PDot):
+        p.slice[1] = PDot(p.slice[3].location, p.slice[1], p.slice[3].left)
+        p.slice[3] = p.slice[3].rvalue
+    p[0] = PDot(None, p[1], p[3])
 
 
 def p_ternary(p: YaccProduction):
     """Expr : Expr Punctuation_TernaryConditional Expr Punctuation_TernarySeparator Expr"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
-    p[0] = PTernary(loc, p[1], p[3], p[5])
-
+    p[0] = PTernary(None, p[1], p[3], p[5])
 
 def p_error(p: LexToken):
     if p is None:
-        raise ParsingError("Expected symbol but end of file found!") 
-        return
+        loc = parser.symstack[-1].value.location_end
+        raise ParsingError(f"End of file found when a symbol was expected at location {loc}",
+                           location=loc,
+                           problem_token='EOF')
     loc = Location(p.line, p.col)
     raise ParsingError(f"Unexpected symbol '{p.value}' on "+str(loc), location=loc, problem_token=p.value)
 
 
-parser = yacc.yacc()
+parser = yacc.yacc(debug=True)

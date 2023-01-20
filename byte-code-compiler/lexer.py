@@ -145,6 +145,7 @@ class PS_Lexer:
 
     def t_Number_Char(self,t):
         r"\b'(.|\\x[\da-fA-F][\da-fA-F])'\b" # single char or char hex escaped ex: '\00' for null char
+        setattr(t, 'len', len(t.value))
         t.value = t.value.strip("'")
         if len(t.value) == 1:
             t.value = ord(t.value)
@@ -158,16 +159,19 @@ class PS_Lexer:
 
     def t_Number_Hex(self,t):
         r'\b0x[\da-fA-F_]+\b'
+        setattr(t, 'len', len(t.value))
         t.value = int(t.value[2:].replace('_', ''), 16)
         return t
 
     def t_Number_Int(self,t):
         r'\b(0|[1-9][\d_]*)\b'
+        setattr(t, 'len', len(t.value))
         t.value = int(t.value.replace('_', ''))
         return t
 
     def t_Number_Float(self,t):
         r'\b(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+\-]?\d+)?\b'
+        setattr(t, 'len', len(t.value))
         t.value = float(t.value)
         return t
 
@@ -383,11 +387,12 @@ class PS_Lexer:
             col = self.lexpos
         if tok is not None:
             # offset correctly to point to first char of token
-            col += 1 - len(str(tok.value))
+            col += 1 - len(tok.value) if isinstance(tok.value, str) else tok.len
             #add location info
-            setattr(tok, "line", line)
+            setattr(tok, "location", Location(line, col))
+            setattr(tok, "location_end", Location(
+                line, col+len(tok.value) if isinstance(tok.value, str) else tok.len))
             setattr(tok, "lineno", line)
-            setattr(tok, "col", col)
         return tok
 
 tokens = PS_Lexer.tokens
