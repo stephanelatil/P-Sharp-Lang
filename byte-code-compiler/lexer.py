@@ -143,6 +143,18 @@ class PS_Lexer:
         t.value = t.value[1:-1]
         return t
 
+    def t_Number_Float(self,t):
+        r'\b((?:[1-9]\d*)(?:\.\d+)?|0\.)(?:[eE][+\-]?\d+)?\b'
+        setattr(t, 'len', len(t.value))
+        t.value = float(t.value)
+        return t
+
+    def t_Number_Int(self,t):
+        r'\b(0|[1-9][\d_]*)\b'
+        setattr(t, 'len', len(t.value))
+        t.value = int(t.value.replace('_', ''))
+        return t
+
     def t_Number_Char(self,t):
         r"\b'(.|\\x[\da-fA-F][\da-fA-F])'\b" # single char or char hex escaped ex: '\00' for null char
         setattr(t, 'len', len(t.value))
@@ -161,18 +173,6 @@ class PS_Lexer:
         r'\b0x[\da-fA-F_]+\b'
         setattr(t, 'len', len(t.value))
         t.value = int(t.value[2:].replace('_', ''), 16)
-        return t
-
-    def t_Number_Int(self,t):
-        r'\b(0|[1-9][\d_]*)\b'
-        setattr(t, 'len', len(t.value))
-        t.value = int(t.value.replace('_', ''))
-        return t
-
-    def t_Number_Float(self,t):
-        r'\b(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+\-]?\d+)?\b'
-        setattr(t, 'len', len(t.value))
-        t.value = float(t.value)
         return t
 
     def t_Punctuation_OpenParen(self,t):
