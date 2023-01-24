@@ -180,7 +180,7 @@ class PVarDecl(PlValue):
         
 
 class PBinOp(PExpression):
-    def __init__(self, location, left: PExpression, op: BinaryOperation, right: PExpression):
+    def __init__(self, location, left: PExpression, op: BinaryOperation, right: PExpression, last_token_end=None):
         self.left = left
         self.op = op
         super().__init__(location, right)
@@ -506,13 +506,13 @@ def p_return_void(p: YaccProduction):
 
 def p_return_value(p: YaccProduction):
     """Return : Keyword_Control_Return Expr Punctuation_EoL"""
-    loc2 = p[3].location_end
+    loc2 = p.slice[3].location_end
     p[0] = PReturn(None, p[2], last_token_end=loc2)
 
 
 def p_var_assignment(p: YaccProduction):
     """VarAssign : Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
-    loc2 = p[4].location_end
+    loc2 = p.slice[4].location_end
     p[0] = PAssign(None, p[1], p[3], loc2)
 
 
@@ -536,7 +536,7 @@ def p_number(p: YaccProduction):
               | Number_Hex
               | Number_Int
               | Number_Float"""
-    loc, loc2 = p.slice[1].value.location, p.slice[1].value.location_end
+    loc, loc2 = p.slice[1].location, p.slice[1].location_end
     p[0] = PNumeric(loc, p[1], loc2)
 
 
@@ -549,31 +549,31 @@ def p_expr_list(p: YaccProduction):
 
 def p_index(p: YaccProduction):
     """ArrayIndex : Expr Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
-    loc2 = p.slice[4].value.location_end
+    loc2 = p.slice[4].location_end
     p[0] = PIndex(None, p[1], p[3], last_token_end=loc2)
 
 
 def p_new_array(p: YaccProduction):
     """Expr : Keyword_Object_New Ident Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
-    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
+    loc, loc2 = p.slice[1].location, p.slice[5].location_end
     p[0] = PNewArray(loc, PType(p[2].location, p[2].identifier), p[4], last_token_end=loc2)
 
 
 def p_new_array_2(p: YaccProduction):
     """Expr : Keyword_Object_New Type Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
-    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
+    loc, loc2 = p.slice[1].location, p.slice[5].location_end
     p[0] = PNewArray(loc, p[2], p[4])
 
 
 def p_new_obj(p: YaccProduction):
     """Expr : Keyword_Object_New Ident Punctuation_OpenParen ExprList Punctuation_CloseParen"""
-    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
+    loc, loc2 = p.slice[1].location, p.slice[5].location_end
     p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier), p[4], last_token_end=loc2)
 
 
 def p_new_obj_2(p: YaccProduction):
     """Expr : Keyword_Object_New Type Punctuation_OpenParen ExprList Punctuation_CloseParen"""
-    loc, loc2 = p.slice[1].value.location, p.slice[5].value.location_end
+    loc, loc2 = p.slice[1].location, p.slice[5].location_end
     p[0] = PNewObj(loc, p[2], p[4], last_token_end=loc2)
 
 
@@ -602,7 +602,7 @@ def p_binop(p: YaccProduction):
 
 def p_paren(p: YaccProduction):
     """Expr : Punctuation_OpenParen Expr Punctuation_CloseParen"""
-    loc, loc2 = p.slice[1].value.location, p.slice[3].value.location_end
+    loc, loc2 = p.slice[1].location, p.slice[3].location_end
     p[0] = p[2]
     p[0].location, p[0].location_end = loc,loc2
     
@@ -611,7 +611,7 @@ def p_paren(p: YaccProduction):
 def p_UnOp(p: YaccProduction):
     '''Expr : Operator_Minus Expr
             | Operator_Unary_Not Expr %prec UNOP'''
-    loc = p.slice[1].value.location
+    loc = p.slice[1].location
     p[0] = PUnOp(loc, UnaryOperation(p[1]), p[2])
 
 
@@ -664,34 +664,34 @@ def p_copy_assign(p: YaccProduction):
 
 def p_array_literal(p: YaccProduction):
     """ArrayLiteral : Punctuation_OpenBracket ExprList Punctuation_CloseBracket"""
-    loc, loc2 = p.slice[1].value.location, p.slice[3].value.location_end
+    loc, loc2 = p.slice[1].location, p.slice[3].location_end
     p[0] = PExpression(loc, p[1], last_token_end=loc2)
 
 
 def p_call(p: YaccProduction):
     """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP""" 
     #add precedence to avoid 'Ident (Expr)' getting reduced to 'Ident Expr'
-    p[0] = PCall(None, p[1], p[3], p.slice[4].value.location_end)
+    p[0] = PCall(None, p[1], p[3], p.slice[4].location_end)
 
 
 def p_true(p: YaccProduction):
     """Expr : Keyword_Object_True"""
-    loc = p.slice[1].value.location
-    last_token_end = p.slice[1].value.location_end
+    loc = p.slice[1].location
+    last_token_end = p.slice[1].location_end
     p[0] = PExpression(loc, True, last_token_end=last_token_end)
 
 
 def p_false(p: YaccProduction):
     """Expr : Keyword_Object_False"""
-    loc = p.slice[1].value.location
-    last_token_end = p.slice[1].value.location_end
+    loc = p.slice[1].location
+    last_token_end = p.slice[1].location_end
     p[0] = PExpression(loc, False, last_token_end=last_token_end)
 
 
 def p_null(p: YaccProduction):
     """Expr : Keyword_Object_Null"""
-    loc = p.slice[1].value.location
-    last_token_end = p.slice[1].value.location_end
+    loc = p.slice[1].location
+    last_token_end = p.slice[1].location_end
     p[0] = PExpression(loc, None, last_token_end=last_token_end)
 
 def p_typed_args_single(p: YaccProduction):
@@ -729,11 +729,11 @@ def p_func_declaration_no_args(p: YaccProduction):
 def p_func_declaration_no_args_2(p: YaccProduction):
     """FuncDecl : Ident Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     p[0] = PFuncDecl(p[1].location, PType(p.slice[1].location, p[1].identifier, p.slice[1].last_token_end),
-                     p[2], [], p[6], last_token_end=p[7].value.location_end)
+                     p[2], [], p[6], last_token_end=p.slice[7].location_end)
 
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PClassDecl(None, p[2], p[4], last_token_end=p[5].value.location_end)
+    p[0] = PClassDecl(None, p[2], p[4], last_token_end=p.slice[5].location_end)
 
 # For extension / implementing interfaces
 # def p_class_declaration(p:YaccProduction):
@@ -744,32 +744,35 @@ def p_class_declaration(p: YaccProduction):
 
 def p_if(p: YaccProduction):
     """IfBloc : Keyword_Control_If Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PIf(None, p[3], p[6], PSkip(), last_token_end=p[7].value.location_end)
+    p[0] = PIf(None, p[3], p[6], PSkip(),
+               last_token_end=p.slice[7].location_end)
 
 
 def p_if_else(p: YaccProduction):
     """IfBloc : Keyword_Control_If Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace Keyword_Control_Else Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PIf(None, p[3], p[6], p[10], last_token_end=p[11].value.location_end)
+    p[0] = PIf(None, p[3], p[6], p[10],
+               last_token_end=p.slice[11].location_end)
 
 
 def p_for(p: YaccProduction):
     """ForBloc : Keyword_Control_For Punctuation_OpenParen VarDecl Expr Statement Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     p[0] = PFor(None, p[3], p[4], p[5], p[8],
-                last_token_end=p[9].value.location_end)
+                last_token_end=p.slice[9].location_end)
 
 
 def p_foreach(p: YaccProduction):
     """ForBloc : Keyword_Control_For Punctuation_OpenParen VarDecl Punctuation_TernarySeparator Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PForeach(None, p[3], p[5], p[8], last_token_end=p[9].value.location_end)
+    p[0] = PForeach(None, p[3], p[5], p[8],
+                    last_token_end=p.slice[9].location_end)
 
 
 def p_while(p: YaccProduction):
     """WhileBloc : Keyword_Control_While Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PWhile(None, p[3], p[6], last_token_end=p[7].value.location_end)
+    p[0] = PWhile(None, p[3], p[6], last_token_end=p.slice[7].location_end)
 
 def p_assert(p: YaccProduction):
     """Statement : Keyword_Control_Assert Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_EoL"""
-    p[0] = PAssert(None, p[3], last_token_end=p[5].value.location_end)
+    p[0] = PAssert(None, p[3], last_token_end=p.slice[5].location_end)
 
 def p_var(p: YaccProduction):
     """Ident : ID"""
@@ -779,9 +782,12 @@ def p_var(p: YaccProduction):
 
 def p_dot(p: YaccProduction):
     """Ident : Ident Operator_Dot Ident"""
+    if isinstance(p.slice[1], PDot):
+        p.slice[1] = PDot(p.slice[3].location, p.slice[1], p.slice[3].left)
+        p.slice[3] = p[3].rvalue
     if isinstance(p.slice[3], PDot):
         p.slice[1] = PDot(p.slice[3].location, p.slice[1], p.slice[3].left)
-        p.slice[3] = p.slice[3].rvalue
+        p.slice[3] = p[3].rvalue
     p[0] = PDot(None, p[1], p[3])
 
 
@@ -791,11 +797,14 @@ def p_ternary(p: YaccProduction):
 
 def p_error(p: LexToken):
     if p is None:
-        loc = parser.symstack[-1].value.location_end
+        if hasattr(parser.symstack[-1],"location_end"):
+            loc = parser.symstack[-1].location_end
+        else:
+            loc = parser.symstack[-1].value.location_end
         raise ParsingError(f"End of file found when a symbol was expected at location {loc}",
                            location=loc,
                            problem_token='EOF')
-    loc = Location(p.line, p.col)
+    loc = p.location
     raise ParsingError(f"Unexpected symbol '{p.value}' on "+str(loc), location=loc, problem_token=p.value)
 
 
