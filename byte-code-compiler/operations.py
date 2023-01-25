@@ -21,7 +21,7 @@ class BinaryOperation(Enum):
     SHIFT_RIGHT = ">>"
 
     def __repr__(self):
-        return "BinaryOperation."+self.name
+        return f"\"BinaryOperation.{self.name}\""
 
 class UnaryOperation(Enum):
     MINUS = '-'
@@ -30,5 +30,5 @@ class UnaryOperation(Enum):
     DECREMENT = "--"
 
     def __repr__(self):
-        return "UnaryOperation."+self.name
+        return f"\"UnaryOperation.{self.name}\""
     

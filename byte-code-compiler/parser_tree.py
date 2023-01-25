@@ -58,7 +58,7 @@ class PTreeElem:
                 self.location_end = last_token_end
 
     def __repr__(self):
-        inner = str(self.__dict__).replace("\'", "\"")
+        inner = str(self.__dict__).replace("\'", "\"").replace("None", 'null')
         return f'{{"{self.__class__.__name__}" : {inner}}}'
 
 
