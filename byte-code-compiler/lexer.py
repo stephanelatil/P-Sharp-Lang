@@ -223,12 +223,12 @@ class PS_Lexer:
         r'<='
         return t
 
-    def t_Operator_Binary_Bool_Gt(self,t):
-        r'>'
+    def t_Operator_Binary_Shl(self, t):
+        r'<<'
         return t
 
-    def t_Operator_Binary_Bool_Lt(self,t):
-        r'<'
+    def t_Operator_Binary_Shr(self, t):
+        r'>>'
         return t
 
     def t_Operator_Binary_Copy(self,t):
@@ -306,13 +306,14 @@ class PS_Lexer:
     def t_Operator_Binary_Xor(self,t):
         r'\^'
         return t
+    
 
-    def t_Operator_Binary_Shl(self,t):
-        r'<<'
+    def t_Operator_Binary_Bool_Gt(self,t):
+        r'>'
         return t
 
-    def t_Operator_Binary_Shr(self,t):
-        r'>>'
+    def t_Operator_Binary_Bool_Lt(self,t):
+        r'<'
         return t
 
     def t_Punctuation_EoL(self,t):
