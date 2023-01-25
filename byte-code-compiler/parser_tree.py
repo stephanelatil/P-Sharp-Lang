@@ -68,13 +68,15 @@ class PIdentifier(PTreeElem):
         super().__init__(location, last_token_end=last_token_end)
 
 
-class PType:
-    pass
+class PType(PTreeElem):
+    def __init__(self, location, type_identifier, last_token_end=None):
+        self.type_identifier = type_identifier
+        super().__init__(location, last_token_end=last_token_end)
 
 
 class PArray(PType):
-    def __init__(self, location, arrType: PType) -> None:
-        super().__init__(location, arrType)
+    def __init__(self, location, arrType: PType, last_token_end=None) -> None:
+        super().__init__(location, arrType, last_token_end=last_token_end)
 
 
 class PScope(PTreeElem):
@@ -134,12 +136,6 @@ class PFuncDecl(PTreeElem):
 class PlValue(PExpression):
     def __init__(self, location, lvalue, last_token_end=None):
         super().__init__(location, lvalue, last_token_end=last_token_end)
-
-
-class PType(PTreeElem):
-    def __init__(self, location, type_identifier, last_token_end=None):
-        self.type_identifier = type_identifier
-        super().__init__(location, last_token_end=last_token_end)
 
 
 class PUType(PType):
@@ -553,6 +549,18 @@ def p_index(p: YaccProduction):
     p[0] = PIndex(None, p[1], p[3], last_token_end=loc2)
 
 
+def p_array(p: YaccProduction):
+    """Type : Ident Punctuation_OpenBracket Punctuation_CloseBracket"""
+    loc2 = p.slice[3].location_end
+    p[0] = PArray(None, PType(p[1].location, p[1].identifier), last_token_end=loc2)
+
+
+def p_array_2(p: YaccProduction):
+    """Type : Type Punctuation_OpenBracket Punctuation_CloseBracket"""
+    loc2 = p.slice[3].location_end
+    p[0] = PArray(None, p[1], last_token_end=loc2)
+
+
 def p_new_array(p: YaccProduction):
     """Expr : Keyword_Object_New Ident Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
     loc, loc2 = p.slice[1].location, p.slice[5].location_end
@@ -808,4 +816,4 @@ def p_error(p: LexToken):
     raise ParsingError(f"Unexpected symbol '{p.value}' on "+str(loc), location=loc, problem_token=p.value)
 
 
-parser = yacc.yacc(debug=True)
+parser = yacc.yacc()
