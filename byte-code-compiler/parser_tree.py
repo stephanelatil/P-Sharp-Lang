@@ -68,10 +68,15 @@ class PIdentifier(PTreeElem):
         super().__init__(location, last_token_end=last_token_end)
 
 
-class PType(PTreeElem):
+class PThis(PIdentifier):
+    def __init__(self, location, last_token_end=None):
+        super().__init__(location, identifier="this", last_token_end=last_token_end)
+
+
+class PType(PIdentifier):
     def __init__(self, location, type_identifier, last_token_end=None):
         self.type_identifier = type_identifier
-        super().__init__(location, last_token_end=last_token_end)
+        super().__init__(location, type_identifier, last_token_end=last_token_end)
 
 
 class PArray(PType):
@@ -97,11 +102,14 @@ class PModule(PScope):
 
 
 class PClassDecl(PScope):
-    def __init__(self, location, identifier, inner_scope, parentClassId=None, interfaces=None):
+    def __init__(self, location, identifier:PIdentifier, inner_scope:PScope, parentClassId=None, interfaces=None):
         self.identifier = identifier
         self.inner_scope = inner_scope
         super().__init__(location)
         # no inheritance yet
+        if isinstance(identifier, PThis):
+            self.parsing_errors.append(ParsingError(
+                "'this' cannot be used in this context", location=self.location, problem_token="this"))
 
 
 class PStatement(PTreeElem):
@@ -130,12 +138,15 @@ class PFuncDecl(PTreeElem):
         self.id = id
         self.args = args
         self.body = body
-        super().__init__(location, last_token_end = last_token_end)
+        super().__init__(location, last_token_end=last_token_end)
+        if isinstance(id, PThis):
+            self.parsing_errors.append(ParsingError(
+                "'this' is a reserved keyword", location=self.location, problem_token="this"))
 
 
 class PlValue(PExpression):
-    def __init__(self, location, lvalue, last_token_end=None):
-        super().__init__(location, lvalue, last_token_end=last_token_end)
+    def __init__(self, location, value, last_token_end=None):
+        super().__init__(location, value, last_token_end=last_token_end)
 
 
 class PUType(PType):
@@ -162,9 +173,12 @@ class PIndex(PExpression):
 
 
 class PDot(PlValue):
-    def __init__(self, location, left, right):
+    def __init__(self, location, left:PIdentifier, right:PIdentifier):
         self.left = left
-        super().__init__(location, rvalue=right)
+        super().__init__(location, right)
+        if isinstance(right, PThis):
+            self.parsing_errors.append(ParsingError(
+                "'this' is not a valid field", location=self.location, problem_token="this"))
 
 
 class PVarDecl(PlValue):
@@ -173,6 +187,8 @@ class PVarDecl(PlValue):
         self.id = id
         self.init_value = init_value;
         super().__init__(location, id,  last_token_end=last_token_end)
+        if isinstance(id, PThis):
+            self.parsing_errors.append(ParsingError("'this' cannot be used in this context", location=self.location, problem_token="this"))
         
 
 class PBinOp(PExpression):
@@ -294,7 +310,10 @@ class PImport(PStatement):
     def __init__(self, location, module: PIdentifier, item: PIdentifier, last_token_end=None):
         self.module = module
         self.item = item
-        super().__init__(location, last_token_end = last_token_end)
+        super().__init__(location, last_token_end=last_token_end)
+        if isinstance(item, PThis):
+            self.parsing_errors.append(ParsingError(
+                "'this' is a reserved keyword", location=self.location, problem_token="this"))
 
 
 # p_..... functions are for building the grammar
@@ -732,6 +751,20 @@ def p_func_declaration_no_args(p: YaccProduction):
     """FuncDecl : Type Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
     p[0] = PFuncDecl(p[1].location, p[1], p[2], [], p[6],
                      last_token_end=p.slice[7].location_end)
+    
+def p_void_constructor_decl(p:YaccProduction):
+    """FuncDecl : Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    p[0] = PFuncDecl(p.slice[2].location, p[2], [], p[6],
+                     last_token_end=p.slice[7].location_end)
+    
+def p_constructor_decl(p:YaccProduction):
+    """FuncDecl : Ident Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    p[0] = PFuncDecl(p.slice[2].location, p[2], p[4], p[7],
+                            last_token_end=p.slice[8].location_end)
+    
+def p_this(p:YaccProduction):
+    """Ident : Keyword_Object_This"""
+    p[0] = PThis(p.slice[1].location, p.slice[1].location_end)
 
 
 def p_func_declaration_no_args_2(p: YaccProduction):
