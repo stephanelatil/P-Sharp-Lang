@@ -85,10 +85,10 @@ class PArray(PType):
 
 
 class PScope(PTreeElem):
-    def __init__(self, location, *, functions, varDecl, statements, last_token_end=None):
-        self.funcDecl = functions
-        self.varDecl = varDecl
-        self.statements = statements
+    def __init__(self, location, *, functions=None, varDecl=None, statements=None, last_token_end=None):
+        self.funcDecl = [] if functions is None else functions
+        self.varDecl = [] if varDecl is None else varDecl
+        self.statements = [] if statements is None else statements
         super().__init__(location, last_token_end=last_token_end)
 
 
@@ -102,10 +102,10 @@ class PModule(PScope):
 
 
 class PClassDecl(PScope):
-    def __init__(self, location, identifier:PIdentifier, inner_scope:PScope, parentClassId=None, interfaces=None):
+    def __init__(self, location, identifier:PIdentifier, inner_scope:PScope,last_token_end=None, *, parentClassId=None, interfaces=None):
         self.identifier = identifier
         self.inner_scope = inner_scope
-        super().__init__(location)
+        super().__init__(location, last_token_end=last_token_end)
         # no inheritance yet
         if isinstance(identifier, PThis):
             self.parsing_errors.append(ParsingError(
@@ -754,13 +754,13 @@ def p_func_declaration_no_args(p: YaccProduction):
     
 def p_void_constructor_decl(p:YaccProduction):
     """FuncDecl : Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PFuncDecl(p.slice[2].location, p[2], [], p[6],
-                     last_token_end=p.slice[7].location_end)
+    p[0] = PFuncDecl(p[1].location, p[1], p[1], [], p[5],
+                     last_token_end=p.slice[6].location_end)
     
 def p_constructor_decl(p:YaccProduction):
     """FuncDecl : Ident Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PFuncDecl(p.slice[2].location, p[2], p[4], p[7],
-                            last_token_end=p.slice[8].location_end)
+    p[0] = PFuncDecl(p[1].location, p[1], p[1], p[3], p[6],
+                            last_token_end=p[7].location_end)
     
 def p_this(p:YaccProduction):
     """Ident : Keyword_Object_This"""
@@ -774,7 +774,7 @@ def p_func_declaration_no_args_2(p: YaccProduction):
 
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PClassDecl(None, p[2], p[4], last_token_end=p.slice[5].location_end)
+    p[0] = PClassDecl(p.slice[1].location, p[2], p[4], last_token_end=p.slice[5].location_end)
 
 # For extension / implementing interfaces
 # def p_class_declaration(p:YaccProduction):
