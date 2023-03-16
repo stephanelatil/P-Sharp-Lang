@@ -124,10 +124,10 @@ class PExpression(PStatement):
 
 
 class PEnum(PScope):
-    def __init__(self, location, identifier, values: list[PStatement], last_token_end=None):
+    def __init__(self, location, identifier:PIdentifier, values: list[PIdentifier], last_token_end=None):
+        super().__init__(location, statements = values, last_token_end = last_token_end)
         self.identifier = identifier
         self.enum_values = values
-        super().__init__(location, statements = values, last_token_end = last_token_end)
 
 class PVarDecl:
     pass
@@ -156,10 +156,6 @@ class PUType(PType):
 
 class PNumeric(PExpression):
     def __init__(self, location, value, last_token_end=None):
-        if isinstance(value, float):
-            self.typ = "float"
-        else:
-            self.typ = "int"
         super().__init__(location, value, last_token_end=last_token_end)
         
 class PIndex(PExpression):
@@ -184,9 +180,8 @@ class PDot(PlValue):
 class PVarDecl(PlValue):
     def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression=None,  last_token_end=None):
         self.typ = typ
-        self.id = id
-        self.init_value = init_value;
-        super().__init__(location, id,  last_token_end=last_token_end)
+        self.init_value = init_value
+        super().__init__(location, id, last_token_end=last_token_end)
         if isinstance(id, PThis):
             self.parsing_errors.append(ParsingError("'this' cannot be used in this context", location=self.location, problem_token="this"))
         
@@ -216,7 +211,6 @@ class PUnOp(PExpression):
 
 class PCall(PExpression):
     def __init__(self, location, id: PIdentifier, args=list[PExpression], last_token_end=None):
-        self.id = id
         self.args = args
         super().__init__(location, id, last_token_end=last_token_end)
 
@@ -362,7 +356,8 @@ def p_statement(p: YaccProduction):
     p[0] = p[1]
     
 def p_statement_2(p: YaccProduction):
-    """Statement : Expr Punctuation_EoL"""
+    """Statement : Expr Punctuation_EoL
+                 | FuncCall Punctuation_EoL"""
     p[0] = p[1]
     p[0].location_end =  p.slice[2].location_end
 
@@ -698,7 +693,27 @@ def p_array_literal(p: YaccProduction):
 def p_call(p: YaccProduction):
     """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP""" 
     #add precedence to avoid 'Ident (Expr)' getting reduced to 'Ident Expr'
-    p[0] = PCall(None, p[1], p[3], p.slice[4].location_end)
+    def place_pcall(node):
+        if isinstance(node, PDot):
+            if isinstance(node.rvalue, PDot):
+                place_pcall(node.rvalue)
+            else:
+                node.rvalue = PCall(None, node.rvalue, p[3],
+                                    p.slice[4].location_end)
+    place_pcall(p[1])
+    p[0] = p[1]
+
+def p_call_no_Args(p: YaccProduction):
+    """FuncCall : Ident Punctuation_OpenParen Punctuation_CloseParen %prec UNOP"""
+    def place_pcall(node):
+        if isinstance(node, PDot):
+            if isinstance(node.rvalue, PDot):
+                place_pcall(node.rvalue)
+            else:
+                node.rvalue = PCall(None, node.rvalue, [],
+                                    p.slice[3].location_end)
+    place_pcall(p[1])
+    p[0] = p[1]
 
 
 def p_true(p: YaccProduction):
