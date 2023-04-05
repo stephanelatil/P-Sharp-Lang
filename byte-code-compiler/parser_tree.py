@@ -597,11 +597,23 @@ def p_new_obj(p: YaccProduction):
     loc, loc2 = p.slice[1].location, p.slice[5].location_end
     p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier), p[4], last_token_end=loc2)
 
-
 def p_new_obj_2(p: YaccProduction):
     """Expr : Keyword_Object_New Type Punctuation_OpenParen ExprList Punctuation_CloseParen"""
     loc, loc2 = p.slice[1].location, p.slice[5].location_end
     p[0] = PNewObj(loc, p[2], p[4], last_token_end=loc2)
+
+
+def p_new_obj_no_args(p: YaccProduction):
+    """Expr : Keyword_Object_New Ident Punctuation_OpenParen Punctuation_CloseParen"""
+    loc, loc2 = p.slice[1].location, p.slice[4].location_end
+    p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier),
+                   [], last_token_end=loc2)
+
+
+def p_new_obj_no_args_2(p: YaccProduction):
+    """Expr : Keyword_Object_New Type Punctuation_OpenParen Punctuation_CloseParen"""
+    loc, loc2 = p.slice[1].location, p.slice[4].location_end
+    p[0] = PNewObj(loc, p[2], [], last_token_end=loc2)
 
 
 def p_binop(p: YaccProduction):
@@ -696,29 +708,37 @@ def p_array_literal(p: YaccProduction):
 
 
 def p_call(p: YaccProduction):
-    """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP""" 
+    """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP
+                | Ident Punctuation_OpenParen Expr Punctuation_CloseParen %prec UNOP""" 
     #add precedence to avoid 'Ident (Expr)' getting reduced to 'Ident Expr'
     def place_pcall(node):
-        if isinstance(node, PDot):
-            if isinstance(node.rvalue, PDot):
-                place_pcall(node.rvalue)
-            else:
-                node.rvalue = PCall(None, node.rvalue, p[3],
-                                    p.slice[4].location_end)
-    place_pcall(p[1])
-    p[0] = p[1]
+        if isinstance(node.rvalue, PDot):
+            place_pcall(node.rvalue)
+        else:
+            node.rvalue = PCall(None, node.rvalue, p[3] if isinstance(p[3], list) else p[3],
+                                p.slice[4].location_end)
+            
+    if isinstance(p[1], PDot):
+        place_pcall(p[1])
+        p[0] = p[1]
+    else: # p[1] is PIdent
+        p[0] = PCall(None, p[1], p[3] if isinstance(p[3], list) else p[3],
+                     p.slice[4].location_end)
+    
 
 def p_call_no_Args(p: YaccProduction):
     """FuncCall : Ident Punctuation_OpenParen Punctuation_CloseParen %prec UNOP"""
     def place_pcall(node):
-        if isinstance(node, PDot):
-            if isinstance(node.rvalue, PDot):
-                place_pcall(node.rvalue)
-            else:
-                node.rvalue = PCall(None, node.rvalue, [],
-                                    p.slice[3].location_end)
-    place_pcall(p[1])
-    p[0] = p[1]
+        if isinstance(node.rvalue, PDot):
+            place_pcall(node.rvalue)
+        else:
+            node.rvalue = PCall(None, node.rvalue, p.slice[3].location_end)
+
+    if isinstance(p[1], PDot):
+        place_pcall(p[1])
+        p[0] = p[1]
+    else:  # p[1] is PIdent
+        p[0] = PCall(None, p[1], [], p.slice[3].location_end)
 
 
 def p_true(p: YaccProduction):
