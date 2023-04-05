@@ -554,7 +554,12 @@ def p_expr_list(p: YaccProduction):
     """ExprList : empty
                 | Expr
                 | ExprList Punctuation_Comma Expr"""
-    p[0] = [p[i] for i in range(1, len(p))]
+    if p.slice[1].value is None: #empty
+        p[0] = []
+    elif not isinstance(p[1], list): #second regex
+        p[0] = [p[1]]
+    else:
+        p[0] = p[1] + [p[3]]
 
 
 def p_index(p: YaccProduction):
@@ -837,7 +842,18 @@ def p_var(p: YaccProduction):
 
 
 def p_dot(p: YaccProduction):
-    """Ident : Ident Operator_Dot Ident"""
+    """Ident : Ident Operator_Dot Ident  %prec UNOP"""
+    if isinstance(p.slice[1], PDot):
+        p.slice[1] = PDot(p.slice[3].location, p.slice[1], p.slice[3].left)
+        p.slice[3] = p[3].rvalue
+    if isinstance(p.slice[3], PDot):
+        p.slice[1] = PDot(p.slice[3].location, p.slice[1], p.slice[3].left)
+        p.slice[3] = p[3].rvalue
+    p[0] = PDot(None, p[1], p[3])
+
+
+def p_dot_2(p: YaccProduction):
+    """Ident : Expr Operator_Dot Ident %prec UNOP"""
     if isinstance(p.slice[1], PDot):
         p.slice[1] = PDot(p.slice[3].location, p.slice[1], p.slice[3].left)
         p.slice[3] = p[3].rvalue
