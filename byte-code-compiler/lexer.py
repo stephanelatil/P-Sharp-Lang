@@ -145,21 +145,24 @@ class PS_Lexer:
         r'"((?:[^\n"\\]*|\\.)*)"'
         t.value = t.value[1:-1]
         return t
-
+    
     def t_Number_Float(self,t):
-        r'\b((?:[1-9]\d*)(?:\.\d+)?|0\.)(?:[eE][+\-]?\d+)?\b'
+        r'((?:(([1-9][\d_]*)(\.\d[\d_]*)|0\.)([eE][+\-]?\d[\d_]*))|(?:([1-9][\d_]*)([eE][+\-]?\d[\d_]*))|(?:([0-9][\d_]*)(\.\d[\d_]*)))\b'
         setattr(t, 'len', len(t.value))
         t.value = float(t.value)
         return t
 
     def t_Number_Int(self,t):
-        r'\b(0|[1-9][\d_]*)\b'
+        r'\b(0|[1-9][\d_]*)([^\d_])?'
         setattr(t, 'len', len(t.value))
+        if t.value[-1] not in range(10):
+            t.value = t.value[:-1]
+            t.lexer.skip(-1)
         t.value = int(t.value.replace('_', ''))
         return t
 
     def t_Number_Char(self,t):
-        r"\b'(.|\\x[\da-fA-F][\da-fA-F])'\b" # single char or char hex escaped ex: '\00' for null char
+        r"'(.{1}|\\x[\da-fA-F][\da-fA-F])'" # single char or char hex escaped ex: '\00' for null char
         setattr(t, 'len', len(t.value))
         t.value = t.value.strip("'")
         if len(t.value) == 1:
