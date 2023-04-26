@@ -27,15 +27,17 @@ class MultiParsingException(ParsingError):
 
 # P.... classes are there to build the abstract syntax tree
 
-class JSON_bool:
-    def __init__(self, bool_val) -> None:
-        self._bool_val = bool_val
+class JSON_Val:
+    def __init__(self, val) -> None:
+        self._val = val
     
     def __repr__(self):
         return str(self)
     
     def __str__(self):
-        return 'true' if self._bool_val else 'false'
+        if self._val is None:
+            return 'null'
+        return 'true' if self._val else 'false'
 
 class PTreeElem:
     def __init__(self, location:Location, *, last_token_end=None) -> None:
@@ -73,13 +75,13 @@ class PTreeElem:
                 if isinstance(d[key], dict):
                     replace(d,old_val, new_val)
                 else:
-                    if d[key] == old_val:
+                    if isinstance(d[key], bool):
+                        d[key] = JSON_Val(d[key])
+                    elif d[key] == old_val:
                         d[key] = new_val
                         
         inner = deepcopy(self.__dict__)
-        replace(inner, None, 'null')
-        replace(inner, True, JSON_bool(True))
-        replace(inner, False, JSON_bool(False))
+        replace(inner, None, JSON_Val(None))
         inner = str(inner).replace("\'", "\"")
         return f'{{"{self.__class__.__name__}" : {inner}}}'
 
