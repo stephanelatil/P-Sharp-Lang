@@ -571,7 +571,10 @@ def p_expr(p: YaccProduction):
             | ArrayIndex
             | FuncCall
             | String"""
-    p[0] = PExpression(None, p[1])
+    if isinstance(p[1], PExpression):
+        p[0] = p[1]
+    else:
+        p[0] = PExpression(None, p[1])
 
 def p_string(p: YaccProduction):
     """String : Literal_String"""
@@ -742,7 +745,7 @@ def p_copy_assign(p: YaccProduction):
 def p_array_literal(p: YaccProduction):
     """ArrayLiteral : Punctuation_OpenBracket ExprList Punctuation_CloseBracket"""
     loc, loc2 = p.slice[1].location, p.slice[3].location_end
-    p[0] = PExpression(loc, p[1], last_token_end=loc2)
+    p[0] = PExpression(loc, p[2], last_token_end=loc2)
 
 
 def p_call(p: YaccProduction):
