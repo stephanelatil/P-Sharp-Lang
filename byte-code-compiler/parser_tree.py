@@ -56,6 +56,8 @@ class PTreeElem:
                 self.location = min(self.location, attr.location, key=min_loc)
             elif isinstance(attr, list):
                 for elem in attr:
+                    if isinstance(elem, ParsingError): #skip parsing errors attribute
+                        break
                     self.parsing_errors += getattr(elem, "parsing_errors", [])
                     self.location_end = max(
                         self.location_end, elem.location_end, key=max_loc)
@@ -194,9 +196,18 @@ class PIndex(PExpression):
 
 class PDot(PlValue):
     def __init__(self, location, left:PIdentifier, right:PIdentifier):
+        def has_this(elem):
+            if isinstance(elem, PThis):
+                return True
+            if isinstance(elem, PDot):
+                return has_this(elem.left) or has_this(elem.rvalue)
+            if isinstance(elem, PExpression):
+                return has_this(elem.rvalue)
+            return False
+        
         self.left = left
         super().__init__(location, right)
-        if isinstance(right, PThis):
+        if has_this(right):
             self.parsing_errors.append(ParsingError(
                 "'this' is not a valid field", location=self.location, problem_token="this"))
 
@@ -410,26 +421,28 @@ def p_all_statements_classDecl(p: YaccProduction):
 
 def p_all_statements_addStatement(p: YaccProduction):
     """GlobalStatementList : Statement GlobalStatementList"""
-    loc = None
     if isinstance(p[1], PVarDecl):
-        p[0] = PModule(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
+        p[0] = PModule(None, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
             p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
     elif isinstance(p[1], PFuncDecl):
-        p[0] = PModule(loc, functions=[p[1]]+deepcopy(p[2].funcDecl), varDecl=deepcopy(
+        p[0] = PModule(None, functions=[p[1]]+deepcopy(p[2].funcDecl), varDecl=deepcopy(
             p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
     else:
-        p[0] = PModule(loc, functions=deepcopy(p[2].funcDecl), varDecl=deepcopy(
+        p[0] = PModule(None, functions=deepcopy(p[2].funcDecl), varDecl=deepcopy(
             p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=[p[1]]+deepcopy(p[2].statements))
 
 def p_all_statements_addSClassDecl(p: YaccProduction):
     """GlobalStatementList : ClassDecl GlobalStatementList"""
-    loc = None
-    p[0] = PModule(loc, functions=deepcopy(p[2].funcDecl), varDecl=deepcopy(
+    p[0] = PModule(None, functions=deepcopy(p[2].funcDecl), varDecl=deepcopy(
         p[2].varDecl), classDecl=[p[1]]+deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
 
 def p_bloc_empty(p: YaccProduction):
     """StatementList : empty"""
-    p[0] = PScope(parser.symstack[-1].location, functions=[], varDecl=[], statements=[])
+    if parser.symstack[-1].type == '$end':
+        loc = Location(-1,-1)
+    else:
+        loc = parser.symstack[-1].location
+    p[0] = PScope(loc, functions=[], varDecl=[], statements=[])
 
 def p_bloc_single(p: YaccProduction):
     """StatementList : Statement"""
