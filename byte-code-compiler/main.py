@@ -1,8 +1,7 @@
-import os
+import os, sys
 from argparse import ArgumentParser
-
 from lexer import PS_Lexer
-from parser_tree import parser
+from parser_tree import parser, MultiParsingException, ParsingError
 
 def validate_path(path:str):
     assert(isinstance(path, str))
@@ -49,7 +48,15 @@ if args.print_reconstructed_code:
 if args.stage == 'L': #Lex only
     exit(0)
 
-p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+try:
+    p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+except MultiParsingException as e:
+    print(e, file=sys.stderr)
+    exit(len(e.exceptions))
+except ParsingError as e:
+    print(e, file=sys.stderr)
+    exit(1)
+    
 if args.print_ast:
     print(p)
 

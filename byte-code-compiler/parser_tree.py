@@ -4,20 +4,20 @@ from ply.yacc import YaccProduction
 from lexer import tokens, Location
 from operations import BinaryOperation, UnaryOperation
 from copy import deepcopy
+import sys
 
-
-class ParsingError(SyntaxError):
+class ParsingError(Exception):
     def __init__(self, *args: object, location:Location=Location(-1,-1), problem_token=None) -> None:
         self.location = location
         self.problem_token = problem_token
         super().__init__(*args)
     
     def __str__(self) -> str:
-        return f"Parsing error on line {self.location.line} and column {self.location.col}.\nProblem Token:{repr(self.problem_token)}"
+        return f"Parsing error on line {self.location.line} and column {self.location.col}.\n\tProblem Token:{repr(self.problem_token)}"
     
 
 class MultiParsingException(ParsingError):
-    def __init__(self, *args: object, exceptions=None) -> None:
+    def __init__(self, *args: object, exceptions:list=None) -> None:
         super().__init__(args)
         self.exceptions = exceptions
 
@@ -119,12 +119,13 @@ class PScope(PTreeElem):
 
 
 class PModule(PScope):
-    def __init__(self, location, *, functions=None, varDecl=None, classDecl=None, statements=None):
+    def __init__(self, location, *, functions=None, varDecl=None, classDecl=None, statements=None, quiet=False):
         self.classDecl = classDecl
         super().__init__(location, functions=functions,
                          varDecl=varDecl, statements=statements)
         if len(self.parsing_errors) > 0:
-            raise MultiParsingException(self.parsing_errors)
+            prob = MultiParsingException(exceptions = self.parsing_errors)
+            raise prob
 
 
 class PClassDecl(PScope):
