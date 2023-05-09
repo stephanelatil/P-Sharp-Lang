@@ -17,9 +17,9 @@ class ParsingError(Exception):
     
 
 class MultiParsingException(ParsingError):
-    def __init__(self, *args: object, exceptions:list=None) -> None:
+    def __init__(self, *args: object, exceptions:list|None=None) -> None:
         super().__init__(args)
-        self.exceptions = exceptions
+        self.exceptions = list() if exceptions is None else exceptions
 
     def __str__(self) -> str:
         return "\n**********\n".join([str(x) for x in self.exceptions])
@@ -40,10 +40,10 @@ class JSON_Val:
         return 'true' if self._val else 'false'
 
 class PTreeElem:
-    def __init__(self, location:Location, *, last_token_end=None) -> None:
-        def max_loc(loc:Location):
+    def __init__(self, location:Location, *, last_token_end:Location|None=None) -> None:
+        def max_loc(loc:Location|None):
             return 100000*loc.line+loc.col if loc is not None else 1
-        def min_loc(loc:Location):
+        def min_loc(loc:Location|None):
             return 100000*loc.line+loc.col if loc is not None else 9999999999999999
         
         self.location = location
@@ -89,29 +89,29 @@ class PTreeElem:
 
 
 class PIdentifier(PTreeElem):
-    def __init__(self, location, identifier:str, last_token_end=None):
+    def __init__(self, location, identifier:str, last_token_end:Location|None=None):
         self.identifier = identifier
         super().__init__(location, last_token_end=last_token_end)
 
 
 class PThis(PIdentifier):
-    def __init__(self, location, last_token_end=None):
+    def __init__(self, location, last_token_end:Location|None=None):
         super().__init__(location, identifier="this", last_token_end=last_token_end)
 
 
 class PType(PIdentifier):
-    def __init__(self, location, type_identifier, last_token_end=None):
+    def __init__(self, location, type_identifier, last_token_end:Location|None=None):
         self.type_identifier = type_identifier
         super().__init__(location, type_identifier, last_token_end=last_token_end)
 
 
 class PArray(PType):
-    def __init__(self, location, arrType: PType, last_token_end=None) -> None:
+    def __init__(self, location, arrType: PType, last_token_end:Location|None=None) -> None:
         super().__init__(location, arrType, last_token_end=last_token_end)
 
 
 class PScope(PTreeElem):
-    def __init__(self, location, *, functions=None, varDecl=None, statements=None, last_token_end=None):
+    def __init__(self, location, *, functions=None, varDecl=None, statements=None, last_token_end:Location|None=None):
         self.funcDecl = [] if functions is None else functions
         self.varDecl = [] if varDecl is None else varDecl
         self.statements = [] if statements is None else statements
@@ -119,7 +119,8 @@ class PScope(PTreeElem):
 
 
 class PModule(PScope):
-    def __init__(self, location, *, functions=None, varDecl=None, classDecl=None, statements=None, quiet=False):
+    def __init__(self, location, *, classDecl:"list[PClassDecl]", functions:"list[PFuncDecl]"=[],
+                 varDecl:"list[PVarDecl]"=[], statements:"list[PStatement]"=[]):
         self.classDecl = classDecl
         super().__init__(location, functions=functions,
                          varDecl=varDecl, statements=statements)
@@ -129,7 +130,7 @@ class PModule(PScope):
 
 
 class PClassDecl(PScope):
-    def __init__(self, location, identifier:PIdentifier, inner_scope:PScope,last_token_end=None, *, parentClassId=None, interfaces=None):
+    def __init__(self, location, identifier:PIdentifier, inner_scope:PScope,last_token_end:Location|None=None, *, parentClassId=None, interfaces=None):
         self.identifier = identifier
         self.inner_scope = inner_scope
         super().__init__(location, last_token_end=last_token_end)
@@ -140,28 +141,28 @@ class PClassDecl(PScope):
 
 
 class PStatement(PTreeElem):
-    def __init__(self, location, last_token_end=None):
+    def __init__(self, location, last_token_end:Location|None=None):
         super().__init__(location, last_token_end=last_token_end)
 
 
 class PExpression(PStatement):
-    def __init__(self, location, rvalue, last_token_end=None):
+    def __init__(self, location, rvalue:PTreeElem|str|int|float|bool, last_token_end:Location|None=None):
         self.rvalue = rvalue
         super().__init__(location, last_token_end = last_token_end)
 
 
 class PEnum(PScope):
-    def __init__(self, location, identifier:PIdentifier, values: list[PIdentifier], last_token_end=None):
+    def __init__(self, location, identifier:PIdentifier, values: list[PIdentifier], last_token_end:Location|None=None):
         super().__init__(location, statements = values, last_token_end = last_token_end)
         self.identifier = identifier
         self.enum_values = values
 
 class PlValue(PExpression):
-    def __init__(self, location, value, last_token_end=None):
+    def __init__(self, location, value, last_token_end:Location|None=None):
         super().__init__(location, value, last_token_end=last_token_end)
 
 class PVarDecl(PlValue):
-    def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression=None,  last_token_end=None):
+    def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression|None=None,  last_token_end:Location|None=None):
         self.typ = typ
         self.init_value = init_value
         super().__init__(location, id, last_token_end=last_token_end)
@@ -169,7 +170,7 @@ class PVarDecl(PlValue):
             self.parsing_errors.append(ParsingError("'this' cannot be used in this context", location=self.location, problem_token="this"))
 
 class PFuncDecl(PTreeElem):
-    def __init__(self, location, returnType: PType, id: PIdentifier, args: list[PVarDecl], body: PScope, last_token_end=None):
+    def __init__(self, location, returnType: PType, id: PIdentifier, args: list[PVarDecl], body: PScope, last_token_end:Location|None=None):
         self.returnType = returnType
         self.id = id
         self.args = args
@@ -180,22 +181,21 @@ class PFuncDecl(PTreeElem):
                 "'this' is a reserved keyword", location=self.location, problem_token="this"))
 
 class PUType(PType):
-    def __init__(self, location, type_identifier, last_token_end=None):
+    def __init__(self, location, type_identifier, last_token_end:Location|None=None):
         super().__init__(location, type_identifier, last_token_end=last_token_end)
 
 
 class PNumeric(PExpression):
-    def __init__(self, location, value, last_token_end=None):
+    def __init__(self, location, value:int, last_token_end:Location|None=None):
         super().__init__(location, value, last_token_end=last_token_end)
         
 class PIndex(PExpression):
     """for indexing : array[idx]"""
-
-    def __init__(self, location, array: PExpression, idx: PExpression,  last_token_end:tuple=None):
+    def __init__(self, location, array: PExpression, idx: PExpression,  last_token_end:Location|None=None):
         if location is None:
             location = idx.location
         self.index = idx.rvalue
-        super().__init__(location, array)
+        super().__init__(location, array, last_token_end=last_token_end)
 
 
 class PDot(PlValue):
@@ -217,74 +217,74 @@ class PDot(PlValue):
         
 
 class PBinOp(PExpression):
-    def __init__(self, location, left: PExpression, op: BinaryOperation, right: PExpression, last_token_end=None):
+    def __init__(self, location, left: PExpression, op: BinaryOperation, right: PExpression, last_token_end:Location|None=None):
         self.left = left
         self.op = op
         super().__init__(location, right)
 
 
 class PAssign(PBinOp):
-    def __init__(self, location, lvalue: PlValue, rvalue: PExpression, last_token_end=None):
-        super().__init__(location, left=lvalue, right=rvalue, op=None, last_token_end=last_token_end)
+    def __init__(self, location, lvalue: PlValue, rvalue: PExpression, last_token_end:Location|None=None):
+        super().__init__(location, left=lvalue, right=rvalue, op=BinaryOperation.ASSIGN, last_token_end=last_token_end)
 
 
 class PCopyAssign(PBinOp):
-    def __init__(self, location, lvalue: PlValue, rvalue: PExpression, last_token_end=None):
-        super().__init__(location, left=lvalue, right=rvalue, op=None, last_token_end=last_token_end)
+    def __init__(self, location, lvalue: PlValue, rvalue: PExpression, last_token_end:Location|None=None):
+        super().__init__(location, left=lvalue, right=rvalue, op=BinaryOperation.COPY, last_token_end=last_token_end)
 
 
 class PUnOp(PExpression):
-    def __init__(self, location, op: UnaryOperation, right: PExpression, last_token_end=None):
+    def __init__(self, location, op: UnaryOperation, right: PExpression, last_token_end:Location|None=None):
         self.op = op
         super().__init__(location, right)
 
 
 class PCall(PExpression):
-    def __init__(self, location, id: PIdentifier, args=list[PExpression], last_token_end=None):
+    def __init__(self, location, id: PIdentifier, args:list[PExpression], last_token_end:Location|None=None):
         self.args = args
         super().__init__(location, id, last_token_end=last_token_end)
 
 
 class PSkip(PStatement):
-    def __init__(self, location, last_token_end=None):
+    def __init__(self, location, last_token_end:Location|None=None):
         super().__init__(location, last_token_end=location if last_token_end is None else None)
         # do nothing empty block
 
 class PReturn(PStatement):
-    def __init__(self, location, returnVal: PExpression, last_token_end=None):
+    def __init__(self, location, returnVal: PExpression, last_token_end:Location|None=None):
         self.returnVal = returnVal
         super().__init__(location, last_token_end=last_token_end)
 
 class PAssert(PStatement):
-    def __init__(self, location, assertExpr: PExpression, last_token_end=None):
+    def __init__(self, location, assertExpr: PExpression, last_token_end:Location|None=None):
         self.assertExpr = assertExpr
         super().__init__(location, last_token_end = last_token_end)
 
 class PString(PExpression):
-    def __init__(self, location, value: str, last_token_end=None):
+    def __init__(self, location, value: str, last_token_end:Location|None=None):
         super().__init__(location, value, last_token_end = last_token_end)
 
 
 class PContinue(PStatement):
-    def __init__(self, location, last_token_end=None):
+    def __init__(self, location, last_token_end:Location|None=None):
         super().__init__(location, last_token_end=last_token_end)
 
 
 class PBreak(PStatement):
-    def __init__(self, location, last_token_end=None):
+    def __init__(self, location, last_token_end:Location|None=None):
         super().__init__(location, last_token_end = last_token_end)
 
 
 class PIf(PStatement):
-    def __init__(self, location, condition: PExpression, if_true: PScope, if_false: PScope = None, last_token_end=None):
+    def __init__(self, location, condition: PExpression, if_true: PScope, if_false: PScope|None = None, last_token_end:Location|None=None):
         self.condition = condition
         self.if_true = if_true
-        self.if_false = if_false
+        self.if_false = PScope(if_true.location_end) if if_false is None else if_false
         super().__init__(location, last_token_end = last_token_end)
 
 
 class PTernary(PStatement):
-    def __init__(self, location, condition: PExpression, if_true: PReturn, if_false: PReturn, last_token_end=None):
+    def __init__(self, location, condition: PExpression, if_true: PReturn, if_false: PReturn, last_token_end:Location|None=None):
         self.condition = condition
         self.if_true = if_true
         self.if_false = if_false
@@ -292,14 +292,14 @@ class PTernary(PStatement):
 
 
 class PWhile(PStatement):
-    def __init__(self, location, condition: PExpression, bloc: PScope, last_token_end=None):
+    def __init__(self, location, condition: PExpression, bloc: PScope, last_token_end:Location|None=None):
         self.condition = condition
         self.bloc = bloc
         super().__init__(location, last_token_end=last_token_end)
 
 
 class PFor(PStatement):
-    def __init__(self, location, init: PStatement, condition: PExpression, postExpr: PStatement, bloc: PScope, last_token_end=None):
+    def __init__(self, location, init: PStatement, condition: PExpression, postExpr: PStatement, bloc: PScope, last_token_end:Location|None=None):
         self.init = init
         self.condition = condition
         self.postExpr = postExpr
@@ -307,31 +307,31 @@ class PFor(PStatement):
         super().__init__(location, last_token_end = last_token_end)
         
 class PCast(PExpression):
-    def __init__(self, location, cast_to:PType, rvalue:PExpression, last_token_end=None):
+    def __init__(self, location, cast_to:PType, rvalue:PExpression, last_token_end:Location|None=None):
         self.cast_to = cast_to
         super().__init__(location, rvalue, last_token_end=last_token_end)
 
 
 class PForeach(PStatement):
-    def __init__(self, location, varDecl: PVarDecl, iterable: PIdentifier, bloc: PScope, last_token_end=None):
+    def __init__(self, location, varDecl: PVarDecl, iterable: PIdentifier, bloc: PScope, last_token_end:Location|None=None):
         self.varDecl = varDecl
         self.iterable = iterable
         self.bloc = bloc
         super().__init__(location, last_token_end = last_token_end)
         
 class PNewObj(PExpression):
-    def __init__(self, location, object:PType, arguments:list[PExpression], last_token_end=None):
+    def __init__(self, location, object:PType, arguments:list[PExpression], last_token_end:Location|None=None):
         self.object = object
         self.args = arguments
         super().__init__(location, object, last_token_end=last_token_end)
         
 class PNewArray(PExpression):
-    def __init__(self, location, typ:PType, array_length:PExpression, last_token_end=None):
+    def __init__(self, location, typ:PType, array_length:PExpression, last_token_end:Location|None=None):
         self.typ = typ
         super().__init__(location, array_length, last_token_end = last_token_end)
 
 class PImport(PStatement):
-    def __init__(self, location, module: PIdentifier, item: PIdentifier, last_token_end=None):
+    def __init__(self, location, module: PIdentifier, item: PIdentifier, last_token_end:Location|None=None):
         self.module = module
         self.item = item
         super().__init__(location, last_token_end=last_token_end)
@@ -409,7 +409,7 @@ def p_scope(p: YaccProduction):
     
 def p_scope_err(p: YaccProduction):
     """Scope : Punctuation_OpenBrace error Punctuation_CloseBrace"""
-    p[0] = PSkip()
+    p[0] = PSkip(get_loc(p,1)[0],get_loc(p,3)[1])
 
 def p_all_statements_statement(p: YaccProduction):
     """GlobalStatementList : StatementList"""
