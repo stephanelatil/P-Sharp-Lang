@@ -19,6 +19,8 @@ class BinaryOperation(Enum):
     LOGIC_XOR = "^"
     SHIFT_LEFT = "<<"
     SHIFT_RIGHT = ">>"
+    ASSIGN="assign"
+    COPY="copy"
 
     def __repr__(self):
         return f"\"BinaryOperation.{self.name}\""
