@@ -156,8 +156,17 @@ class PEnum(PScope):
         self.identifier = identifier
         self.enum_values = values
 
-class PVarDecl:
-    pass
+class PlValue(PExpression):
+    def __init__(self, location, value, last_token_end=None):
+        super().__init__(location, value, last_token_end=last_token_end)
+
+class PVarDecl(PlValue):
+    def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression=None,  last_token_end=None):
+        self.typ = typ
+        self.init_value = init_value
+        super().__init__(location, id, last_token_end=last_token_end)
+        if isinstance(id, PThis):
+            self.parsing_errors.append(ParsingError("'this' cannot be used in this context", location=self.location, problem_token="this"))
 
 class PFuncDecl(PTreeElem):
     def __init__(self, location, returnType: PType, id: PIdentifier, args: list[PVarDecl], body: PScope, last_token_end=None):
@@ -169,12 +178,6 @@ class PFuncDecl(PTreeElem):
         if isinstance(id, PThis):
             self.parsing_errors.append(ParsingError(
                 "'this' is a reserved keyword", location=self.location, problem_token="this"))
-
-
-class PlValue(PExpression):
-    def __init__(self, location, value, last_token_end=None):
-        super().__init__(location, value, last_token_end=last_token_end)
-
 
 class PUType(PType):
     def __init__(self, location, type_identifier, last_token_end=None):
@@ -211,15 +214,6 @@ class PDot(PlValue):
         if has_this(right):
             self.parsing_errors.append(ParsingError(
                 "'this' is not a valid field", location=self.location, problem_token="this"))
-
-
-class PVarDecl(PlValue):
-    def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression=None,  last_token_end=None):
-        self.typ = typ
-        self.init_value = init_value
-        super().__init__(location, id, last_token_end=last_token_end)
-        if isinstance(id, PThis):
-            self.parsing_errors.append(ParsingError("'this' cannot be used in this context", location=self.location, problem_token="this"))
         
 
 class PBinOp(PExpression):
@@ -252,8 +246,8 @@ class PCall(PExpression):
 
 
 class PSkip(PStatement):
-    def __init__(self, location):
-        super().__init__(location)
+    def __init__(self, location, last_token_end=None):
+        super().__init__(location, last_token_end=location if last_token_end is None else None)
         # do nothing empty block
 
 class PReturn(PStatement):
@@ -346,6 +340,11 @@ class PImport(PStatement):
                 "'this' is a reserved keyword", location=self.location, problem_token="this"))
 
 
+def get_loc(p: YaccProduction, index):
+    if hasattr(p[index], "location"):
+        return p[index].location, p[index].location_end
+    return p.slice[index].location, p.slice[index].location_end
+
 # p_..... functions are for building the grammar
 
 precedence = (
@@ -376,10 +375,13 @@ def p_module(p: YaccProduction):
     """Module : GlobalStatementList"""
     p[0] = p[1]
 
+def p_for_statement(p: YaccProduction):
+    """ForStatement : VarDecl
+                    | VarAssign"""
+    p[0] = p[1]
 
 def p_statement(p: YaccProduction):
-    """Statement : VarDecl
-                 | VarAssign
+    """Statement : ForStatement
                  | FuncDecl
                  | IfBloc
                  | ForBloc
@@ -473,7 +475,7 @@ def p_bloc_list(p: YaccProduction):
 
 def p_empty(p: YaccProduction):
     'empty :'
-    pass
+    p[0] = PSkip(None)
 
 
 def p_utype(p: YaccProduction):
@@ -536,19 +538,19 @@ def p_var_declaration_and_assignment_2(p:YaccProduction):
 
 def p_break(p: YaccProduction):
     """Break : Keyword_Control_Break Punctuation_EoL"""
-    loc2 = p[2].location_end
-    p[0] = PBreak(None, last_token_end=loc2)
+    loc2 = p.slice[2].location_end
+    p[0] = PBreak(p.slice[1].location, last_token_end=loc2)
 
 
 def p_continue(p: YaccProduction):
     """Continue : Keyword_Control_Continue Punctuation_EoL"""
-    loc2 = p[2].location_end
+    loc2 = p.slice[2].location_end
     p[0] = PContinue(None, last_token_end=loc2)
 
 
 def p_return_void(p: YaccProduction):
     """Return : Keyword_Control_Return Punctuation_EoL"""
-    loc2 = p[2].location_end
+    loc2 = p.slice[2].location_end
     p[0] = PReturn(None, None, last_token_end=loc2)
 
 
@@ -713,24 +715,24 @@ def p_ignore(p: YaccProduction):
 
 
 def p_binop_assign(p: YaccProduction):
-    """ VarAssign : Ident Operator_Binary_MinusEq Expr
-                  | Ident Operator_Binary_PlusEq Expr
-                  | Ident Operator_Binary_TimesEq Expr
-                  | Ident Operator_Binary_DivEq Expr
-                  | Ident Operator_Binary_AndEq Expr
-                  | Ident Operator_Binary_OrEq Expr
-                  | Ident Operator_Binary_XorEq Expr
-                  | Ident Operator_Binary_ShlEq Expr
-                  | Ident Operator_Binary_ShrEq Expr
-                  | ArrayIndex Operator_Binary_MinusEq Expr
-                  | ArrayIndex Operator_Binary_PlusEq Expr
-                  | ArrayIndex Operator_Binary_TimesEq Expr
-                  | ArrayIndex Operator_Binary_DivEq Expr
-                  | ArrayIndex Operator_Binary_AndEq Expr
-                  | ArrayIndex Operator_Binary_OrEq Expr
-                  | ArrayIndex Operator_Binary_XorEq Expr
-                  | ArrayIndex Operator_Binary_ShlEq Expr
-                  | ArrayIndex Operator_Binary_ShrEq Expr"""
+    """ VarAssign : Ident Operator_Binary_MinusEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_PlusEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_TimesEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_DivEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_AndEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_OrEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_XorEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_ShlEq Expr Punctuation_EoL
+                  | Ident Operator_Binary_ShrEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_MinusEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_PlusEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_TimesEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_DivEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_AndEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_OrEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_XorEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_ShlEq Expr Punctuation_EoL
+                  | ArrayIndex Operator_Binary_ShrEq Expr Punctuation_EoL"""
     p[0] = PAssign(None, p[1], 
                    PBinOp(None, p[1], BinaryOperation(p[2].strip('=')), p[3]))
 
@@ -866,7 +868,7 @@ def p_class_declaration(p: YaccProduction):
 
 def p_if(p: YaccProduction):
     """IfBloc : Keyword_Control_If Punctuation_OpenParen Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PIf(None, p[3], p[6], PSkip(),
+    p[0] = PIf(None, p[3], p[6], PSkip(p.slice[7].location_end),
                last_token_end=p.slice[7].location_end)
 
 
@@ -875,17 +877,78 @@ def p_if_else(p: YaccProduction):
     p[0] = PIf(None, p[3], p[6], p[10],
                last_token_end=p.slice[11].location_end)
 
+def p_for_inc(p: YaccProduction):
+    """ForBloc : Keyword_Control_For Punctuation_OpenParen ForStatement Expr Punctuation_EoL Ident Operator_Unary_Inc Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen ForStatement Punctuation_EoL Ident Operator_Unary_Inc Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Expr Punctuation_EoL Ident Operator_Unary_Inc Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Punctuation_EoL Ident Operator_Unary_Inc Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    has_mid = p.slice[4].value != ";"
+    p3 = PSkip(get_loc(p, 3)[0], get_loc(p, 3)[0]) if p.slice[3].value == ";" else p[3]
+    if has_mid:
+        p4 = p[4]
+        # p[0] = PUnOp(None, UnaryOperation(p[2]), p[1], last_token_end=loc2)
+        p5 = PUnOp(None, UnaryOperation.INCREMENT,
+                   p[6], get_loc(p,7)[1])
+        p[0] = PFor(None, p3, p4, p5, p[10],
+                        last_token_end=get_loc(p,11)[1])
+    else:
+        p4 = PSkip(get_loc(p, 4)[0], get_loc(p, 4)[0])
+        p5 = PUnOp(None, UnaryOperation.INCREMENT,
+                   p[5], get_loc(p,6)[1])
+        p[0] = PFor(None, p3, p4, p5, p[9],
+                    last_token_end=get_loc(p,10)[1])
 
+def p_for_dec(p: YaccProduction):
+    """ForBloc : Keyword_Control_For Punctuation_OpenParen ForStatement Expr Punctuation_EoL Ident Operator_Unary_Dec Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen ForStatement Punctuation_EoL Ident Operator_Unary_Dec Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Expr Punctuation_EoL Ident Operator_Unary_Dec Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Punctuation_EoL Ident Operator_Unary_Dec Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    has_mid = p.slice[4].value != ";"
+    p3 = PSkip(get_loc(p, 3)[0], get_loc(p, 3)[0]) if p.slice[3].value == ";" else p[3]
+    if has_mid:
+        p4 = p[4]
+        # p[0] = PUnOp(None, UnaryOperation(p[2]), p[1], last_token_end=loc2)
+        p5 = PUnOp(None, UnaryOperation.DECREMENT,
+                   p[6], get_loc(p,7)[1])
+        p[0] = PFor(None, p3, p4, p5, p[10],
+                        last_token_end=get_loc(p,11)[1])
+    else:
+        p4 = PSkip(get_loc(p, 4)[0], get_loc(p, 4)[0])
+        p5 = PUnOp(None, UnaryOperation.DECREMENT,
+                   p[5], get_loc(p,6)[1])
+        p[0] = PFor(None, p3, p4, p5, p[9],
+                    last_token_end=get_loc(p,10)[1])
+        
 def p_for(p: YaccProduction):
-    """ForBloc : Keyword_Control_For Punctuation_OpenParen VarDecl Expr Statement Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PFor(None, p[3], p[4], p[5], p[8],
-                last_token_end=p.slice[9].location_end)
+    """ForBloc : Keyword_Control_For Punctuation_OpenParen ForStatement Expr Punctuation_EoL VarAssign Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Expr Punctuation_EoL VarAssign Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Expr Punctuation_EoL Punctuation_EoL Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Punctuation_EoL VarAssign Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen Punctuation_EoL Punctuation_EoL Punctuation_EoL Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen ForStatement Punctuation_EoL Punctuation_EoL Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen ForStatement Punctuation_EoL VarAssign Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace
+               | Keyword_Control_For Punctuation_OpenParen ForStatement Expr Punctuation_EoL Punctuation_EoL Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    has_mid = p.slice[4].value != ";"
+    p3 = PSkip(get_loc(p, 3)[0], get_loc(p, 3)[0]) if p.slice[3].value == ";" else p[3]
+    if has_mid:
+        p4 = p[4]
+        p5 = PSkip(
+            p.slice[6].location_end) if p.slice[6].value == ";" else p[6]
+        p[0] = PFor(None, p3, p4, p5, p[9],
+                    last_token_end=get_loc(p, 10)[1])
+    else:
+        p4 = PSkip(get_loc(p, 4)[0], get_loc(p, 4)[0])
+        p5 = PSkip(
+            p.slice[5].location_end) if p.slice[5].value == ";" else p[5]
+        p[0] = PFor(None, p3, p4, p5, p[8],
+                    last_token_end=get_loc(p, 9)[1])
+        
 
 
 def p_foreach(p: YaccProduction):
-    """ForBloc : Keyword_Control_For Punctuation_OpenParen VarDecl Punctuation_TernarySeparator Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PForeach(None, p[3], p[5], p[8],
-                    last_token_end=p.slice[9].location_end)
+    """ForBloc : Keyword_Control_For Punctuation_OpenParen Type Ident Punctuation_TernarySeparator Expr Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
+    p[0] = PForeach(None, PVarDecl(None, p[3], p[4],None, get_loc(p,4)[1]), p[6], p[9],
+                    last_token_end=get_loc(p,10)[1])
 
 
 def p_while(p: YaccProduction):
