@@ -165,6 +165,7 @@ class PVarDecl(PlValue):
     def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression|None=None,  last_token_end:Location|None=None):
         self.typ = typ
         self.init_value = init_value
+        self.identifier = id
         super().__init__(location, id, last_token_end=last_token_end)
         if isinstance(id, PThis):
             self.parsing_errors.append(ParsingError("'this' cannot be used in this context", location=self.location, problem_token="this"))
