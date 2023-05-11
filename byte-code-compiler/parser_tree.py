@@ -146,7 +146,7 @@ class PStatement(PTreeElem):
 
 
 class PExpression(PStatement):
-    def __init__(self, location, rvalue:PTreeElem|str|int|float|bool, last_token_end:Location|None=None):
+    def __init__(self, location, rvalue:PTreeElem, last_token_end:Location|None=None):
         self.rvalue = rvalue
         super().__init__(location, last_token_end = last_token_end)
 
@@ -187,8 +187,9 @@ class PUType(PType):
 
 
 class PNumeric(PExpression):
-    def __init__(self, location, value:int, last_token_end:Location|None=None):
+    def __init__(self, location, value:int|float, last_token_end:Location|None=None):
         super().__init__(location, value, last_token_end=last_token_end)
+        self.value = value
         
 class PIndex(PExpression):
     """for indexing : array[idx]"""
@@ -218,7 +219,7 @@ class PDot(PlValue):
         
 
 class PBinOp(PExpression):
-    def __init__(self, location, left: PExpression, op: BinaryOperation, right: PExpression, last_token_end:Location|None=None):
+    def __init__(self, location, left: PlValue, op: BinaryOperation, right: PExpression, last_token_end:Location|None=None):
         self.left = left
         self.op = op
         super().__init__(location, right)
@@ -243,6 +244,7 @@ class PUnOp(PExpression):
 class PCall(PExpression):
     def __init__(self, location, id: PIdentifier, args:list[PExpression], last_token_end:Location|None=None):
         self.args = args
+        self.function_id = id
         super().__init__(location, id, last_token_end=last_token_end)
 
 
@@ -264,6 +266,7 @@ class PAssert(PStatement):
 class PString(PExpression):
     def __init__(self, location, value: str, last_token_end:Location|None=None):
         super().__init__(location, value, last_token_end = last_token_end)
+        self.string_value = value
 
 
 class PContinue(PStatement):
@@ -284,12 +287,12 @@ class PIf(PStatement):
         super().__init__(location, last_token_end = last_token_end)
 
 
-class PTernary(PStatement):
-    def __init__(self, location, condition: PExpression, if_true: PReturn, if_false: PReturn, last_token_end:Location|None=None):
+class PTernary(PExpression):
+    def __init__(self, location, condition: PExpression, if_true: PExpression, if_false: PExpression, last_token_end:Location|None=None):
         self.condition = condition
         self.if_true = if_true
         self.if_false = if_false
-        super().__init__(location, last_token_end=last_token_end)
+        super().__init__(location, self.condition, last_token_end=last_token_end)
 
 
 class PWhile(PStatement):
