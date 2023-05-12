@@ -1,10 +1,10 @@
+from lexer import Location
 import ply.yacc as yacc
 from ply.lex import LexToken
 from ply.yacc import YaccProduction
 from lexer import tokens, Location
 from operations import BinaryOperation, UnaryOperation
 from copy import deepcopy
-import sys
 
 class ParsingError(Exception):
     def __init__(self, *args: object, location:Location=Location(-1,-1), problem_token=None) -> None:
@@ -150,6 +150,10 @@ class PExpression(PStatement):
         self.rvalue = rvalue
         super().__init__(location, last_token_end = last_token_end)
 
+class PBool(PExpression):
+    def __init__(self, location, value: bool, last_token_end: Location | None = None):
+        super().__init__(location, value, last_token_end)
+        self.value = value
 
 class PEnum(PScope):
     def __init__(self, location, identifier:PIdentifier, values: list[PIdentifier], last_token_end:Location|None=None):
@@ -577,10 +581,7 @@ def p_expr(p: YaccProduction):
             | ArrayIndex
             | FuncCall
             | String"""
-    if isinstance(p[1], PExpression):
-        p[0] = p[1]
-    else:
-        p[0] = PExpression(None, p[1])
+    p[0] = p[1]
 
 def p_string(p: YaccProduction):
     """String : Literal_String"""
@@ -792,14 +793,14 @@ def p_true(p: YaccProduction):
     """Expr : Keyword_Object_True"""
     loc = p.slice[1].location
     last_token_end = p.slice[1].location_end
-    p[0] = PExpression(loc, True, last_token_end=last_token_end)
+    p[0] = PBool(loc, True, last_token_end=last_token_end)
 
 
 def p_false(p: YaccProduction):
     """Expr : Keyword_Object_False"""
     loc = p.slice[1].location
     last_token_end = p.slice[1].location_end
-    p[0] = PExpression(loc, False, last_token_end=last_token_end)
+    p[0] = PBool(loc, False, last_token_end=last_token_end)
 
 
 def p_null(p: YaccProduction):
