@@ -2,6 +2,7 @@ import os, sys
 from argparse import ArgumentParser
 from lexer import PS_Lexer
 from parser_tree import parser, MultiParsingException, ParsingError
+from typing_tree import p_to_t_tree, MultiTypingException
 
 def validate_path(path:str):
     assert(isinstance(path, str))
@@ -62,6 +63,13 @@ if args.print_ast:
 
 if args.stage == 'P': #Parse only
     exit(0)
+    
+try:
+    t = p_to_t_tree(p)
+except MultiTypingException as e:
+    print(e, file=sys.stderr)
+    exit(len(e.exceptions))
+    
 
 if args.stage == 'T': #Typing only
     exit(0)
