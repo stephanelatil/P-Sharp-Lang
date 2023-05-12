@@ -3,4 +3,4 @@ m = false;
 m=true; 
 m= true^false or 4<2;
 
-assert(m)
+assert(m);
