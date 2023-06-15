@@ -1,6 +1,14 @@
 from parser_tree import *
 from enum import Enum
 from math import log10
+
+class ItemAndLoc:
+    def __init__(self, item, location:Location|None) -> None:
+        self.item = item
+        self.location = location
+    
+    def __repr__(self) -> str:
+        return repr(self.item)
     
 class TypingError(Exception):
     def __init__(self, message:str, *args: object) -> None:
@@ -59,7 +67,7 @@ class Type:
     
     def __str__(self) -> str:
         if self.ident == "":
-            return "<TYPE_ERROR>"
+            return '<TYPE_ERROR>'
         return self.ident
     
     def __repr__(self) -> str:
@@ -101,7 +109,9 @@ class ArrayType(Type):
         """Size is 16: {ptr to first element|length or array in uint_64}"""
         super().__init__(str(element_type)+"[]", 16, _is_primitive=False)
         self.element_type = element_type
-
+        
+    def __str__(self) -> str:
+        return str(self.element_type)+'[]'
 
 class FunctionType(Type):
     def __init__(self, return_type: Type, args_type: list[Type]) -> None:
@@ -122,14 +132,9 @@ class FunctionType(Type):
             if t1 != t2:
                 return False
         return True
-
-    @staticmethod
-    def str_to_builtin(id: str):
-        # TODO fill dict
-        builtins: dict[str, FunctionType] = {}
-        if id in builtins:
-            return builtins[id]
-        return None
+    
+    def __str__(self) -> str:
+        return f"FUNC<{self.return_type.ident}({','.join(str(x) for x in self.args_type)})>"
 
 
 class CustomType(Type):
@@ -194,7 +199,7 @@ class BuiltinType(Enum):
         raise TypingError(f"Incorrect use of builtin type {str_typ} at location {location}")            
 
 
-def setup_builtin_types(root_vars: dict[str, tuple[Type, Location | None]]):
+def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     numeric_and_bool = BuiltinType.get_types()
     numeric_and_bool.remove(BuiltinType.VOID.value)
     numeric_and_bool.remove(BuiltinType.MISSING.value)
@@ -286,7 +291,7 @@ def setup_builtin_types(root_vars: dict[str, tuple[Type, Location | None]]):
     #add concat
     BuiltinType.STRING.value._operators[BinaryOperation.PLUS][BuiltinType.STRING.value] = BuiltinType.STRING.value
     #Add builtin functions IDs
-    root_vars.setdefault('print', (FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]),None))
+    root_vars.setdefault('print', ItemAndLoc(FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]),None))
 
 class TTreeElem:
     def __init__(self, elem: PTreeElem, parent:"TTreeElem|None"=None) -> None:
@@ -296,7 +301,7 @@ class TTreeElem:
         if not hasattr(self, 'errors'):
             self.errors:list[TypingError] = []
         if not hasattr(self, '_known_vars'):
-            self._known_vars:dict[str,tuple[Type,Location|None]] = {}
+            self._known_vars:dict[str,ItemAndLoc] = {}
             
     def get_errors(self) ->list[TypingError]:
         err:list[TypingError] = self.errors[:]
@@ -312,13 +317,13 @@ class TTreeElem:
         return err
         
     def add_known_id(self, id:str, typ:Type, location:Location|None=None):
-        if id in self._known_vars and location != self._known_vars[id][1]:
+        if id in self._known_vars and location != self._known_vars[id].location:
             raise TypingError(f"The identifier '{id}' at location {location} has already been defined in this scope at location {self._known_vars[id].location}")
-        self._known_vars[id] = typ,location
+        self._known_vars[id] = ItemAndLoc(typ,location)
     
     def find_corresponding_var_typ(self, id:str) -> Type|None:
         if id in self._known_vars:
-            return self._known_vars[id][0]
+            return self._known_vars[id].item
         elif not self.parent is None:
             return self.parent.find_corresponding_var_typ(id)
         else:
@@ -440,7 +445,7 @@ class TScope(TTreeElem):
 
 class TModule(TScope):
     def __init__(self, elem: PModule):
-        self._known_vars:dict[str,tuple[Type,Location|None]] = {}
+        self._known_vars:dict[str,ItemAndLoc] = {}
         self.errors: list[TypingError] = []
         setup_builtin_types(self._known_vars)
         #add defined classes into type list
@@ -667,13 +672,11 @@ class TCall(TExpression):
                 self.errors.append(TypingError(f"'{self.function_id}' is not a callable function. Problem at location {self.location}"))
                 return
         elif isinstance(parent_typ, Type) and self.function_id in parent_typ.methods:
-            func_typ = parent_typ.methods(self.function_id)
-        else: #check if builtin
-            func_typ = FunctionType.str_to_builtin(self.function_id)
-            if func_typ is None:
-                self.errors.append(TypingError(f"Attempts to call unknown function '{self.function_id}' at location {elem.function_id.location}"))
-                return
+            func_typ = parent_typ.methods[self.function_id]
             self.typ = func_typ.return_type
+        else: #check if builtin
+            self.errors.append(TypingError(f"Attempts to call unknown function '{self.function_id}' at location {elem.function_id.location}"))
+            return
                         
         if len(func_typ.args_type) != len(self.args):
             self.errors.append(TypingError(
