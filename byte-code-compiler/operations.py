@@ -16,7 +16,7 @@ class BinaryOperation(Enum):
     BOOL_OR = "or"
     LOGIC_AND = "&"
     LOGIC_OR = "|"
-    LOGIC_XOR = "^"
+    XOR = "^"
     SHIFT_LEFT = "<<"
     SHIFT_RIGHT = ">>"
     ASSIGN="assign"

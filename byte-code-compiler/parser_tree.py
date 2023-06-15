@@ -27,18 +27,6 @@ class MultiParsingException(ParsingError):
 
 # P.... classes are there to build the abstract syntax tree
 
-class JSON_Val:
-    def __init__(self, val) -> None:
-        self._val = val
-    
-    def __repr__(self):
-        return str(self)
-    
-    def __str__(self):
-        if self._val is None:
-            return 'null'
-        return 'true' if self._val else 'false'
-
 class PTreeElem:
     def __init__(self, location:Location, *, last_token_end:Location|None=None) -> None:
         def max_loc(loc:Location|None):
@@ -83,10 +71,22 @@ class PTreeElem:
                         d[key] = new_val
                         
         inner = deepcopy(self.__dict__)
-        replace(inner, None, JSON_Val(None))
         inner = str(inner).replace("\'", "\"")
         return f'{{"{self.__class__.__name__}" : {inner}}}'
 
+
+class JSON_Val(PTreeElem):
+    def __init__(self, val: bool | None, location:Location|None=None) -> None:
+        self._val = val
+        super().__init__(Location(-1,-1) if location is None else location)
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        if self._val is None:
+            return 'null'
+        return 'true' if self._val else 'false'
 
 class PIdentifier(PTreeElem):
     def __init__(self, location, identifier:str, last_token_end:Location|None=None):
@@ -146,14 +146,14 @@ class PStatement(PTreeElem):
 
 
 class PExpression(PStatement):
-    def __init__(self, location, rvalue:PTreeElem, last_token_end:Location|None=None):
-        self.rvalue = rvalue
+    def __init__(self, location, rvalue:PTreeElem|bool|None, last_token_end:Location|None=None):
+        self.rvalue = JSON_Val(rvalue) if isinstance(rvalue, (bool, type(None))) else rvalue
         super().__init__(location, last_token_end = last_token_end)
 
 class PBool(PExpression):
     def __init__(self, location, value: bool, last_token_end: Location | None = None):
         super().__init__(location, value, last_token_end)
-        self.value = value
+        self.value = JSON_Val(value)
 
 class PEnum(PScope):
     def __init__(self, location, identifier:PIdentifier, values: list[PIdentifier], last_token_end:Location|None=None):
@@ -348,8 +348,8 @@ class PImport(PStatement):
                 "'this' is a reserved keyword", location=self.location, problem_token="this"))
 
 
-def get_loc(p: YaccProduction, index):
-    if hasattr(p[index], "location"):
+def get_loc(p: YaccProduction, index) -> tuple[Location, Location]:
+    if hasattr(p[index], "location_end"):
         return p[index].location, p[index].location_end
     return p.slice[index].location, p.slice[index].location_end
 
@@ -374,6 +374,7 @@ precedence = (
      'Operator_Binary_Shr'),
     ('left', 'Operator_Binary_Plus', 'Operator_Minus'),
     ('left', 'Operator_Binary_Times', 'Operator_Binary_Div'),
+    ('right', 'DUOP'),           # Unary operator precedence
     ('right', 'UNOP'),           # Unary operator precedence
 )
 
@@ -668,23 +669,77 @@ def p_new_obj_no_args_2(p: YaccProduction):
 def p_binop(p: YaccProduction):
     #prec avoids a-b being reduced to a (-b) and ending up with 'Expr Expr'
     """Expr : Expr Operator_Minus Expr %prec UNOP
-            | Expr Operator_Binary_Bool_Eq Expr
-            | Expr Operator_Binary_Bool_Neq Expr
-            | Expr Operator_Binary_Bool_Geq Expr
-            | Expr Operator_Binary_Bool_Leq Expr
-            | Expr Operator_Binary_Bool_Gt Expr
-            | Expr Operator_Binary_Bool_Lt Expr
-            | Expr Operator_Binary_Plus Expr
-            | Expr Operator_Binary_Times Expr
-            | Expr Operator_Binary_Div Expr
-            | Expr Operator_Binary_Mod Expr
-            | Expr Operator_Binary_And Expr
-            | Expr Operator_Binary_Or Expr
-            | Expr Operator_Binary_Xor Expr
-            | Expr Operator_Binary_Shl Expr
-            | Expr Operator_Binary_Shr Expr
+            | Expr Operator_Binary_Bool_Eq Expr %prec DUOP
+            | Expr Operator_Binary_Bool_Neq Expr %prec DUOP
+            | Expr Operator_Binary_Bool_Geq Expr %prec DUOP
+            | Expr Operator_Binary_Bool_Leq Expr %prec DUOP
+            | Expr Operator_Binary_Bool_Gt Expr %prec DUOP
+            | Expr Operator_Binary_Bool_Lt Expr %prec DUOP
+            | Expr Operator_Binary_Plus Expr %prec DUOP
+            | Expr Operator_Binary_Times Expr %prec DUOP
+            | Expr Operator_Binary_Div Expr %prec DUOP
+            | Expr Operator_Binary_Mod Expr %prec DUOP
+            | Expr Operator_Binary_And Expr %prec DUOP
+            | Expr Operator_Binary_Or Expr %prec DUOP
+            | Expr Operator_Binary_Xor Expr %prec DUOP
+            | Expr Operator_Binary_Shl Expr %prec DUOP
+            | Expr Operator_Binary_Shr Expr %prec DUOP
             | Expr Operator_Binary_Bool_Or Expr
-            | Expr Operator_Binary_Bool_And Expr"""
+            | Expr Operator_Binary_Bool_And Expr
+            | Ident Operator_Minus Expr %prec UNOP
+            | Ident Operator_Binary_Bool_Eq Expr %prec DUOP
+            | Ident Operator_Binary_Bool_Neq Expr %prec DUOP
+            | Ident Operator_Binary_Bool_Geq Expr %prec DUOP
+            | Ident Operator_Binary_Bool_Leq Expr %prec DUOP
+            | Ident Operator_Binary_Bool_Gt Expr %prec DUOP
+            | Ident Operator_Binary_Bool_Lt Expr %prec DUOP
+            | Ident Operator_Binary_Plus Expr %prec DUOP
+            | Ident Operator_Binary_Times Expr %prec DUOP
+            | Ident Operator_Binary_Div Expr %prec DUOP
+            | Ident Operator_Binary_Mod Expr %prec DUOP
+            | Ident Operator_Binary_And Expr %prec DUOP
+            | Ident Operator_Binary_Or Expr %prec DUOP
+            | Ident Operator_Binary_Xor Expr %prec DUOP
+            | Ident Operator_Binary_Shl Expr %prec DUOP
+            | Ident Operator_Binary_Shr Expr %prec DUOP
+            | Ident Operator_Binary_Bool_Or Expr
+            | Ident Operator_Binary_Bool_And Expr
+            | Expr Operator_Minus Ident %prec UNOP
+            | Expr Operator_Binary_Bool_Eq Ident %prec DUOP
+            | Expr Operator_Binary_Bool_Neq Ident %prec DUOP
+            | Expr Operator_Binary_Bool_Geq Ident %prec DUOP
+            | Expr Operator_Binary_Bool_Leq Ident %prec DUOP
+            | Expr Operator_Binary_Bool_Gt Ident %prec DUOP
+            | Expr Operator_Binary_Bool_Lt Ident %prec DUOP
+            | Expr Operator_Binary_Plus Ident %prec DUOP
+            | Expr Operator_Binary_Times Ident %prec DUOP
+            | Expr Operator_Binary_Div Ident %prec DUOP
+            | Expr Operator_Binary_Mod Ident %prec DUOP
+            | Expr Operator_Binary_And Ident %prec DUOP
+            | Expr Operator_Binary_Or Ident %prec DUOP
+            | Expr Operator_Binary_Xor Ident %prec DUOP
+            | Expr Operator_Binary_Shl Ident %prec DUOP
+            | Expr Operator_Binary_Shr Ident %prec DUOP
+            | Expr Operator_Binary_Bool_Or Ident
+            | Expr Operator_Binary_Bool_And Ident
+            | Ident Operator_Minus Ident %prec UNOP
+            | Ident Operator_Binary_Bool_Eq Ident %prec DUOP
+            | Ident Operator_Binary_Bool_Neq Ident %prec DUOP
+            | Ident Operator_Binary_Bool_Geq Ident %prec DUOP
+            | Ident Operator_Binary_Bool_Leq Ident %prec DUOP
+            | Ident Operator_Binary_Bool_Gt Ident %prec DUOP
+            | Ident Operator_Binary_Bool_Lt Ident %prec DUOP
+            | Ident Operator_Binary_Plus Ident %prec DUOP
+            | Ident Operator_Binary_Times Ident %prec DUOP
+            | Ident Operator_Binary_Div Ident %prec DUOP
+            | Ident Operator_Binary_Mod Ident %prec DUOP
+            | Ident Operator_Binary_And Ident %prec DUOP
+            | Ident Operator_Binary_Or Ident %prec DUOP
+            | Ident Operator_Binary_Xor Ident %prec DUOP
+            | Ident Operator_Binary_Shl Ident %prec DUOP
+            | Ident Operator_Binary_Shr Ident %prec DUOP
+            | Ident Operator_Binary_Bool_Or Ident
+            | Ident Operator_Binary_Bool_And Ident"""
     p[0] = PBinOp(None, p[1], BinaryOperation(p[2]), p[3])
 
 
@@ -698,16 +753,16 @@ def p_paren(p: YaccProduction):
 
 def p_UnOp(p: YaccProduction):
     '''Expr : Operator_Minus Expr
-            | Operator_Unary_Not Expr %prec UNOP'''
+            | Operator_Unary_Not Expr'''
     loc = p.slice[1].location
     p[0] = PUnOp(loc, UnaryOperation(p[1]), p[2])
 
 
 def p_UnOp_IncDec(p: YaccProduction):
-    '''Expr : Ident Operator_Unary_Dec %prec UNOP
-            | Ident Operator_Unary_Inc %prec UNOP
-            | ArrayIndex Operator_Unary_Dec %prec UNOP
-            | ArrayIndex Operator_Unary_Inc %prec UNOP'''
+    '''Expr : Ident Operator_Unary_Dec
+            | Ident Operator_Unary_Inc
+            | ArrayIndex Operator_Unary_Dec
+            | ArrayIndex Operator_Unary_Inc'''
     loc2 = p.slice[2].location_end
     p[0] = PUnOp(None, UnaryOperation(p[2]), p[1], last_token_end=loc2)
 
@@ -764,14 +819,14 @@ def p_call(p: YaccProduction):
         if isinstance(node.rvalue, PDot):
             place_pcall(node.rvalue)
         else:
-            node.rvalue = PCall(None, node.rvalue, p[3] if isinstance(p[3], list) else p[3],
+            node.rvalue = PCall(None, node.rvalue, p[3] if isinstance(p[3], list) else [p[3]],
                                 p.slice[4].location_end)
             
     if isinstance(p[1], PDot):
         place_pcall(p[1])
         p[0] = p[1]
     else: # p[1] is PIdent
-        p[0] = PCall(None, p[1], p[3] if isinstance(p[3], list) else p[3],
+        p[0] = PCall(None, p[1], p[3] if isinstance(p[3], list) else [p[3]],
                      p.slice[4].location_end)
     
 
@@ -781,7 +836,7 @@ def p_call_no_Args(p: YaccProduction):
         if isinstance(node.rvalue, PDot):
             place_pcall(node.rvalue)
         else:
-            node.rvalue = PCall(None, node.rvalue, p.slice[3].location_end)
+            node.rvalue = PCall(None, node.rvalue, [], p.slice[3].location_end)
 
     if isinstance(p[1], PDot):
         place_pcall(p[1])
@@ -858,12 +913,12 @@ def p_this(p:YaccProduction):
 
 def p_func_declaration_no_args_2(p: YaccProduction):
     """FuncDecl : Ident Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PFuncDecl(p[1].location, PType(p.slice[1].location, p[1].identifier, p.slice[1].last_token_end),
-                     p[2], [], p[6], last_token_end=p.slice[7].location_end)
+    p[0] = PFuncDecl(get_loc(p, 1)[0], PType(get_loc(p, 1)[0], p[1].identifier, get_loc(p,1)[1]),
+                     p[2], [], p[6], last_token_end=get_loc(p,7)[1])
 
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PClassDecl(p.slice[1].location, p[2], p[4], last_token_end=p.slice[5].location_end)
+    p[0] = PClassDecl(get_loc(p,1)[1], p[2], p[4], last_token_end=get_loc(p,5)[1])
 
 # For extension / implementing interfaces
 # def p_class_declaration(p:YaccProduction):
