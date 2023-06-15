@@ -1,5 +1,5 @@
-int_32 m() {
-    int_32[] x;
-    x= new int_32[5];
+i32 m() {
+    i32[] x;
+    x= new i32[5];
     bool[][] mat;
 }

@@ -1,6 +1,7 @@
 from unittest import TestCase
 from lexer import PS_Lexer, LexerError
 from parser_tree import parser, ParsingError
+from typing_tree import MultiTypingException, p_to_t_tree, CustomType, Type
 
 class TestLexer(TestCase):
     def setUp(self) -> None:
@@ -350,4 +351,62 @@ class TestTyping(TestCase):
         return super().setUp()
 
     def tearDown(self) -> None:
+        CustomType.known_types.clear()
         return super().tearDown()
+            
+    def test_arith_1(self):
+        with open(r".\test_files\typing\bad\testfile-arith-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_arith_2(self):
+        with open(r".\test_files\typing\bad\testfile-arith-2.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_arith_3(self):
+        with open(r".\test_files\typing\bad\testfile-arith-3.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_arrow_1(self):
+        with open(r".\test_files\typing\bad\testfile-arrow-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_arrow_2(self):
+        with open(r".\test_files\typing\bad\testfile-arrow-2.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_arrow_3(self):
+        with open(r".\test_files\typing\bad\testfile-arrow-3.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_arrow_4(self):
+        with open(r".\test_files\typing\bad\testfile-arrow-4.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_dot_on_return(self):
+        with open(r".\test_files\typing\good\testfile-dot-on-return.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        t = p_to_t_tree(p)
+        self.assertEquals(len(t.funcDecl), 2)
+        self.assertEquals(len(t.funcDecl[1].body.statements), 1)

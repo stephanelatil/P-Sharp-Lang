@@ -1,4 +1,4 @@
-int_32 x = 0;
+i32 x = 0;
 
 if (true){
     if (x){}

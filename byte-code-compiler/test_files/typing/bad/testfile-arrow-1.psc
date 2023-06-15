@@ -1,1 +1,1 @@
-int_32 main() { 1->a; }
+i32 main() { print(1.ToFloat()); }

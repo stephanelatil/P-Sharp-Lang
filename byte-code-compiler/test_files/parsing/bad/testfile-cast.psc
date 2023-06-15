@@ -1,2 +1,2 @@
-int_32 x = (int_32) 'b';
+i32 x = (i32) 'b';
 string s = (bool);

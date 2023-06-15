@@ -1,2 +1,2 @@
 
-int_32 main() { int_32 x; x->a; }
+i32 main() { i32 x; x.a; }

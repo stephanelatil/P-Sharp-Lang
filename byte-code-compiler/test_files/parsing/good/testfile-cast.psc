@@ -1,2 +1,2 @@
-int_16 x = (int_16) 'b';
-int_64 y = (int_64)((int_32) ((char) x));
+i16 x = (i16) 'b';
+i64 y = (i64)((i32) ((char) x));

@@ -1,4 +1,4 @@
-int_32[] arr = new int_32[10];
+i32[] arr = new i32[10];
 
-for (int_32 i : arr)
+for (i32 i : arr)
 {}

@@ -1,3 +1,3 @@
 class S { i32 a; };
-i32 foo() {}
+S foo() {}
 i32 main() { foo().a; }

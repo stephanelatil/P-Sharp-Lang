@@ -1,4 +1,5 @@
-
-struct S { int_32 a; };
-int_32 main() { int_32 p; struct S *q; putchar(p-q); }
-
+class S { i32 a; };
+i32 main() {
+    S q;
+    print(p-q);
+}
