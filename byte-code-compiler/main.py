@@ -15,9 +15,11 @@ def parse_args():
     args.add_argument("--print-tokens", required=False, default=False, action='store_true', dest='print_tokens',
                         help="Prints the list of tokens found in order, one per line (Warning: Very verbose)")
     args.add_argument("--reconstruct", required=False, default=False, action='store_true', dest='print_reconstructed_code',
-                        help="Prints the code reconstructed from the token list (Removes white space and comments)")
+                      help="Prints the code reconstructed from the token list (Removes white space and comments)")
     args.add_argument("--print-ast", required=False, default=False, action='store_true', dest='print_ast',
-                        help="Prints the abstract syntax tree on a single line")
+                      help="Prints the abstract syntax tree as a string JSON object")
+    args.add_argument("--print-att", required=False, default=False, action='store_true', dest='print_att',
+                      help="Prints the abstract typing tree as a string JSON object")
     args.add_argument('-C','--compile-to', required=False, choices=['L', 'P', 'T', 'R', 'E', 'L', 'B'], dest='stage', default='B',
                       help="Compiles until the given stage: L=Lexer, P=Parser, T=Typing, R=RTL, E=ERTL, L=LTL, B=ByteCode (default)")
     args.add_argument("filepath", metavar='FILE', help="The code file to pass to the compiler")
@@ -70,6 +72,8 @@ except MultiTypingException as e:
     print(e, file=sys.stderr)
     exit(len(e.exceptions))
     
+if args.print_att:
+    print(t)
 
 if args.stage == 'T': #Typing only
     exit(0)
