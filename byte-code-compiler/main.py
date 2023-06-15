@@ -45,7 +45,12 @@ if args.print_reconstructed_code:
     l = PS_Lexer()
     print("Printing reconstructed code:")
     for tok in l.lexCode(code):
-        print(tok.value, end=" ", flush=False)
+        if tok.type == 'Number_Char':
+            print(f"'{tok.value}'", end=" ", flush=False)
+        elif tok.type == 'Literal_String':
+            print(f'"{tok.value}"', end=" ", flush=False)
+        else:
+            print(tok.value, end=" ", flush=False)
     print('\n', flush=True)
 
 if args.stage == 'L': #Lex only
