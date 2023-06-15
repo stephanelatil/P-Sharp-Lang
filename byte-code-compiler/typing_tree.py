@@ -162,6 +162,144 @@ class CustomType(Type):
         else:
             CustomType.known_types[identifier] = self
 
+class BuiltinType(Enum):
+    MISSING = Type("", -1)
+    BOOL = Type("bool", 1, True)
+    CHAR = Type("char", 1, True)
+    INT_16 = Type("i16", 2, True)
+    INT_32 = Type("i32", 4, True)
+    INT_64 = Type("i64", 8, True)
+    UINT_8 = Type("u8", 1, True)
+    UINT_16 = Type("u16", 2, True)
+    UINT_32 = Type("u32", 4, True)
+    UINT_64 = Type("u64", 8, True)
+    FLOAT_32 = Type("f32", 4, True)
+    FLOAT_64 = Type("f64", 8, True)
+    STRING = Type("string", 8)
+    VOID = Type("void", 0)
+    
+    @staticmethod
+    def get_numeric_types() -> set[Type]:
+        return {BuiltinType.BOOL.value, BuiltinType.CHAR.value, BuiltinType.UINT_8.value,
+                BuiltinType.INT_16.value, BuiltinType.UINT_16.value, BuiltinType.INT_32.value,
+                BuiltinType.UINT_32.value, BuiltinType.INT_64.value, BuiltinType.UINT_64.value,
+                BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}
+    
+    @staticmethod
+    def get_types() -> set[Type]:
+        return {BuiltinType.BOOL.value, BuiltinType.CHAR.value, BuiltinType.UINT_8.value,
+                BuiltinType.INT_16.value, BuiltinType.UINT_16.value, BuiltinType.INT_32.value,
+                BuiltinType.UINT_32.value, BuiltinType.INT_64.value, BuiltinType.UINT_64.value,
+                BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value, BuiltinType.STRING.value, 
+                BuiltinType.VOID.value, BuiltinType.MISSING.value}
+    
+    @staticmethod
+    def isBuiltin(type_identifier:str) -> bool:
+        values = set(item.value.ident for item in BuiltinType)
+        return type_identifier in values
+        
+    @staticmethod
+    def str_to_type(str_typ: str, location:Location|None=None):
+        for typ in BuiltinType.get_types():
+            if typ.ident == str_typ:
+                return typ
+        raise TypingError(f"Incorrect use of builtin type {str_typ} at location {location}")            
+
+
+def setup_builtin_types(root_vars: dict[str, tuple[Type, Location | None]]):
+    numeric_and_bool = BuiltinType.get_types()
+    numeric_and_bool.remove(BuiltinType.VOID.value)
+    numeric_and_bool.remove(BuiltinType.MISSING.value)
+    for typ in numeric_and_bool:
+        typ.methods.update(
+            {"ToString": FunctionType(BuiltinType.STRING.value, [])})
+    
+    for typ in numeric_and_bool:
+        for op in BinaryOperation:
+            typ._operators[op] = {}
+    
+    numeric_and_bool.remove(BuiltinType.STRING.value)
+    
+    for typ in numeric_and_bool:
+        typ.add_explicit_cast(numeric_and_bool)
+
+    BuiltinType.STRING.value.add_implicit_cast(BuiltinType.STRING.value)
+    BuiltinType.VOID.value.add_implicit_cast(BuiltinType.VOID.value)
+    BuiltinType.FLOAT_64.value.add_implicit_cast(
+        BuiltinType.FLOAT_64.value)
+    BuiltinType.FLOAT_32.value.add_implicit_cast(
+        BuiltinType.FLOAT_32.value)
+    BuiltinType.FLOAT_32.value.add_implicit_cast(
+        BuiltinType.FLOAT_64.value)
+    BuiltinType.INT_64.value.add_implicit_cast(BuiltinType.INT_64.value)
+    BuiltinType.INT_64.value.add_implicit_cast(BuiltinType.UINT_64.value)
+    BuiltinType.INT_64.value.add_implicit_cast(
+        BuiltinType.FLOAT_32.value.can_implicit_cast_to)
+    BuiltinType.INT_32.value.add_implicit_cast(BuiltinType.INT_32.value)
+    BuiltinType.INT_32.value.add_implicit_cast(BuiltinType.UINT_32.value)
+    BuiltinType.INT_32.value.add_implicit_cast(
+        BuiltinType.INT_64.value.can_implicit_cast_to)
+    BuiltinType.INT_16.value.add_implicit_cast(BuiltinType.INT_16.value)
+    BuiltinType.INT_16.value.add_implicit_cast(BuiltinType.UINT_16.value)
+    BuiltinType.INT_16.value.add_implicit_cast(
+        BuiltinType.INT_32.value.can_implicit_cast_to)
+    BuiltinType.CHAR.value.add_implicit_cast(BuiltinType.CHAR.value)
+    BuiltinType.CHAR.value.add_implicit_cast(BuiltinType.UINT_8.value)
+    BuiltinType.CHAR.value.add_implicit_cast(
+        BuiltinType.INT_16.value.can_implicit_cast_to)
+    BuiltinType.BOOL.value.add_implicit_cast(BuiltinType.BOOL.value)
+    BuiltinType.BOOL.value.add_implicit_cast(
+        BuiltinType.CHAR.value.can_implicit_cast_to)
+    BuiltinType.UINT_64.value.add_implicit_cast(
+        [BuiltinType.UINT_64.value, BuiltinType.INT_64.value,
+         BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value])
+    BuiltinType.UINT_32.value.add_implicit_cast(
+        BuiltinType.INT_32.value.can_implicit_cast_to)
+    BuiltinType.UINT_32.value.add_implicit_cast(BuiltinType.UINT_32.value)
+    BuiltinType.UINT_16.value.add_implicit_cast(BuiltinType.UINT_64.value)
+    BuiltinType.UINT_16.value.add_implicit_cast(
+        BuiltinType.INT_16.value.can_implicit_cast_to)
+    BuiltinType.UINT_16.value.add_implicit_cast(BuiltinType.UINT_16.value)
+    BuiltinType.UINT_8.value.add_implicit_cast(BuiltinType.UINT_8.value)
+    BuiltinType.UINT_8.value.add_implicit_cast(
+        BuiltinType.CHAR.value.can_implicit_cast_to)
+    for typ in BuiltinType.get_types():
+        CustomType.known_types[typ.ident] = typ
+    CustomType.known_types['i8'] = BuiltinType.CHAR.value
+    
+    for t1 in numeric_and_bool:
+        for t2 in numeric_and_bool:
+            #set +,-,* and / operator types
+            for op in {BinaryOperation.PLUS, BinaryOperation.MINUS, BinaryOperation.TIMES,
+                       BinaryOperation.DIVIDE}:
+                if t1 == t2 and t1 == BuiltinType.BOOL.value:
+                    #bool operators will be converted to char as operators on bool values will most likely over/underflow
+                    t1._operators[op][t2] = BuiltinType.CHAR.value
+                else:
+                    t1._operators[op][t2] = Type.implicit_cast(t1,t2)
+            #for t2 not a float set mod and shift
+            if t2 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}:
+                # set left and right shift ops for t2 integer
+                t1._operators[BinaryOperation.SHIFT_LEFT][t2] = t1
+                t1._operators[BinaryOperation.SHIFT_RIGHT][t2] = t1                
+                # for t2 not a float set modulus, XOR and AND/OR operators (valid on integers and bool)
+                if t1 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}:
+                    t1._operators[BinaryOperation.MOD][t2] = Type.implicit_cast(t1,t2)
+                    t1._operators[BinaryOperation.XOR][t2] = Type.implicit_cast(t1,t2)
+                    t1._operators[BinaryOperation.LOGIC_AND][t2] = Type.implicit_cast(t1,t2)
+                    t1._operators[BinaryOperation.LOGIC_OR][t2] = Type.implicit_cast(t1,t2)
+                    t1._operators[BinaryOperation.BOOL_AND][t2] = BuiltinType.BOOL.value
+                    t1._operators[BinaryOperation.BOOL_OR][t2] = BuiltinType.BOOL.value
+            # and comparators 
+            for op in {BinaryOperation.BOOL_EQ, BinaryOperation.BOOL_GEQ, BinaryOperation.BOOL_GT,
+                       BinaryOperation.BOOL_LEQ, BinaryOperation.BOOL_LT, BinaryOperation.BOOL_NEQ}:
+                t1._operators[op][t2] = BuiltinType.BOOL.value
+
+    #add concat
+    BuiltinType.STRING.value._operators[BinaryOperation.PLUS][BuiltinType.STRING.value] = BuiltinType.STRING.value
+    #Add builtin functions IDs
+    root_vars.setdefault('print', (FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]),None))
+
 class TTreeElem:
     def __init__(self, elem: PTreeElem, parent:"TTreeElem|None"=None) -> None:
         self.parent = parent
@@ -313,7 +451,70 @@ class TExpression(TStatement):
             return TBool
         raise TypingError(f"Cannot find corresponding type for {type(expr)} (error at location {expr.location})")
         
-    def __init__(self, elem: PExpression, parent: TTreeElem):
+    def __init__(self, elem: PTreeElem, parent: TTreeElem):
+        super().__init__(elem, parent)
+        self.typ = BuiltinType.MISSING.value
+
+class TVar(TExpression):
+    def __init__(self, elem:PIdentifier, parent:TTreeElem, parent_typ:Type|None=None):
+        super().__init__(elem, parent)
+        self.identifier = elem.identifier
+        self.typ = BuiltinType.MISSING.value
+        typ = self.find_corresponding_var_typ(elem.identifier)
+        if typ is None and parent_typ is not None:
+            typ = parent_typ.fields.get(elem.identifier, None)
+        if typ is None:
+            self.errors.append(TypingError(f"Unknown type for identifier: '{self.identifier}' at location {self.location}"))
+        else:
+            self.typ = typ
+
+class TScope(TTreeElem):
+    def __init__(self, elem:PScope, parent:TTreeElem|None):
+        super().__init__(elem, parent)
+        if isinstance(elem, PSkip):
+            return
+        #define global functions (just names and return types)
+        for func in elem.funcDecl:
+            assert(isinstance(func, PFuncDecl))
+            self.add_known_id(func.id.identifier,
+                              FunctionType(
+                                  CustomType.get_type_from_ptype(func.returnType),
+                                  [CustomType.get_type_from_ptype(arg.typ) for arg in func.args]),
+                              func.id.location)
+        self.varDecl = [TVarDecl(pvardecl, self) for pvardecl in elem.varDecl]
+        self.funcDecl = [TFuncDecl(pfuncdecl, self) for pfuncdecl in elem.funcDecl]
+        self.statements = []
+        for pstatement in elem.statements:
+            try:
+                self.statements.append(TStatement.get_correct_TTreeElem(pstatement)(pstatement, self))
+            except TypingError as e:
+                self.errors.append(e)
+
+class TModule(TScope):
+    def __init__(self, elem: PModule):
+        self._known_vars:dict[str,tuple[Type,Location|None]] = {}
+        self.errors: list[TypingError] = []
+        setup_builtin_types(self._known_vars)
+        #add defined classes into type list
+        for c in elem.classDecl:
+            try:
+                CustomType(c.identifier.identifier,8, location=c.identifier.location)
+            except TypingError as e:
+                self.errors.append(e)
+        #define global functions (just names and return types)
+        for func in elem.funcDecl:
+            assert (isinstance(func, PFuncDecl))
+            self.add_known_id(func.id.identifier,
+                              FunctionType(
+                                  CustomType.get_type_from_ptype(func.returnType),
+                                  [CustomType.get_type_from_ptype(arg.typ) for arg in func.args]),
+                              func.id.location)
+        #define classes and types
+        self.classDecl = [TClassDecl(c, self) for c in elem.classDecl]
+        super().__init__(elem, None)
+
+class TClassDecl(TTreeElem):
+    def __init__(self, elem: PClassDecl, parent: TTreeElem):
         super().__init__(elem, parent)
         self.typ = BuiltinType.MISSING.to_type()
 

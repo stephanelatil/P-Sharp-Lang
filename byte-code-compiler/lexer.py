@@ -14,6 +14,11 @@ class Location:
 
     def __repr__(self) -> str:
         return '"'+str(self)+'"'
+    
+    def __eq__(self, __value: object) -> bool:
+        if not isinstance(__value, Location):
+            return False
+        return self.line == __value.line and self.col == __value.col
 
 class LexerError(SyntaxError):
     def __init__(self, *args: object, location:Location=None, token=None) -> None:
@@ -59,12 +64,13 @@ class PS_Lexer:
         'or': 'Operator_Binary_Bool_Or',
         'not': 'Operator_Unary_Not',
         'void': 'Keyword_Type_Void',
-        'int_16': 'Keyword_Type_Int16',
-        'int_32': 'Keyword_Type_Int32',
-        'int_64': 'Keyword_Type_Int64',
+        'i8': 'Keyword_Type_Int8',
+        'i16': 'Keyword_Type_Int16',
+        'i32': 'Keyword_Type_Int32',
+        'i64': 'Keyword_Type_Int64',
         'string': 'Keyword_Type_String',
-        'float_32': 'Keyword_Type_Float_32',
-        'float_64': 'Keyword_Type_Float_64',
+        'f32': 'Keyword_Type_Float_32',
+        'f64': 'Keyword_Type_Float_64',
         'char': 'Keyword_Type_Char',
         'bool': 'Keyword_Type_Boolean',
 #        'var': 'Keyword_Type_Autoassign'

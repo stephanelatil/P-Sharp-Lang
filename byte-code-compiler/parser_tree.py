@@ -490,6 +490,7 @@ def p_utype(p: YaccProduction):
     """Type : Keyword_Type_Mod_Unsigned Keyword_Type_Int16
             | Keyword_Type_Mod_Unsigned Keyword_Type_Int32
             | Keyword_Type_Mod_Unsigned Keyword_Type_Int64
+            | Keyword_Type_Mod_Unsigned Keyword_Type_Int8
             | Keyword_Type_Mod_Unsigned Keyword_Type_Char"""
     loc, loc2 = p.slice[1].location, p.slice[2].location_end
     p[0] = PUType(loc, p[2], loc2)
@@ -497,6 +498,7 @@ def p_utype(p: YaccProduction):
 
 def p_type(p: YaccProduction):
     """Type : Keyword_Type_Void
+            | Keyword_Type_Int8
             | Keyword_Type_Int16
             | Keyword_Type_Int32
             | Keyword_Type_Int64
@@ -608,7 +610,6 @@ def p_expr_list(p: YaccProduction):
         p[0] = [p[1]]
     else:
         p[0] = p[1] + [p[3]]
-
 
 def p_index(p: YaccProduction):
     """ArrayIndex : Expr Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
