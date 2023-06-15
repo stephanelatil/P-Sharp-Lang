@@ -51,7 +51,7 @@
 			"patterns": [
 				{
 					"name": "keyword.type.psc",
-					"match": "\\b(unsigned|void|int_(16|32|64)|float_(16|32)|bool|char|string)\\b"
+					"match": "\\b(unsigned|void|(i|u)(8|16|32|64)|f(16|32)|bool|char|string)\\b"
 				}
 			]
 		},
