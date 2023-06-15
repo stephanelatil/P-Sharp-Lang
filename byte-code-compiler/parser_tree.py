@@ -459,19 +459,19 @@ def p_bloc_empty(p: YaccProduction):
 def p_bloc_single(p: YaccProduction):
     """StatementList : Statement"""
     if isinstance(p[1], PVarDecl):
-        p[0] = PScope(p[1].location, functions=[], varDecl=[
-                      p[1]], statements=[], last_token_end=p[1].location_end)
+        p[0] = PScope(get_loc(p,1)[0], functions=[], varDecl=[
+                      p[1]], statements=[], last_token_end=get_loc(p,1)[1])
     elif isinstance(p[1], PFuncDecl):
-        p[0] = PScope(p[1].location, functions=[p[1]], varDecl=[], statements=[],
-                      last_token_end=p[1].location_end)
+        p[0] = PScope(get_loc(p,1)[0], functions=[p[1]], varDecl=[], statements=[],
+                      last_token_end=get_loc(p,1)[1])
     else:
-        p[0] = PScope(p[1].location, functions=[],
-                      varDecl=[], statements=[p[1]], last_token_end=p[1].location_end)
+        p[0] = PScope(get_loc(p,1)[0], functions=[],
+                      varDecl=[], statements=[p[1]], last_token_end=get_loc(p, 1)[1])
 
 
 def p_bloc_list(p: YaccProduction):
     """StatementList : Statement StatementList"""
-    loc = Location(p.lineno(1), p.lexspan(1)[0])
+    loc = get_loc(p, 1)[0]
     if isinstance(p[1], PVarDecl):
         p[0] = PScope(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
             p[2].varDecl), statements=deepcopy(p[2].statements))
