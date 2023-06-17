@@ -93,6 +93,7 @@ class PS_Lexer:
         'Punctuation_Comma',
         'Operator_Unary_Dec',
         'Operator_Unary_Inc',
+        'Operator_Logic_Not',
         'Operator_Binary_Bool_Eq',
         'Operator_Binary_Bool_Neq',
         'Operator_Binary_Bool_Geq',
@@ -346,6 +347,10 @@ class PS_Lexer:
 
     def t_Operator_Dot(self, t):
         r'\.'
+        return t
+
+    def t_Operator_Logic_Not(self, t):
+        r'!'
         return t
 
     def t_newline(self,t):

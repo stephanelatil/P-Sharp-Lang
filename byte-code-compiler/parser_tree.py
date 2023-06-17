@@ -753,7 +753,8 @@ def p_paren(p: YaccProduction):
 
 def p_UnOp(p: YaccProduction):
     '''Expr : Operator_Minus Expr
-            | Operator_Unary_Not Expr'''
+            | Operator_Unary_Not Expr
+            | Operator_Logic_Not Expr'''
     loc = p.slice[1].location
     p[0] = PUnOp(loc, UnaryOperation(p[1]), p[2])
 
