@@ -213,6 +213,7 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     
     numeric_and_bool.remove(BuiltinType.STRING.value)
     
+    #add explicit casts
     for typ in numeric_and_bool:
         typ.add_explicit_cast(numeric_and_bool)
 
@@ -225,39 +226,36 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     BuiltinType.FLOAT_32.value.add_implicit_cast(
         BuiltinType.FLOAT_64.value)
     BuiltinType.INT_64.value.add_implicit_cast(BuiltinType.INT_64.value)
-    BuiltinType.INT_64.value.add_implicit_cast(BuiltinType.UINT_64.value)
     BuiltinType.INT_64.value.add_implicit_cast(
         BuiltinType.FLOAT_32.value.can_implicit_cast_to)
     BuiltinType.INT_32.value.add_implicit_cast(BuiltinType.INT_32.value)
-    BuiltinType.INT_32.value.add_implicit_cast(BuiltinType.UINT_32.value)
     BuiltinType.INT_32.value.add_implicit_cast(
         BuiltinType.INT_64.value.can_implicit_cast_to)
     BuiltinType.INT_16.value.add_implicit_cast(BuiltinType.INT_16.value)
-    BuiltinType.INT_16.value.add_implicit_cast(BuiltinType.UINT_16.value)
     BuiltinType.INT_16.value.add_implicit_cast(
         BuiltinType.INT_32.value.can_implicit_cast_to)
     BuiltinType.CHAR.value.add_implicit_cast(BuiltinType.CHAR.value)
-    BuiltinType.CHAR.value.add_implicit_cast(BuiltinType.UINT_8.value)
     BuiltinType.CHAR.value.add_implicit_cast(
         BuiltinType.INT_16.value.can_implicit_cast_to)
     BuiltinType.BOOL.value.add_implicit_cast(BuiltinType.BOOL.value)
     BuiltinType.BOOL.value.add_implicit_cast(
         BuiltinType.CHAR.value.can_implicit_cast_to)
     BuiltinType.UINT_64.value.add_implicit_cast(
-        [BuiltinType.UINT_64.value, BuiltinType.INT_64.value,
-         BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value])
+        [BuiltinType.UINT_64.value, BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value])
     BuiltinType.UINT_32.value.add_implicit_cast(
-        BuiltinType.INT_32.value.can_implicit_cast_to)
+        BuiltinType.INT_64.value.can_implicit_cast_to)
     BuiltinType.UINT_32.value.add_implicit_cast(BuiltinType.UINT_32.value)
     BuiltinType.UINT_16.value.add_implicit_cast(BuiltinType.UINT_64.value)
     BuiltinType.UINT_16.value.add_implicit_cast(
-        BuiltinType.INT_16.value.can_implicit_cast_to)
+        BuiltinType.INT_32.value.can_implicit_cast_to)
     BuiltinType.UINT_16.value.add_implicit_cast(BuiltinType.UINT_16.value)
     BuiltinType.UINT_8.value.add_implicit_cast(BuiltinType.UINT_8.value)
     BuiltinType.UINT_8.value.add_implicit_cast(
-        BuiltinType.CHAR.value.can_implicit_cast_to)
+        BuiltinType.INT_16.value.can_implicit_cast_to)
+    
     for typ in BuiltinType.get_types():
         CustomType.known_types[typ.ident] = typ
+    # add shortcut to char as i8
     CustomType.known_types['i8'] = BuiltinType.CHAR.value
     
     for t1 in numeric_and_bool:
@@ -269,7 +267,10 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
                     #bool operators will be converted to char as operators on bool values will most likely over/underflow
                     t1._operators[op][t2] = BuiltinType.CHAR.value
                 else:
-                    t1._operators[op][t2] = Type.implicit_cast(t1,t2)
+                    try:
+                        t1._operators[op][t2] = Type.implicit_cast(t1,t2)
+                    except:
+                        pass #skip operations between non corresponding types
             #for t2 not a float set mod and shift
             if t2 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}:
                 # set left and right shift ops for t2 integer
@@ -277,10 +278,13 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
                 t1._operators[BinaryOperation.SHIFT_RIGHT][t2] = t1                
                 # for t2 not a float set modulus, XOR and AND/OR operators (valid on integers and bool)
                 if t1 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}:
-                    t1._operators[BinaryOperation.MOD][t2] = Type.implicit_cast(t1,t2)
-                    t1._operators[BinaryOperation.XOR][t2] = Type.implicit_cast(t1,t2)
-                    t1._operators[BinaryOperation.LOGIC_AND][t2] = Type.implicit_cast(t1,t2)
-                    t1._operators[BinaryOperation.LOGIC_OR][t2] = Type.implicit_cast(t1,t2)
+                    try:
+                        t1._operators[BinaryOperation.MOD][t2] = Type.implicit_cast(t1,t2)
+                        t1._operators[BinaryOperation.XOR][t2] = Type.implicit_cast(t1,t2)
+                        t1._operators[BinaryOperation.LOGIC_AND][t2] = Type.implicit_cast(t1,t2)
+                        t1._operators[BinaryOperation.LOGIC_OR][t2] = Type.implicit_cast(t1,t2)
+                    except:
+                        pass  # skip operations between incompatible types
                     t1._operators[BinaryOperation.BOOL_AND][t2] = BuiltinType.BOOL.value
                     t1._operators[BinaryOperation.BOOL_OR][t2] = BuiltinType.BOOL.value
             # and comparators 
