@@ -403,10 +403,164 @@ class TestTyping(TestCase):
         with self.assertRaises(MultiTypingException) as ex:
             t = p_to_t_tree(p)
 
+    def test_unique(self):
+        with open(r".\test_files\typing\bad\testfile-unique-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_call_1(self):
+        with open(r".\test_files\typing\bad\testfile-call-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+    
+    def test_call_2(self):
+        with open(r".\test_files\typing\bad\testfile-call-2.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_call_3(self):
+        with open(r".\test_files\typing\bad\testfile-call-3.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_redef_1(self):
+        with open(r".\test_files\typing\bad\testfile-redef-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_redef_2(self):
+        with open(r".\test_files\typing\bad\testfile-redef-2.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_redef_4(self):
+        with open(r".\test_files\typing\bad\testfile-redef-4.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_redef_5(self):
+        with open(r".\test_files\typing\bad\testfile-redef-5.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_redef_6(self):
+        with open(r".\test_files\typing\bad\testfile-redef-6.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_redef_7(self):
+        with open(r".\test_files\typing\bad\testfile-redef-7.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_redef_8(self):
+        with open(r".\test_files\typing\bad\testfile-redef-8.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_scope_1(self):
+        with open(r".\test_files\typing\bad\testfile-scope-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_scope_2(self):
+        with open(r".\test_files\typing\bad\testfile-scope-2.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_unary_minus_1(self):
+        with open(r".\test_files\typing\bad\testfile-unary_minus-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_undef_field_1(self):
+        with open(r".\test_files\typing\bad\testfile-undef_field-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_undef_fun_1(self):
+        with open(r".\test_files\typing\bad\testfile-undef_fun-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_undef_var_1(self):
+        with open(r".\test_files\typing\bad\testfile-undef_var-1.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_undef_var_2(self):
+        with open(r".\test_files\typing\bad\testfile-undef_var-2.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_undef_var_3(self):
+        with open(r".\test_files\typing\bad\testfile-undef_var-3.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        with self.assertRaises(MultiTypingException) as ex:
+            t = p_to_t_tree(p)
+
+    def test_empty_file(self):
+        with open(r".\test_files\typing\good\testfile-empty-file.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        t = p_to_t_tree(p)
+        self.assertEqual(len(t.classDecl), 0)
+        self.assertEqual(len(t.statements), 0)
+        self.assertEqual(len(t.funcDecl), 0)
+        self.assertEqual(len(t.varDecl), 0)
+        self.assertEqual(len(CustomType.known_types), 15,
+                          "There should just be the 15 built-in types defined.")
+        self.assertEqual(len(t._known_vars), 1,
+                          "There should just be print function defined.")
+
     def test_dot_on_return(self):
         with open(r".\test_files\typing\good\testfile-dot-on-return.psc", 'r') as f:
             code = f.read()
         p = parser.parse(code, tracking=True, lexer=PS_Lexer())
         t = p_to_t_tree(p)
-        self.assertEquals(len(t.funcDecl), 2)
-        self.assertEquals(len(t.funcDecl[1].body.statements), 1)
+        self.assertEqual(len(t.funcDecl), 2)
+        self.assertEqual(len(t.funcDecl[1].body.statements), 1)
+
+    def test_implicit_casting(self):
+        with open(r".\test_files\typing\good\testfile-implicit-casting.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        t = p_to_t_tree(p)
+        self.assertEqual(len(t.funcDecl), 1)
