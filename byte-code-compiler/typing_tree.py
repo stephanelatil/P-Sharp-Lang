@@ -41,6 +41,7 @@ class Type:
         self.location = location
         
         self._operators:dict[BinaryOperation,dict[Type, Type]] = {}
+        self._unary_opertors:dict[UnaryOperation, Type] = {}
     
     def can_cast_to(self, cast_to:"Type") -> bool:
         return cast_to in self.can_implicit_cast_to or cast_to in self.can_explicit_cast_to
@@ -291,6 +292,18 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
             for op in {BinaryOperation.BOOL_EQ, BinaryOperation.BOOL_GEQ, BinaryOperation.BOOL_GT,
                        BinaryOperation.BOOL_LEQ, BinaryOperation.BOOL_LT, BinaryOperation.BOOL_NEQ}:
                 t1._operators[op][t2] = BuiltinType.BOOL.value
+                
+    #add unary operators
+    for t in BuiltinType.get_numeric_types():
+        if t == BuiltinType.BOOL.value:
+            continue #skip bool, it's a special case treat is separately
+        t._unary_opertors[UnaryOperation.INCREMENT] = t
+        t._unary_opertors[UnaryOperation.DECREMENT] = t
+        t._unary_opertors[UnaryOperation.LOGIC_NOT] = t
+        t._unary_opertors[UnaryOperation.MINUS] = t
+        
+    BuiltinType.BOOL.value._unary_opertors[UnaryOperation.BOOL_NOT] = BuiltinType.BOOL.value
+    BuiltinType.BOOL.value._unary_opertors[UnaryOperation.LOGIC_NOT] = BuiltinType.BOOL.value
 
     #add concat
     BuiltinType.STRING.value._operators[BinaryOperation.PLUS][BuiltinType.STRING.value] = BuiltinType.STRING.value
@@ -483,6 +496,7 @@ class TModule(TScope):
                 self.errors.append(e)
         #define classes and types
         self.classDecl = [TClassDecl(c, self) for c in elem.classDecl]
+        elem.location = Location(1,1)
         super().__init__(elem, None)
 
 class TClassDecl(TTreeElem):
@@ -671,7 +685,11 @@ class TUnOp(TExpression):
         super().__init__(elem, parent=parent)
         self.rvalue = TExpression.get_correct_TTreeElem(elem.rvalue)(elem.rvalue, self)
         self.op = elem.op
-        self.typ = self.rvalue.typ
+        if self.op in self.rvalue.typ._unary_opertors:
+            self.typ = self.rvalue.typ._unary_opertors[self.op]
+        else:
+            self.errors.append(TypingError(f"The unary operator '{self.op.value}' is not implemented for this type at location {self.location}"))
+            self.typ = self.rvalue.typ
 
 
 class TCall(TExpression):
