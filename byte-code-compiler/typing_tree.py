@@ -697,7 +697,7 @@ class TCall(TExpression):
             self.errors.append(TypingError(
                 f"Got {len(self.args)} arguments but expected {len(func_typ.args_type)} at location {self.location}"))
         for expected, gotten in zip(func_typ.args_type, self.args):
-            if expected != gotten.typ:
+            if expected not in gotten.typ.can_implicit_cast_to:
                 self.errors.append(TypingError(f"Expected type {expected} but got {gotten.typ} at location {gotten.location}"))
 
 class TSkip(TStatement):
