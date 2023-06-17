@@ -317,8 +317,15 @@ class TTreeElem:
         return err
         
     def add_known_id(self, id:str, typ:Type, location:Location|None=None):
-        if id in self._known_vars and location != self._known_vars[id].location:
-            raise TypingError(f"The identifier '{id}' at location {location} has already been defined in this scope at location {self._known_vars[id].location}")
+        var = self.find_corresponding_var_typ(id)
+        if var is not None:
+            p = self
+            while p is not None:
+                if id in p._known_vars and location != p._known_vars[id].location:
+                    raise TypingError(f"The identifier '{id}' at location {location} "+
+                                      "has already been defined in this scope at location "+
+                                          str(p._known_vars[id].location))
+                p = p.parent
         self._known_vars[id] = ItemAndLoc(typ,location)
     
     def find_corresponding_var_typ(self, id:str) -> Type|None:
@@ -429,11 +436,15 @@ class TScope(TTreeElem):
         #define global functions (just names and return types)
         for func in elem.funcDecl:
             assert(isinstance(func, PFuncDecl))
-            self.add_known_id(func.id.identifier,
-                              FunctionType(
-                                  CustomType.get_type_from_ptype(func.returnType),
-                                  [CustomType.get_type_from_ptype(arg.typ) for arg in func.args]),
-                              func.id.location)
+            try:
+                self.add_known_id(func.id.identifier,
+                                  FunctionType(
+                                      CustomType.get_type_from_ptype(func.returnType),
+                                      [CustomType.get_type_from_ptype(arg.typ) for arg in func.args]),
+                                  func.id.location)
+            except TypingError as e:
+                self.errors.append(e)
+                
         self.varDecl = [TVarDecl(pvardecl, self) for pvardecl in elem.varDecl]
         self.funcDecl = [TFuncDecl(pfuncdecl, self) for pfuncdecl in elem.funcDecl]
         self.statements = []
@@ -447,6 +458,7 @@ class TModule(TScope):
     def __init__(self, elem: PModule):
         self._known_vars:dict[str,ItemAndLoc] = {}
         self.errors: list[TypingError] = []
+        self.parent = None
         setup_builtin_types(self._known_vars)
         #add defined classes into type list
         for c in elem.classDecl:
@@ -457,11 +469,14 @@ class TModule(TScope):
         #define global functions (just names and return types)
         for func in elem.funcDecl:
             assert (isinstance(func, PFuncDecl))
-            self.add_known_id(func.id.identifier,
-                              FunctionType(
-                                  CustomType.get_type_from_ptype(func.returnType),
-                                  [CustomType.get_type_from_ptype(arg.typ) for arg in func.args]),
-                              func.id.location)
+            try:
+                self.add_known_id(func.id.identifier,
+                                  FunctionType(
+                                      CustomType.get_type_from_ptype(func.returnType),
+                                      [CustomType.get_type_from_ptype(arg.typ) for arg in func.args]),
+                                  func.id.location)
+            except TypingError as e:
+                self.errors.append(e)
         #define classes and types
         self.classDecl = [TClassDecl(c, self) for c in elem.classDecl]
         super().__init__(elem, None)
