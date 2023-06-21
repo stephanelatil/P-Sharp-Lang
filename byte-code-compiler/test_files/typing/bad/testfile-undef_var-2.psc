@@ -1,3 +1,2 @@
-
-int_32 main() { int_32 x; }
-int_32 n() { x; }
+i32 n() { x; }
+i32 main() { i32 x; }

@@ -1,3 +1,3 @@
 
-struct S { int_32 a; int_32 a; };
-int_32 main() {}
+class S { i32 a; i32 a; };
+i32 main() {}

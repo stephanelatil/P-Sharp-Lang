@@ -1,3 +1,8 @@
-
-int_32 main() { int_32 x; if(x) { int_32 y; } else y; }
-
+i32 main() {
+    i32 x; 
+    if(x) { 
+        i32 y;
+    } else {
+        y;
+    } 
+}

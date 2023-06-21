@@ -1,3 +1,3 @@
 
-int_32 main() {}
-int_32 main() {}
+i32 main() {}
+i32 main() {}

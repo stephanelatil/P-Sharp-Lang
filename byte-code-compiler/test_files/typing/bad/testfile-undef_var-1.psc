@@ -1,1 +1,1 @@
-int_32 main() { x; }
+i32 main() { x; }
