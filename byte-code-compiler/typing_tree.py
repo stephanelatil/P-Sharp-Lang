@@ -553,7 +553,14 @@ class TVarDecl(TTreeElem):
             self.errors.append(e)
             self.typ = BuiltinType.MISSING.value
         self.identifier = elem.identifier.identifier
+        self.initial_value = JSON_Val(None) if elem.init_value == None else\
+                    TExpression.get_correct_TTreeElem(elem.init_value)(elem.init_value, self)
         if self.typ != BuiltinType.MISSING.value:
+            if self.initial_value != None:
+                try:
+                    CustomType.implicit_cast(self.initial_value.typ, self.typ)
+                except TypingError as e:
+                    self.errors.append(e)
             try:
                 parent.add_known_id(self.identifier, self.typ, elem.identifier.location)
             except TypingError as e:
