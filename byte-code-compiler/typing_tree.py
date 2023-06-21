@@ -452,7 +452,8 @@ class TScope(TTreeElem):
             return
         #define global functions (just names and return types)
         for func in elem.funcDecl:
-            assert(isinstance(func, PFuncDecl))
+            if isinstance(func, TConstructor):
+                continue
             try:
                 self.add_known_id(func.id.identifier,
                                   FunctionType(
@@ -463,7 +464,7 @@ class TScope(TTreeElem):
                 self.errors.append(e)
                 
         self.varDecl = [TVarDecl(pvardecl, self) for pvardecl in elem.varDecl]
-        self.funcDecl = [TFuncDecl(pfuncdecl, self) for pfuncdecl in elem.funcDecl]
+        self.funcDecl = [TFuncDecl(pfuncdecl, self) if not isinstance(pfuncdecl, TConstructor) else TConstructor(pfuncdecl, self) for pfuncdecl in elem.funcDecl]
         self.statements = []
         for pstatement in elem.statements:
             try:
@@ -504,8 +505,10 @@ class TClassDecl(TTreeElem):
         super().__init__(elem, parent)
         self.identifier = elem.identifier.identifier
         self.typ = CustomType.known_types.get(self.identifier, BuiltinType.MISSING.value)
+        self._known_vars['this'] = ItemAndLoc(
+            self.typ, elem.identifier.location)
         self.fields = [TVarDecl(field, self) for field in elem.inner_scope.varDecl]
-        self.methods = [TFuncDecl(method, self) for method in elem.inner_scope.funcDecl]
+        self.methods = [TFuncDecl(pfuncdecl, self) if not isinstance(pfuncdecl, PConstructor) else TConstructor(pfuncdecl, self) for pfuncdecl in elem.inner_scope.funcDecl]
         #set class type fields, methods and size in memory
         if self.typ != BuiltinType.MISSING.value:
             self.typ.size = 8+sum([f.typ.size if f.typ.is_primitive else 8 for f in self.fields])
@@ -575,6 +578,14 @@ class TFuncDecl(TTreeElem):
         except TypingError as e:
             self.errors.append(e)
         self.body = TScope(elem.body, self)
+
+
+class TConstructor(TFuncDecl):
+    _ID = "<CONSTRUCTOR>"
+    
+    def __init__(self, elem: PConstructor, parent: TTreeElem):
+        elem.id.identifier = TConstructor._ID
+        super().__init__(elem, parent=parent)
 
 class TCast(TExpression):
     def __init__(self, elem: PCast, parent: TTreeElem, parent_typ:Type|None=None):
@@ -815,6 +826,19 @@ class TNewObj(TExpression):
             self.new_obj = BuiltinType.MISSING.value
         self.typ = self.new_obj
         self.args = [TExpression.get_correct_TTreeElem(arg)(arg, self) for arg in elem.args]
+
+        self.constructor = self.typ.methods.get(TConstructor._ID, FunctionType(BuiltinType.MISSING.value, []))
+        if self.constructor.return_type == BuiltinType.MISSING.value:
+            self.errors.append(TypingError(f"Unable to find constructor for type '{self.typ}' at location {self.location}"))
+            return
+
+        if len(self.constructor.args_type) != len(self.args):
+            self.errors.append(TypingError(
+                f"Got {len(self.args)} arguments but expected {len(self.constructor.args_type)} at location {self.location}"))
+        for expected, gotten in zip(self.constructor.args_type, self.args):
+            if expected not in gotten.typ.can_implicit_cast_to:
+                self.errors.append(TypingError(
+                    f"Expected type {expected} but got {gotten.typ} at location {gotten.location}"))        
 
 
 class TImport(TStatement):

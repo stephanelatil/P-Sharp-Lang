@@ -123,7 +123,7 @@ class PArray(PType):
 
 class PScope(PTreeElem):
     def __init__(self, location, *, functions=None, varDecl=None, statements=None, last_token_end:Location|None=None):
-        self.funcDecl = [] if functions is None else functions
+        self.funcDecl:list[PFuncDecl] = [] if functions is None else functions
         self.varDecl = [] if varDecl is None else varDecl
         self.statements = [] if statements is None else statements
         super().__init__(location, last_token_end=last_token_end)
@@ -195,6 +195,10 @@ class PFuncDecl(PTreeElem):
         if isinstance(id, PThis):
             self.parsing_errors.append(ParsingError(
                 "'this' is a reserved keyword", location=self.location, problem_token="this"))
+            
+class PConstructor(PFuncDecl):
+    def __init__(self, location, returnType: PType, id: PIdentifier, args: list[PVarDecl], body: PScope, last_token_end:Location|None=None):
+        super().__init__(location, returnType, id, args, body, last_token_end)
 
 class PUType(PType):
     def __init__(self, location, type_identifier, last_token_end:Location|None=None):
@@ -538,24 +542,20 @@ def p_cast_2(p:YaccProduction):
 
 def p_var_declaration(p: YaccProduction):
     """VarDecl : Ident Ident Punctuation_EoL"""
-    loc2 = p.slice[3].location_end
-    typ = PType(None, p[1].identifier)
-    p[0] = PVarDecl(None, typ, p[2], last_token_end=loc2)
+    typ = PType(get_loc(p,1)[0], p[1].identifier, last_token_end=get_loc(p,2)[1])
+    p[0] = PVarDecl(get_loc(p,1)[0], typ, p[2], last_token_end=get_loc(p,3)[1])
     
 def p_var_declaration_2(p: YaccProduction):
     """VarDecl : Type Ident Punctuation_EoL"""
-    loc2 = p.slice[3].location_end
-    p[0] = PVarDecl(None, p[1], p[2], last_token_end=loc2)
+    p[0] = PVarDecl(get_loc(p,1)[0], p[1], p[2], last_token_end=get_loc(p,3)[1])
 
 def p_var_declaration_and_assignment(p:YaccProduction):
     """VarDecl : Ident Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
-    loc2 = p.slice[5].location_end
-    p[0] = PVarDecl(None, PType(None, p[1].identifier), p[2], p[4], last_token_end=loc2)
+    p[0] = PVarDecl(get_loc(p,1)[0], PType(get_loc(p,1)[0], p[1].identifier), p[2], p[4], last_token_end=get_loc(p,5)[1])
 
 def p_var_declaration_and_assignment_2(p:YaccProduction):
     """VarDecl : Type Ident Operator_Binary_Affectation Expr Punctuation_EoL"""
-    loc2 = p.slice[5].location_end
-    p[0] = PVarDecl(None, p[1], p[2], p[4], last_token_end=loc2)
+    p[0] = PVarDecl(get_loc(p, 1)[0], p[1], p[2], p[4], last_token_end=get_loc(p,5)[1])
 
 
 def p_break(p: YaccProduction):
@@ -651,31 +651,6 @@ def p_new_array_2(p: YaccProduction):
     """Expr : Keyword_Object_New Type Punctuation_OpenBracket Expr Punctuation_CloseBracket"""
     loc, loc2 = p.slice[1].location, p.slice[5].location_end
     p[0] = PNewArray(loc, p[2], p[4])
-
-
-def p_new_obj(p: YaccProduction):
-    """Expr : Keyword_Object_New Ident Punctuation_OpenParen ExprList Punctuation_CloseParen"""
-    loc, loc2 = p.slice[1].location, p.slice[5].location_end
-    p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier), p[4], last_token_end=loc2)
-
-def p_new_obj_2(p: YaccProduction):
-    """Expr : Keyword_Object_New Type Punctuation_OpenParen ExprList Punctuation_CloseParen"""
-    loc, loc2 = p.slice[1].location, p.slice[5].location_end
-    p[0] = PNewObj(loc, p[2], p[4], last_token_end=loc2)
-
-
-def p_new_obj_no_args(p: YaccProduction):
-    """Expr : Keyword_Object_New Ident Punctuation_OpenParen Punctuation_CloseParen"""
-    loc, loc2 = p.slice[1].location, p.slice[4].location_end
-    p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier),
-                   [], last_token_end=loc2)
-
-
-def p_new_obj_no_args_2(p: YaccProduction):
-    """Expr : Keyword_Object_New Type Punctuation_OpenParen Punctuation_CloseParen"""
-    loc, loc2 = p.slice[1].location, p.slice[4].location_end
-    p[0] = PNewObj(loc, p[2], [], last_token_end=loc2)
-
 
 def p_binop(p: YaccProduction):
     #prec avoids a-b being reduced to a (-b) and ending up with 'Expr Expr'
@@ -823,9 +798,36 @@ def p_array_literal(p: YaccProduction):
     p[0] = PExpression(loc, p[2], last_token_end=loc2)
 
 
+def p_new_obj(p: YaccProduction):
+    """Expr : Keyword_Object_New Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP
+            | Keyword_Object_New Ident Punctuation_OpenParen Expr Punctuation_CloseParen %prec UNOP"""
+    args = [p[4]] if isinstance(p[4],PExpression) else p[4]
+    p[0] = PNewObj(get_loc(p,1)[0], PType(p[2].location, p[2].identifier),
+                   args, last_token_end=get_loc(p,5)[1])
+
+def p_new_obj_2(p: YaccProduction):
+    """Expr : Keyword_Object_New Type Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP
+            | Keyword_Object_New Type Punctuation_OpenParen Expr Punctuation_CloseParen %prec UNOP"""
+    args = [p[4]] if isinstance(p[4], PExpression) else p[4]
+    p[0] = PNewObj(get_loc(p, 1)[0], p[2], args, last_token_end=get_loc(p, 5)[1])
+
+
+def p_new_obj_no_args(p: YaccProduction):
+    """Expr : Keyword_Object_New Ident Punctuation_OpenParen Punctuation_CloseParen %prec UNOP"""
+    loc, loc2 = p.slice[1].location, p.slice[4].location_end
+    p[0] = PNewObj(loc, PType(p[2].location, p[2].identifier),
+                   [], last_token_end=loc2)
+
+
+def p_new_obj_no_args_2(p: YaccProduction):
+    """Expr : Keyword_Object_New Type Punctuation_OpenParen Punctuation_CloseParen %prec UNOP"""
+    loc, loc2 = p.slice[1].location, p.slice[4].location_end
+    p[0] = PNewObj(loc, p[2], [], last_token_end=loc2)
+
+
 def p_call(p: YaccProduction):
-    """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec UNOP
-                | Ident Punctuation_OpenParen Expr Punctuation_CloseParen %prec UNOP""" 
+    """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec DUOP
+                | Ident Punctuation_OpenParen Expr Punctuation_CloseParen %prec DUOP"""
     #add precedence to avoid 'Ident (Expr)' getting reduced to 'Ident Expr'
     def place_pcall(node):
         if isinstance(node.rvalue, PDot):
@@ -843,7 +845,7 @@ def p_call(p: YaccProduction):
     
 
 def p_call_no_Args(p: YaccProduction):
-    """FuncCall : Ident Punctuation_OpenParen Punctuation_CloseParen %prec UNOP"""
+    """FuncCall : Ident Punctuation_OpenParen Punctuation_CloseParen %prec DUOP"""
     def place_pcall(node):
         if isinstance(node.rvalue, PDot):
             place_pcall(node.rvalue)
@@ -910,17 +912,17 @@ def p_func_declaration_no_args(p: YaccProduction):
     
 def p_void_constructor_decl(p:YaccProduction):
     """FuncDecl : Ident Punctuation_OpenParen Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PFuncDecl(p[1].location, p[1], p[1], [], p[5],
-                     last_token_end=p.slice[6].location_end)
+    p[0] = PConstructor(get_loc(p, 1)[0], PType(get_loc(p, 1)[0], p[1].identifier, get_loc(p, 1)[1]), p[1], [], p[5],
+                     last_token_end=get_loc(p,6)[1])
     
 def p_constructor_decl(p:YaccProduction):
     """FuncDecl : Ident Punctuation_OpenParen TypedArgs Punctuation_CloseParen Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PFuncDecl(p[1].location, p[1], p[1], p[3], p[6],
-                            last_token_end=p[7].location_end)
+    p[0] = PConstructor(get_loc(p, 1)[0], PType(get_loc(p, 1)[0], p[1].identifier, get_loc(p, 1)[1]), p[1], p[3], p[6],
+                            last_token_end=get_loc(p,7)[1])
     
 def p_this(p:YaccProduction):
     """Ident : Keyword_Object_This"""
-    p[0] = PThis(p.slice[1].location, p.slice[1].location_end)
+    p[0] = PThis(get_loc(p, 1)[0], get_loc(p, 1)[1])
 
 
 def p_func_declaration_no_args_2(p: YaccProduction):
@@ -930,7 +932,7 @@ def p_func_declaration_no_args_2(p: YaccProduction):
 
 def p_class_declaration(p: YaccProduction):
     """ClassDecl : Keyword_Object_Class Ident Punctuation_OpenBrace StatementList Punctuation_CloseBrace"""
-    p[0] = PClassDecl(get_loc(p,1)[1], p[2], p[4], last_token_end=get_loc(p,5)[1])
+    p[0] = PClassDecl(get_loc(p,1)[0], p[2], p[4], last_token_end=get_loc(p,5)[1])
 
 # For extension / implementing interfaces
 # def p_class_declaration(p:YaccProduction):
