@@ -32,6 +32,8 @@ class PTreeElem:
         def max_loc(loc:Location|None):
             return 100000*loc.line+loc.col if loc is not None else 1
         def min_loc(loc:Location|None):
+            if loc is not None and loc.line < 1:
+                return 99999999999999999999999
             return 100000*loc.line+loc.col if loc is not None else 9999999999999999
         
         self.location = location
