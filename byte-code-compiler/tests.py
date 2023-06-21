@@ -564,3 +564,9 @@ class TestTyping(TestCase):
         p = parser.parse(code, tracking=True, lexer=PS_Lexer())
         t = p_to_t_tree(p)
         self.assertEqual(len(t.funcDecl), 1)
+
+    def test_constructor(self):
+        with open(r".\test_files\typing\good\testfile-constructor.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        t = p_to_t_tree(p)
