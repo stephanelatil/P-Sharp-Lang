@@ -146,7 +146,7 @@ class CustomType(Type):
         super().__init__(identifier, size, location=location)
         self.add_implicit_cast(self)
         self.fields = {f.identifier: f.typ for f in fields}
-        self.methods = {m.id: m.typ for m in methods}
+        self.methods.update({m.id: m.typ for m in methods})
         if identifier in BuiltinType._member_map_:
             raise TypingError(
                 f"The type '{identifier}' at location {self.location} is already declared as a builtin-in type")
@@ -159,7 +159,7 @@ class CustomType(Type):
 class BuiltinType(Enum):
     MISSING = Type("", -1)
     BOOL = Type("bool", 1, True)
-    CHAR = Type("char", 1, True)
+    INT_8 = Type("i8", 1, True)
     INT_16 = Type("i16", 2, True)
     INT_32 = Type("i32", 4, True)
     INT_64 = Type("i64", 8, True)
@@ -174,14 +174,14 @@ class BuiltinType(Enum):
     
     @staticmethod
     def get_numeric_types() -> set[Type]:
-        return {BuiltinType.BOOL.value, BuiltinType.CHAR.value, BuiltinType.UINT_8.value,
+        return {BuiltinType.BOOL.value, BuiltinType.INT_8.value, BuiltinType.UINT_8.value,
                 BuiltinType.INT_16.value, BuiltinType.UINT_16.value, BuiltinType.INT_32.value,
                 BuiltinType.UINT_32.value, BuiltinType.INT_64.value, BuiltinType.UINT_64.value,
                 BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}
     
     @staticmethod
     def get_types() -> set[Type]:
-        return {BuiltinType.BOOL.value, BuiltinType.CHAR.value, BuiltinType.UINT_8.value,
+        return {BuiltinType.BOOL.value, BuiltinType.INT_8.value, BuiltinType.UINT_8.value,
                 BuiltinType.INT_16.value, BuiltinType.UINT_16.value, BuiltinType.INT_32.value,
                 BuiltinType.UINT_32.value, BuiltinType.INT_64.value, BuiltinType.UINT_64.value,
                 BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value, BuiltinType.STRING.value, 
@@ -230,17 +230,20 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     BuiltinType.INT_64.value.add_implicit_cast(
         BuiltinType.FLOAT_32.value.can_implicit_cast_to)
     BuiltinType.INT_32.value.add_implicit_cast(BuiltinType.INT_32.value)
+    BuiltinType.INT_32.value.add_implicit_cast(BuiltinType.UINT_64.value)
     BuiltinType.INT_32.value.add_implicit_cast(
         BuiltinType.INT_64.value.can_implicit_cast_to)
     BuiltinType.INT_16.value.add_implicit_cast(BuiltinType.INT_16.value)
+    BuiltinType.INT_16.value.add_implicit_cast(BuiltinType.UINT_32.value)
     BuiltinType.INT_16.value.add_implicit_cast(
         BuiltinType.INT_32.value.can_implicit_cast_to)
-    BuiltinType.CHAR.value.add_implicit_cast(BuiltinType.CHAR.value)
-    BuiltinType.CHAR.value.add_implicit_cast(
+    BuiltinType.INT_8.value.add_implicit_cast(BuiltinType.INT_8.value)
+    BuiltinType.INT_8.value.add_implicit_cast(BuiltinType.UINT_16.value)
+    BuiltinType.INT_8.value.add_implicit_cast(
         BuiltinType.INT_16.value.can_implicit_cast_to)
     BuiltinType.BOOL.value.add_implicit_cast(BuiltinType.BOOL.value)
     BuiltinType.BOOL.value.add_implicit_cast(
-        BuiltinType.CHAR.value.can_implicit_cast_to)
+        BuiltinType.INT_8.value.can_implicit_cast_to)
     BuiltinType.UINT_64.value.add_implicit_cast(
         [BuiltinType.UINT_64.value, BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value])
     BuiltinType.UINT_32.value.add_implicit_cast(
@@ -257,7 +260,7 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     for typ in BuiltinType.get_types():
         CustomType.known_types[typ.ident] = typ
     # add shortcut to char as i8
-    CustomType.known_types['i8'] = BuiltinType.CHAR.value
+    CustomType.known_types['char'] = BuiltinType.UINT_8.value
     
     for t1 in numeric_and_bool:
         for t2 in numeric_and_bool:
@@ -266,7 +269,7 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
                        BinaryOperation.DIVIDE}:
                 if t1 == t2 and t1 == BuiltinType.BOOL.value:
                     #bool operators will be converted to char as operators on bool values will most likely over/underflow
-                    t1._operators[op][t2] = BuiltinType.CHAR.value
+                    t1._operators[op][t2] = BuiltinType.INT_8.value
                 else:
                     try:
                         t1._operators[op][t2] = Type.implicit_cast(t1,t2)
@@ -632,7 +635,7 @@ class TNumeric(TExpression):
                 self.errors.append(TypingError(f"The value {elem.value} is outside the accepted range at location {elem.location}"))
         else:  # negative int
             if abs(elem.value) <= 2**7:
-                self.typ = BuiltinType.CHAR.value
+                self.typ = BuiltinType.INT_8.value
             elif abs(elem.value) <= 2**16:
                 self.typ = BuiltinType.INT_16.value
             elif abs(elem.value) <= 2**32:
