@@ -2,8 +2,10 @@
 
 All notable changes to the "p-sharp-lang" extension will be documented in this file.
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+## [0.0.2]
 
-## [Unreleased]
+- Missing some featues currently being added to the language
+
+## [0.0.1]
 
 - Initial release. Constains support for basic keywords, strings and number highlighting but no syntax

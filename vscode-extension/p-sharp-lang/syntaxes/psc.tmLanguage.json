@@ -9,6 +9,12 @@
 			"include": "#strings"
 		},
 		{
+			"include": "#comments"
+		},
+		{
+			"include": "#chars"
+		},
+		{
 			"include": "#constants"
 		},
 		{
@@ -35,7 +41,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.psc",
-					"match": "\\b(class|if|else|while|for|return|continue|break|assert|and|or|not)\\b"
+					"match": "\\b(new|class|if|else|while|for|return|continue|break|assert|and|or|not)\\b"
 				}
 			]
 		},
@@ -63,6 +69,14 @@
 				{
 					"name": "constant.character.escape.psc",
 					"match": "\\\\."
+				}
+			]
+		},
+		"char": {
+			"patterns": [
+				{
+					"name": "string.quoted.single.psc",
+					"match": "['](.|\\\\x[\\da-fA-F][\\da-fA-F])[']"
 				}
 			]
 		},
