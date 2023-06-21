@@ -169,13 +169,18 @@ class PS_Lexer:
         return t
 
     def t_Number_Char(self,t):
-        r"'(.{1}|\\x[\da-fA-F][\da-fA-F])'" # single char or char hex escaped ex: '\00' for null char
+        r"'(.{1}|\\x[\da-fA-F][\da-fA-F]|\\.)'" # single char or char hex escaped ex: '\x00' for null char or single escaped char 
         setattr(t, 'len', len(t.value))
         t.value = t.value.strip("'")
         if len(t.value) == 1:
             t.value = ord(t.value)
         elif t.value[:2] == '\\x':
             t.value = int(t.value[1:], 16)
+        elif len(t.value) == 2:
+            c = bytes(s, "ascii").decode("unicode_escape")
+            if len(c) != 1:
+                raise SyntaxError(f"Invalid escape sequence '{c}'")
+            t.value = ord(c)
         if isinstance(t.value, str):
             raise SyntaxError(f"Unable to parse char: {repr(t.value)}")
         if t.value > 255 or t.value < 0:
