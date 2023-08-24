@@ -166,6 +166,12 @@ class PBool(PExpression):
         super().__init__(location, value, last_token_end)
         self.value = JSON_Val(value)
 
+
+class PNull(PExpression):
+    def __init__(self, location, last_token_end: Location | None = None):
+        super().__init__(location, None, last_token_end)
+        self.value = JSON_Val(None)
+
 class PEnum(PScope):
     def __init__(self, location, identifier:PIdentifier, values: list[PIdentifier], last_token_end:Location|None=None):
         super().__init__(location, statements = values, last_token_end = last_token_end)
@@ -875,9 +881,7 @@ def p_false(p: YaccProduction):
 
 def p_null(p: YaccProduction):
     """Expr : Keyword_Object_Null"""
-    loc = p.slice[1].location
-    last_token_end = p.slice[1].location_end
-    p[0] = PExpression(loc, None, last_token_end=last_token_end)
+    p[0] = PNull(get_loc(p,1)[0], get_loc(p,1)[1])
 
 def p_typed_args_single(p: YaccProduction):
     """TypedArgs : Type Ident"""

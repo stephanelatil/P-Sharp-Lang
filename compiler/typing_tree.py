@@ -429,6 +429,8 @@ class TExpression(TTreeElem):
             return TVar
         if isinstance(expr, PBool):
             return TBool
+        if isinstance(expr, PNull):
+            return TNull
         raise TypingError(f"Cannot find corresponding type for {type(expr)} (error at location {expr.location})")
         
     def __init__(self, elem: PTreeElem, parent: TTreeElem):
@@ -687,6 +689,8 @@ class TBinOp(TExpression):
         self.left = TExpression.get_correct_TTreeElem(elem.left)(elem.left, self)
         self.operation = elem.op
         if self.operation in {BinaryOperation.ASSIGN, BinaryOperation.COPY}:
+            if isinstance(elem.rvalue, PNull):
+                self.rvalue = TNull(elem.rvalue, self,self.left.typ)
             self.typ = self.left.typ
             if self.rvalue.typ != BuiltinType.MISSING.value and self.left.typ not in self.rvalue.typ.can_implicit_cast_to:
                 self.errors.append(TypingError(
