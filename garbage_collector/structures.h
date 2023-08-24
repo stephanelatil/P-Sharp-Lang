@@ -15,9 +15,9 @@ typedef struct PS_GC__object
     void *ptr;
 
     /**
-     * @brief 0 is unmarked, 1 or greater if marked (used large number for alignment to 8 bytes and future ref counting?)
+     * @brief 0 is unmarked, 1 or greater if marked
      */
-    long long int marked;
+    char marked;
 
     /**
      * @brief An array with pointers to the object's children
