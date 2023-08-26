@@ -111,7 +111,7 @@ class PThis(PIdentifier):
 
 
 class PType(PIdentifier):
-    def __init__(self, location, type_identifier, last_token_end:Location|None=None):
+    def __init__(self, location, type_identifier:str, last_token_end:Location|None=None):
         self.type_identifier = type_identifier
         super().__init__(location, type_identifier, last_token_end=last_token_end)
 
