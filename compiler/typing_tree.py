@@ -513,12 +513,39 @@ class TClassDecl(TTreeElem):
         self._known_vars['this'] = ItemAndLoc(
             self.typ, elem.identifier.location)
         self.fields = [TVarDecl(field, self) for field in elem.inner_scope.varDecl]
-        self.methods = [TFuncDecl(pfuncdecl, self) if not isinstance(pfuncdecl, PConstructor) else TConstructor(pfuncdecl, self) for pfuncdecl in elem.inner_scope.funcDecl]
+        self.methods = [TFuncDecl(pfuncdecl, self) for pfuncdecl in elem.inner_scope.funcDecl if not isinstance(pfuncdecl, PConstructor)]
+        self.constructor = self._setup_constructor(elem.inner_scope.funcDecl, elem.inner_scope.varDecl)
         #set class type fields, methods and size in memory
         if self.typ != BuiltinType.MISSING.value:
             self.typ.size = 8+sum([f.typ.size if f.typ.is_primitive else 8 for f in self.fields])
             self.typ.methods.update({m.id:m.typ for m in self.methods})
+            self.typ.methods.update({TConstructor._ID:self.constructor.typ})
             self.typ.fields.update({f.identifier:f.typ for f in self.fields})
+    
+    def _setup_constructor(self, methods:list[PFuncDecl], fields:list[PVarDecl]) -> "TConstructor":
+        """Returns class's constructor. Is none is defined it builds a default constructor """
+        constructor:TConstructor|None = None
+        for func in methods:
+            if isinstance(func, PConstructor):
+                constructor = TConstructor(func, self)
+                break
+        if constructor is None:
+            constructor = TConstructor(PConstructor(self.location, PType(self.location,self.typ.ident, self.location),
+                                                    PIdentifier(self.location,self.identifier, self.location),
+                                                    list(),
+                                                    PScope(self.location,functions=None, varDecl=None,statements=None, last_token_end=self.location))
+                                       ,self)
+        for field in fields: #assign default field values in 
+            if not isinstance(field.init_value, JSON_Val):
+                constructor.body.statements.insert(0,TBinOp(PAssign(self.location, field.identifier, field.init_value),constructor.body))
+            else:
+                constructor.body.statements.insert(0, TBinOp(
+                    PAssign(self.location, field.identifier,
+                            PNumeric(self.location, 0) if CustomType.get_type_from_ptype(field.typ).is_primitive
+                            else PExpression(self.location, None)),
+                    constructor.body))
+            
+        return constructor
         
     def get_type(self) -> Type:
         return self.typ
