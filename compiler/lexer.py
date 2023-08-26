@@ -367,7 +367,14 @@ class PS_Lexer:
         pass
         #Discard whitespace
 
-    def t_ID(self,t):
+    def t_reserved_prefix(self,t):
+        r'\bPS_GC__[a-zA-Z_\d]*\b'
+        line = str(t.lineno)
+        col = t.lexpos - self.code.rfind('\n', 0, t.lexpos)
+        raise LexerError("Identifiers cannot contain the prefix 'PS_GC__' which is reserved for internal use",
+                         location=Location(line, col), token=t.value)
+
+    def t_ID(self, t):
         r'\b[a-zA-Z_][a-zA-Z_\d]*\b'
         t.type = self.reserved.get(t.value, 'ID')    # Check for reserved words
         return t
