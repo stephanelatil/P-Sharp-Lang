@@ -28,7 +28,8 @@ class MultiTypingException(Exception):
         return "\n**********\n".join([str(x) for x in self.exceptions])
 
 class Type:
-    def __init__(self, identifier:str, size:int, _is_primitive=False,*, location:Location|None=None, _methods:"dict[str,FunctionType]|None" = None):
+    def __init__(self, identifier:str, size:int, _is_primitive=False,*,
+                 location:Location|None=None, _methods:"dict[str,FunctionType]|None" = None):
         self.ident:str = identifier
         self.size:int = size
         self.fields:dict[str,Type] = {}
@@ -88,10 +89,10 @@ class Type:
         raise TypingError(f"Cannot find a compatible type for the operation between {t1} and {t2}")
     
     @staticmethod
-    def get_type_from_ptype(typ:PType):
-        if typ.identifier in CustomType.known_types:
-            return CustomType.known_types[typ.identifier]
-        raise TypingError(f"Type '{typ.identifier}' is unknown at location {typ.location}")
+    def get_type_from_ptype(ptype:PType):
+        if ptype.identifier in CustomType.known_types:
+            return CustomType.known_types[ptype.identifier]
+        raise TypingError(f"Type '{ptype.identifier}' is unknown at location {ptype.location}")
     
     @staticmethod
     def get_type_from_str(typ:str, location:Location|None=None):
@@ -249,7 +250,7 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     BuiltinType.UINT_32.value.add_implicit_cast(
         BuiltinType.INT_64.value.can_implicit_cast_to)
     BuiltinType.UINT_32.value.add_implicit_cast(BuiltinType.UINT_32.value)
-    BuiltinType.UINT_16.value.add_implicit_cast(BuiltinType.UINT_64.value)
+    BuiltinType.UINT_16.value.add_implicit_cast(BuiltinType.UINT_32.value.can_implicit_cast_to)
     BuiltinType.UINT_16.value.add_implicit_cast(
         BuiltinType.INT_32.value.can_implicit_cast_to)
     BuiltinType.UINT_16.value.add_implicit_cast(BuiltinType.UINT_16.value)
@@ -364,6 +365,14 @@ class TTreeElem:
     
     def __str__(self) -> str:
         return self.__repr__()
+    
+    def __hash__(self) -> int:
+        return self._UUID
+    
+    def __eq__(self, __value: object) -> bool:
+        if not isinstance(__value, TTreeElem):
+            return False
+        return hash(__value) == hash(self) and self.location == __value.location
 
 
 class TStatement(TTreeElem):
@@ -470,7 +479,7 @@ class TScope(TTreeElem):
                 
         self.varDecl = [TVarDecl(pvardecl, self) for pvardecl in elem.varDecl]
         self.funcDecl = [TFuncDecl(pfuncdecl, self) if not isinstance(pfuncdecl, TConstructor) else TConstructor(pfuncdecl, self) for pfuncdecl in elem.funcDecl]
-        self.statements = []
+        self.statements:list[TTreeElem] = []
         for pstatement in elem.statements:
             try:
                 self.statements.append(TStatement.get_correct_TTreeElem(pstatement)(pstatement, self))
@@ -556,6 +565,14 @@ class TBool(TExpression):
         self.value = elem.value
         self.typ = BuiltinType.BOOL.value
 
+class TNull(TExpression):
+    def __init__(self, elem: PNull, parent: TTreeElem, parent_typ: Type = BuiltinType.MISSING.value):
+        super().__init__(elem, parent)
+        self.value = elem.value
+        self.typ = parent_typ
+        if parent_typ.is_primitive:
+            self.errors.append(TypingError(f"Error at {self.location}. Primitive types (like {parent_typ}) are not nullable."))
+
 class TlValue(TExpression):
     def __init__(self, elem: PlValue, parent: TTreeElem, parent_typ: Type | None = None):
         super().__init__(elem, parent)
@@ -585,10 +602,12 @@ class TVarDecl(TTreeElem):
             self.errors.append(e)
             self.typ = BuiltinType.MISSING.value
         self.identifier = elem.identifier.identifier
-        self.initial_value = JSON_Val(None) if elem.init_value == None else\
+        self.initial_value = elem.init_value if isinstance(elem.init_value, JSON_Val) else\
                     TExpression.get_correct_TTreeElem(elem.init_value)(elem.init_value, self)
         if self.typ != BuiltinType.MISSING.value:
-            if self.initial_value != None:
+            if isinstance(self.initial_value, TNull):
+                pass #TODO
+            elif self.initial_value != None and not isinstance(self.initial_value, TNull):
                 try:
                     CustomType.implicit_cast(self.initial_value.typ, self.typ)
                 except TypingError as e:
@@ -712,9 +731,10 @@ class TDot(TlValue):
 class TBinOp(TExpression):
     def __init__(self, elem:PBinOp, parent:TTreeElem, parent_typ:Type|None=None):
         super().__init__(elem, parent)
-        self.rvalue = TExpression.get_correct_TTreeElem(elem.rvalue)(elem.rvalue, self)
         self.left = TExpression.get_correct_TTreeElem(elem.left)(elem.left, self)
+        self.rvalue = TExpression.get_correct_TTreeElem(elem.rvalue)(elem.rvalue, self, self.left.typ)
         self.operation = elem.op
+        self.typ = BuiltinType.MISSING.value
         if self.operation in {BinaryOperation.ASSIGN, BinaryOperation.COPY}:
             if isinstance(elem.rvalue, PNull):
                 self.rvalue = TNull(elem.rvalue, self,self.left.typ)
