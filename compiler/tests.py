@@ -570,3 +570,9 @@ class TestTyping(TestCase):
             code = f.read()
         p = parser.parse(code, tracking=True, lexer=PS_Lexer())
         t = p_to_t_tree(p)
+
+    def test_null(self):
+        with open(r".\test_files\typing\good\testfile-null.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        t = p_to_t_tree(p)
