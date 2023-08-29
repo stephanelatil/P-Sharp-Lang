@@ -2,45 +2,48 @@
 
 ## Highlight Feature mix ##
 
+Note that many features are not yet implemented and may never be implemented. Currently available ones are marked with a checked tickbox [x] however unchecked boxes [ ] may just be wishful thinking at the moment.
+
 - Python Features:
-  - List/str Splicing
-    - Example: `array[a:b]` gives the array of size *b-a*. Creates a new array object (special type with bounds checking) that contains a pointer to the same array as previously. Just with an offset start and end point)  
+  - [ ] List/str Splicing
+    - [ ] Example: `array[a:b]` gives the array of size *b-a*. Creates a new array object (special type with bounds checking) that contains a pointer to the same array as previously. Just with an offset start and end point)  
     **Note:** `array[0:array.Len]` will return a new array object but pointing to the identical
-  
-  - Multiple bounds checking: `a < b < c` translates to `a < b and b < c` but `(a < b) < c` is equivalent to `int(a < b) < c`. because `(a < b)` returns true or false which evaluates respectively to 1 or 0.
 
-  - Lambda expressions (but cannot access variable outside it's scope)
+  - [ ] Lambda expressions (but cannot access variables outside its scope)
 
-  - Special keywords:
-    - `A in B`: A is contained in object B, can be overridden in B class description depending on implementation
-    - `A is B`: A and B are pointers to the same object (Not the same as == which does an equality check). Cannot be overridden
-    - `A and B / A or B / not A`: Boolean operator with short circuiting
-  - All objects must have an explicit to_string cast defined
-  - Can have code directly run without a *main* function
-  - Some sort of `if __name__ == "__main__"` region definitions with preprocessor directives (`#module/#end` or `#main/#end`)
+  - [ ]Special keywords:
+    - [ ] `A in B`: A is contained in object B, can be overridden in B class description depending on implementation
+    - [ ] `A is B`: A and B are pointers to the same object (Not the same as == which does an equality check). Cannot be overridden
+    - [x] `A and B / A or B / not A`: Boolean operator with short circuiting
+  - [x] All objects must have an explicit `ToString` method defined
+  - [x] Can have code directly run without a *main* function
+  - [ ] Some sort of `if __name__ == "__main__"` region  or definitions with preprocessor directives (`#module/#end` or `#main/#end`)
+  - [ ] Optional (default) parameters for functions and constructors
 
 - C# features:
-  - Boolean type with it's own operators (`+` is equivalent to OR, `*` equivalent to AND, `-` equivalent to an implication (`A-B` is equivalent to A implies B, aka `(not A) or B`). Division is not defined). Note that boolean is the lowest
-  - Brackets used for scope definition
-  - strong & static typing
-  - Setting a variable value returns the set value : `x = (y *= 2)` sets both x and y to the same value
-  - bounds checking on arrays
-  - foreach
-  - Simple overloading of all operators
-  - increment++ decrement--
-  - implicit/explicit type casting
-  - ternary operator : `condition ? action if true : action if false`
-  - readonly keyword
-  - public/private keywords
+  - [ ] Boolean type with it's own operators (`+` is equivalent to OR, `*` equivalent to AND)
+  - [x] Brackets used for scope definition
+  - [x] static typing
+  - [ ] Setting a variable value returns the set value : `x = (y *= 2)` sets both x and y to the same value
+  - [ ] bounds checking on arrays
+  - [ ] foreach
+  - [ ] function overloading
+  - [ ] Simple overloading of all operators
+  - [x] increment++ decrement--
+  - [x] implicit/explicit type casting
+  - [x] ternary operator : `condition ? action if true : action if false`
+  - [ ] readonly keyword
+  - [ ] public/private keywords
 
 - Other features:
-  - Implicit type conversion bool -> int8..64 -> float16..64 and unsigned -> signed.
-  - `+=, -=, *= \= ...` and similar. ex: `x += 3` is equivalent to `x = x + 3`
-  - Type implication and casting `1 + 0.5 == float(1.5)` but `1 + (int32)0.5 == 1`
-  - Simple management of threads and thread-safe memory????
-  - Array object contains a pointer to the first element, the array length and pointers to special functions for arrays
-  - `where` keyword to filter lists and iterables
-  - Properties and fields in classes?
+  - [x] Implicit type conversion bool -> int8..64 -> float16..64 and unsigned -> signed.
+  - [x] `+=, -=, *= \= ...` and similar. ex: `x += 3` is equivalent to `x = x + 3`
+  - [ ] Type implication and casting `1 + 0.5 == float(1.5)` but `1 + (int32)0.5 == 1`
+  - [ ] Simple management of threads and thread-safe memory????
+  - [ ] Array object contains a pointer to the first element, the array length and pointers to special functions for arrays
+  - [ ] `where` keyword to filter lists and iterables
+  - [x] fields in classes?
+  - [ ] Properties in classes
 
 ## Syntax description ##
 
@@ -63,48 +66,33 @@ Comments will keep the standard C format: `//` for single line comments and `/* 
   `null` Not a type but a constant threadsafe readonly object kept in memory. It is handled differently depending if it is compiled in Release or Debug mode.
   
   In **Release** Mode:
-  - It cannot be garbage collected.
-  - It has the value of 0 (Zero)
-  - Only access to its ToString method or Equal operator is allowed, all other attempts will lead to a NullPtrException
+  - [ ] It cannot be garbage collected.
+  - [ ] It has the value of 0 (Zero)
+  - [ ] Only access to its ToString method or Equal operator is allowed, all other attempts will lead to a NullPtrException
   In **Debug** Mode:
-  - It can be garbage collected
-  - Its value is line/col to where this null value was SET last. (Or linked list with last times Set? First element is the latest). This makes better error messages to help with nullptrexceptions.
-  - Only access to its ToString method or Equal operator is allowed, all other attempts will lead to a NullPtrException
+  - [ ] It can be garbage collected
+  - [ ] Its value is line/col to where this null value was SET last. (Or linked list with last times Set? First element is the latest). This makes better error messages to help with nullptrexceptions.
+  - [ ] Only access to its ToString method or Equal operator is allowed, all other attempts will lead to a NullPtrException
 
 - **Control structures**
-  - `for`
-  - `while`
-  - `if`
-  - `else`
-  - `switch`/`case` or `elif`? (depends on compiler complexity)
-  - `where` for list filtering
+  - [x] `for`
+  - [x] `while`
+  - [x] `if`
+  - [x] `else`
+  - [ ] `switch`/`case` or `elif`? (depends on compiler complexity)
+  - [ ] `where` for list filtering
 
 - **Compiler handled**
-  - `readonly` raises an exception at compile-time if an attempt is made to write to a readonly variable. Value must be set when variable is created
-
-## Under the hood ##
-
-Compiled to machine code vs byte-code+runtime environment vs interpreter?
-all 3?
-
-| Type | Pros | Cons |
-| --- | --- | --- |
-| **Compiled** | Fastest code execution | Complex to implement garbage collection<br>Need to find a way to interface with other libraries (linking) |
-| **Byte-code** | Simplified Garbage collection<br>Platform independant (if runtime env is as well) | Needs to build both intermediate-compiler and runtime env |
-| **Interpreted** | Simplest way to leverage another language's features<br>Simplest way to implement syscalls (using another language)<br>Platform independant | SLOOOOWWWW<br>Least learning potential |
-
-## Byte-Code ##
-
-### Runtime env ###
-
-### Intermediate Representation ###
+  - [ ]`readonly` raises an exception at compile-time if an attempt is made to write to a readonly variable. Value must be set when variable is created
 
 ## Limitations ##
 
 For now :
 
 - Classes cannot contain methods except ToString. Classes can be made as data classes/structs
-- and no inheritance
+- No inheritance
+- No overloading (includes constructors)
+- No default values (optional parameters) in function definitions
 
 ## Conventions ##
 
