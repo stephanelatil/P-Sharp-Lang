@@ -2,6 +2,8 @@
 bin/*
 # ignore object files
 *.o
+# ignore compiled executables
+*.exe
 
 #ignore python cache bytecode
 *.pyc
