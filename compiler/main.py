@@ -20,8 +20,8 @@ def parse_args():
                       help="Prints the abstract syntax tree as a string JSON object")
     args.add_argument("--print-att", required=False, default=False, action='store_true', dest='print_att',
                       help="Prints the abstract typing tree as a string JSON object")
-    args.add_argument('-C','--compile-to', required=False, choices=['L', 'P', 'T', 'R', 'E', 'L', 'B'], dest='stage', default='B',
-                      help="Compiles until the given stage: L=Lexer, P=Parser, T=Typing, R=RTL, E=ERTL, L=LTL, B=ByteCode (default)")
+    args.add_argument('-C','--compile-to', required=False, choices=['L', 'P', 'T', 'B', 'M'], dest='stage', default='M',
+                      help="Compiles until the given stage: L=Lexer, P=Parser, T=Typing, B=ByteCode (LLVM IR), M=Machine Code (default)")
     args.add_argument("filepath", metavar='FILE', help="The code file to pass to the compiler")
 
     return args.parse_args()
