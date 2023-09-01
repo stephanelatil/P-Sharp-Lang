@@ -76,10 +76,10 @@ P#'s syntax draws inspiration from C# to provide a familiar environment for deve
 
 ```rust
 // Variable declaration
-int32 x = 42;
+i32 x = 42;
 
 // Function definition
-int32 min(int32 a, int32 b) {
+i32 min(i32 a, i32 b) {
     return a < b ? a : b;
 }
 
@@ -97,15 +97,15 @@ Create your own custom classes in P# to encapsulate data and behavior:
 
 ```csharp
 class Point {
-    float32 x;
-    float32 y;
+    f32 x;
+    f32 y;
 
-    Point(float32 x, float32 y) {
+    Point(f32 x, f32 y) {
         this.x = x;
         this.y = y;
     }
 
-    float32 squareNorm(){
+    f32 squareNorm(){
         return x * x + y * y;
     }
 }
@@ -116,8 +116,8 @@ class Point {
 P# will enable easy integration with C libraries to enhance functionality while keeping everything safe of memory leaks. Declare external functions using the `extern` keyword:
 
 ```c
-extern int32 rand(void);
-extern int16 atos(char[] s);
+extern i32 rand(void);
+extern i16 atos(char[] s);
 ```
 
 ## Scripting Capabilities
