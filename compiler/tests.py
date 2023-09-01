@@ -576,3 +576,9 @@ class TestTyping(TestCase):
             code = f.read()
         p = parser.parse(code, tracking=True, lexer=PS_Lexer())
         t = p_to_t_tree(p)
+
+    def test__type_access_before_decl(self):
+        with open(r".\test_files\typing\good\testfile-type-access-before-decl.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        t = p_to_t_tree(p)
