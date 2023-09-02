@@ -1,6 +1,7 @@
 from parser_tree import *
 from enum import Enum
 from math import log10
+from random import randbytes, randint
 
 class ItemAndLoc:
     def __init__(self, item, location:Location|None) -> None:
@@ -27,19 +28,63 @@ class MultiTypingException(Exception):
     def __str__(self) -> str:
         return "\n**********\n".join([str(x) for x in self.exceptions])
 
+
+class TypeInternalStructureOffsets:
+    @property
+    def type_table(self):
+        return 0
+
+    @property
+    def size(self):
+        return 8
+    
+    def __init__(self, fields:"dict[str,Type]") -> None:
+        self.field = {}
+        self.size_on_heap = 16
+        for name, typ in fields.items():
+            self.field[name] = self.size_on_heap
+            self.size_on_heap += 8 if not typ.is_primitive else typ.size
+        
+
+class ArrayInternalStructureOffsets:
+    @property
+    def type_table(self):
+        return 0
+    
+    @property
+    def arr_len(self):
+        return 8
+    
+    @property
+    def elements(self):
+        return 16
+    
+    def __init__(self, typ:"Type") -> None:
+        self.typ = typ
+        
+    def get_offset_of_index_zero(self):
+        return self.elements
+    
+    def get_size_on_heap(self, num_elements:int):
+        return num_elements * (self.typ.size if self.typ.is_primitive else 8)
+    
+
 class Type:
     def __init__(self, identifier:str, size:int, _is_primitive=False,*,
                  location:Location|None=None, _methods:"dict[str,FunctionType]|None" = None):
         self.ident:str = identifier
         self.size:int = size
-        self.fields:dict[str,Type] = {}
-        self.methods: dict[str, FunctionType] = {}
+        if not hasattr(self, "fields"):
+            self.fields:dict[str,Type] = {}
+        if not hasattr(self, "methods"):
+            self.methods: dict[str, FunctionType] = {}
         if _methods is not None:
             self.methods.update(_methods)
         self.is_primitive = _is_primitive
         self.can_implicit_cast_to:set[Type] = set()
         self.can_explicit_cast_to:set[Type] = set()
         self.location = location
+        self.offsets = TypeInternalStructureOffsets(self.fields)
         
         self._operators:dict[BinaryOperation,dict[Type, Type]] = {}
         self._unary_opertors:dict[UnaryOperation, Type] = {}
@@ -112,6 +157,8 @@ class ArrayType(Type):
         super().__init__(str(element_type)+"[]", 16, _is_primitive=False)
         self.element_type = element_type
         
+        self.offsets = ArrayInternalStructureOffsets(typ)
+        
     def __str__(self) -> str:
         return str(self.element_type)+'[]'
 
@@ -146,8 +193,9 @@ class CustomType(Type):
         # need to add fields and methods, or at least the underlying class
         super().__init__(identifier, size, location=location)
         self.add_implicit_cast(self)
-        self.fields = {f.identifier: f.typ for f in fields}
+        self.fields.update({f.identifier: f.typ for f in fields})
         self.methods.update({m.id: m.typ for m in methods})
+        self.offsets = TypeInternalStructureOffsets(self.fields)
         if identifier in BuiltinType._member_map_:
             raise TypingError(
                 f"The type '{identifier}' at location {self.location} is already declared as a builtin-in type")
@@ -315,7 +363,13 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     root_vars.setdefault('print', ItemAndLoc(FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]),None))
 
 class TTreeElem:
+    ID = int(randbytes(2).hex(), 16)
+    
     def __init__(self, elem: PTreeElem, parent:"TTreeElem|None"=None) -> None:
+        #unique ID used as hash
+        self._UUID = TTreeElem.ID
+        TTreeElem.ID += 1
+        
         self.parent = parent
         self.location = elem.location
         self.location_end = elem.location_end
@@ -323,6 +377,8 @@ class TTreeElem:
             self.errors:list[TypingError] = []
         if not hasattr(self, '_known_vars'):
             self._known_vars:dict[str,ItemAndLoc] = {}
+        if not hasattr(self, 'typ'):
+            self.typ:Type = BuiltinType.MISSING.value
             
     def get_errors(self) ->list[TypingError]:
         err:list[TypingError] = self.errors[:]
@@ -414,6 +470,10 @@ class TExpression(TTreeElem):
     def get_correct_TTreeElem(expr:PTreeElem):
         if isinstance(expr, PlValue):
             return TlValue.get_correct_TTreeElem(expr)
+        if isinstance(expr, PAssign):
+            return TAssign
+        if isinstance(expr, PCopyAssign):
+            return TCopyAssign
         if isinstance(expr, PNumeric):
             return TNumeric
         if isinstance(expr, PIndex):
@@ -544,11 +604,12 @@ class TClassDecl(TTreeElem):
                                                     list(),
                                                     PScope(self.location,functions=None, varDecl=None,statements=None, last_token_end=self.location))
                                        ,self)
-        for field in fields: #assign default field values in 
+        for field in fields:
+            #assign default field values defined in field decleration 
             if not isinstance(field.init_value, JSON_Val):
-                constructor.body.statements.insert(0,TBinOp(PAssign(self.location, field.identifier, field.init_value),constructor.body))
-            else:
-                constructor.body.statements.insert(0, TBinOp(
+                constructor.body.statements.insert(0,TAssign(PAssign(self.location, field.identifier, field.init_value),constructor.body))
+            else: #otherwise set to null or 0 if primitive
+                constructor.body.statements.insert(0, TAssign(
                     PAssign(self.location, field.identifier,
                             PNumeric(self.location, 0) if CustomType.get_type_from_ptype(field.typ).is_primitive
                             else PExpression(self.location, None)),
@@ -630,7 +691,6 @@ class TFuncDecl(TTreeElem):
             self.typ = FunctionType(self.returnType, arg_types)
         except TypingError as e:
             self.errors.append(e)
-            self.returnType = None
         try:
             parent.add_known_id(elem.id.identifier, self.typ, elem.id.location)
         except TypingError as e:
@@ -751,6 +811,14 @@ class TBinOp(TExpression):
         else:
             self.errors.append(TypingError(
                 f"The '{self.operation}' operator is not defined between types '{self.left.typ}' and '{self.rvalue.typ}' at location {self.location}"))
+            
+class TAssign(TBinOp):
+    def __init__(self, elem: PBinOp, parent: TTreeElem, parent_typ: Type | None = None):
+        super().__init__(elem, parent, parent_typ)
+        
+class TCopyAssign(TBinOp):
+    def __init__(self, elem: PBinOp, parent: TTreeElem, parent_typ: Type | None = None):
+        super().__init__(elem, parent, parent_typ)
 
 class TUnOp(TExpression):
     def __init__(self, elem:PUnOp, parent:TTreeElem, parent_typ:Type|None=None):
@@ -769,22 +837,22 @@ class TCall(TExpression):
         super().__init__(elem, parent)
         self.args = [TExpression.get_correct_TTreeElem(arg)(arg, self) for arg in elem.args]
         self.rvalue = TVar(elem.function_id, self, parent_typ=parent_typ)
-        self.function_id:str = self.rvalue.identifier
+        self.function_name:str = self.rvalue.identifier
         #find return value type
         self.typ = BuiltinType.MISSING.value
-        func_typ = self.find_corresponding_var_typ(self.function_id)
+        func_typ = self.find_corresponding_var_typ(self.function_name)
         #if it's a known id
         if func_typ is not None:
             if isinstance(func_typ, FunctionType): # it's a function
                 self.typ = func_typ.return_type
             else:
-                self.errors.append(TypingError(f"'{self.function_id}' is not a callable function. Problem at location {self.location}"))
+                self.errors.append(TypingError(f"'{self.function_name}' is not a callable function. Problem at location {self.location}"))
                 return
-        elif isinstance(parent_typ, Type) and self.function_id in parent_typ.methods:
-            func_typ = parent_typ.methods[self.function_id]
+        elif isinstance(parent_typ, Type) and self.function_name in parent_typ.methods:
+            func_typ = parent_typ.methods[self.function_name]
             self.typ = func_typ.return_type
         else: #check if builtin
-            self.errors.append(TypingError(f"Attempts to call unknown function '{self.function_id}' at location {elem.function_id.location}"))
+            self.errors.append(TypingError(f"Attempts to call unknown function '{self.function_name}' at location {elem.function_id.location}"))
             return
                         
         if len(func_typ.args_type) != len(self.args):
