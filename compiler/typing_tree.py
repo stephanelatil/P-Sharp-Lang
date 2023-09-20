@@ -360,23 +360,46 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     #add concat
     BuiltinType.STRING.value._operators[BinaryOperation.PLUS][BuiltinType.STRING.value] = BuiltinType.STRING.value
     #Add builtin functions IDs
-    root_vars.setdefault('print', ItemAndLoc(FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]),None))
+    TTreeElem._known_func_scope.setdefault((BuiltinType.MISSING.value, 'print'), -1)
+    root_vars.setdefault('print', ItemAndLoc(FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]), None))
+    
+class ElemUUID:
+    _next = int(randbytes(2).hex(), 16)
+    def __init__(self) -> None:
+        tmp = self.peekNext() #gets next value
+        ElemUUID._next = randint(tmp+1, tmp+1000)
+        object.__setattr__(self, "_value", tmp) #Sets attr which is readonly
+    def __setattr__(self, __name: str, __value) -> None:
+        raise AttributeError("Cannot set the attribute. All values are read only after __init__",
+                             name=__name, obj=__value)
+    @staticmethod
+    def peekNext():
+        return ElemUUID._next
+    @property
+    def uuid(self):
+        return object.__getattribute__(self, "_value")
+    
+    def __str__(self) -> str:
+        return str(self.uuid)
+    
+    def __repr__(self) -> str:
+        return str(self)
 
-class TTreeElem:
-    ID = int(randbytes(2).hex(), 16)
+    
+class TTreeElem:    
+    _known_func_scope: dict[tuple[Type, str], int] = {}
     
     def __init__(self, elem: PTreeElem, parent:"TTreeElem|None"=None) -> None:
         #unique ID used as hash
-        self._UUID = TTreeElem.ID
-        TTreeElem.ID += 1
+        self._UUID = ElemUUID()
         
         self.parent = parent
         self.location = elem.location
         self.location_end = elem.location_end
         if not hasattr(self, 'errors'):
             self.errors:list[TypingError] = []
-        if not hasattr(self, '_known_vars'):
-            self._known_vars:dict[str,ItemAndLoc] = {}
+        if not hasattr(self, '_known_vars_type'):
+            self._known_vars_type:dict[str,ItemAndLoc] = {}
         if not hasattr(self, 'typ'):
             self.typ:Type = BuiltinType.MISSING.value
             
@@ -392,22 +415,36 @@ class TTreeElem:
                     if isinstance(elem, TTreeElem):  # skip parsing errors attribute
                         err += elem.get_errors()
         return err
+
+    @property
+    def UUID(self) -> int:
+        return self._UUID.uuid
         
     def add_known_id(self, id:str, typ:Type, location:Location|None=None):
         var = self.find_corresponding_var_typ(id)
         if var is not None:
             p = self
             while p is not None:
-                if id in p._known_vars and location != p._known_vars[id].location:
+                if id in p._known_vars_type and location != p._known_vars_type[id].location:
                     raise TypingError(f"The identifier '{id}' at location {location} "+
                                       "has already been defined in this scope at location "+
-                                          str(p._known_vars[id].location))
+                                          str(p._known_vars_type[id].location))
                 p = p.parent
-        self._known_vars[id] = ItemAndLoc(typ,location)
+        self._known_vars_type[id] = ItemAndLoc(typ,location)
+        
+    def add_known_func_scope(self, typ:Type, id:str, scope_uuid:int):
+        TTreeElem._known_func_scope[(typ,id)] = scope_uuid
+    
+    def find_corresponding_scope_id(self, typ: Type|None, id: str):
+        if typ is None:
+            typ = BuiltinType.MISSING.value
+        if id in TTreeElem._known_func_scope:
+            return TTreeElem._known_func_scope.get((typ,id))
+        return None
     
     def find_corresponding_var_typ(self, id:str) -> Type|None:
-        if id in self._known_vars:
-            return self._known_vars[id].item
+        if id in self._known_vars_type:
+            return self._known_vars_type[id].item
         elif not self.parent is None:
             return self.parent.find_corresponding_var_typ(id)
         else:
@@ -423,7 +460,7 @@ class TTreeElem:
         return self.__repr__()
     
     def __hash__(self) -> int:
-        return self._UUID
+        return self.UUID
     
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, TTreeElem):
@@ -512,12 +549,16 @@ class TVar(TExpression):
         self.identifier = elem.identifier
         self.typ = BuiltinType.MISSING.value
         typ = self.find_corresponding_var_typ(elem.identifier)
-        if typ is None and parent_typ is not None:
-            typ = parent_typ.fields.get(elem.identifier, None)
-        if typ is None:
-            self.errors.append(TypingError(f"Unknown type for identifier: '{self.identifier}' at location {self.location}"))
-        else:
+        if typ is not None:
             self.typ = typ
+        elif isinstance(parent_typ, Type):
+            if self.identifier in parent_typ.methods:
+                func_typ = parent_typ.methods[self.identifier]
+                self.typ = func_typ.return_type
+            else:
+                self.typ = parent_typ.fields.get(elem.identifier, BuiltinType.MISSING.value)
+        if self.typ == BuiltinType.MISSING.value:
+            self.errors.append(TypingError(f"Unknown type for identifier: '{self.identifier}' at location {self.location}"))
 
 class TScope(TTreeElem):
     def __init__(self, elem:PScope, parent:TTreeElem|None):
@@ -548,10 +589,10 @@ class TScope(TTreeElem):
 
 class TModule(TScope):
     def __init__(self, elem: PModule):
-        self._known_vars:dict[str,ItemAndLoc] = {}
+        self._known_vars_type:dict[str,ItemAndLoc] = {}
         self.errors: list[TypingError] = []
         self.parent = None
-        setup_builtin_types(self._known_vars)
+        setup_builtin_types(self._known_vars_type)
         #add defined classes into type list
         for c in elem.classDecl:
             try:
@@ -579,7 +620,7 @@ class TClassDecl(TTreeElem):
         super().__init__(elem, parent)
         self.identifier = elem.identifier.identifier
         self.typ = CustomType.known_types.get(self.identifier, BuiltinType.MISSING.value)
-        self._known_vars['this'] = ItemAndLoc(
+        self._known_vars_type['this'] = ItemAndLoc(
             self.typ, elem.identifier.location)
         self.fields = [TVarDecl(field, self) for field in elem.inner_scope.varDecl]
         self.methods = [TFuncDecl(pfuncdecl, self) for pfuncdecl in elem.inner_scope.funcDecl if not isinstance(pfuncdecl, PConstructor)]
@@ -588,7 +629,7 @@ class TClassDecl(TTreeElem):
         if self.typ != BuiltinType.MISSING.value:
             self.typ.size = 8+sum([f.typ.size if f.typ.is_primitive else 8 for f in self.fields])
             self.typ.methods.update({m.id:m.typ for m in self.methods})
-            self.typ.methods.update({TConstructor._ID:self.constructor.typ})
+            self.typ.methods.update({str(TConstructor._ID):self.constructor.typ})
             self.typ.fields.update({f.identifier:f.typ for f in self.fields})
     
     def _setup_constructor(self, methods:list[PFuncDecl], fields:list[PVarDecl]) -> "TConstructor":
@@ -682,6 +723,15 @@ class TFuncDecl(TTreeElem):
     def __init__(self, elem: PFuncDecl, parent: TTreeElem):
         super().__init__(elem, parent=parent)
         self.id = elem.id.identifier
+        #gets the parent class if there is one. Otherwise the function is standalone (parent type is builtin.missing)
+        self.parent_class_typ = BuiltinType.MISSING.value
+        tmp_parent = parent
+        while not tmp_parent is None:
+            if isinstance(tmp_parent, TClassDecl):
+                self.parent_class_typ = tmp_parent.typ
+                del tmp_parent
+                break
+            tmp_parent = tmp_parent.parent
         self.typ = FunctionType(BuiltinType.MISSING.value,[])
         self.returnType = BuiltinType.MISSING.value
         self.args = [TVarDecl(v, self) for v in elem.args]
@@ -695,6 +745,8 @@ class TFuncDecl(TTreeElem):
             parent.add_known_id(elem.id.identifier, self.typ, elem.id.location)
         except TypingError as e:
             self.errors.append(e)
+        parent.add_known_func_scope(self.parent_class_typ, self.id,
+                                    ElemUUID.peekNext()) #adds the Scope ID (next used uuid)
         self.body = TScope(elem.body, self)
 
 
@@ -792,7 +844,7 @@ class TBinOp(TExpression):
     def __init__(self, elem:PBinOp, parent:TTreeElem, parent_typ:Type|None=None):
         super().__init__(elem, parent)
         self.left = TExpression.get_correct_TTreeElem(elem.left)(elem.left, self)
-        self.rvalue = TExpression.get_correct_TTreeElem(elem.rvalue)(elem.rvalue, self, self.left.typ)
+        self.rvalue = TExpression.get_correct_TTreeElem(elem.rvalue)(elem.rvalue, self)
         self.operation = elem.op
         self.typ = BuiltinType.MISSING.value
         if self.operation in {BinaryOperation.ASSIGN, BinaryOperation.COPY}:
@@ -842,19 +894,22 @@ class TCall(TExpression):
         self.typ = BuiltinType.MISSING.value
         func_typ = self.find_corresponding_var_typ(self.function_name)
         #if it's a known id
+        self.function_body_uuid = 0
         if func_typ is not None:
             if isinstance(func_typ, FunctionType): # it's a function
                 self.typ = func_typ.return_type
+                self.function_body_uuid = self.find_corresponding_scope_id(parent_typ, self.function_name)
             else:
                 self.errors.append(TypingError(f"'{self.function_name}' is not a callable function. Problem at location {self.location}"))
                 return
         elif isinstance(parent_typ, Type) and self.function_name in parent_typ.methods:
             func_typ = parent_typ.methods[self.function_name]
             self.typ = func_typ.return_type
+            self.function_body_uuid = self.find_corresponding_scope_id(parent_typ, self.function_name)
         else: #check if builtin
             self.errors.append(TypingError(f"Attempts to call unknown function '{self.function_name}' at location {elem.function_id.location}"))
             return
-                        
+                                
         if len(func_typ.args_type) != len(self.args):
             self.errors.append(TypingError(
                 f"Got {len(self.args)} arguments but expected {len(func_typ.args_type)} at location {self.location}"))
