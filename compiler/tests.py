@@ -1,7 +1,7 @@
 from unittest import TestCase
 from lexer import PS_Lexer, LexerError
 from parser_tree import parser, ParsingError
-from typing_tree import MultiTypingException, p_to_t_tree, CustomType, Type
+from typing_tree import MultiTypingException, p_to_t_tree, CustomType, TDot, BuiltinType
 
 class TestLexer(TestCase):
     def setUp(self) -> None:
@@ -547,7 +547,7 @@ class TestTyping(TestCase):
         self.assertEqual(len(t.varDecl), 0)
         self.assertEqual(len(CustomType.known_types), 15,
                           "There should just be the 15 built-in types defined.")
-        self.assertEqual(len(t._known_vars), 1,
+        self.assertEqual(len(t._known_vars_type), 1,
                           "There should just be print function defined.")
 
     def test_dot_on_return(self):
@@ -577,8 +577,18 @@ class TestTyping(TestCase):
         p = parser.parse(code, tracking=True, lexer=PS_Lexer())
         t = p_to_t_tree(p)
 
-    def test__type_access_before_decl(self):
+    def test_type_access_before_decl(self):
         with open(r".\test_files\typing\good\testfile-type-access-before-decl.psc", 'r') as f:
             code = f.read()
         p = parser.parse(code, tracking=True, lexer=PS_Lexer())
         t = p_to_t_tree(p)
+
+    def test_duplicate_func_name(self):
+        with open(r".\test_files\typing\good\testfile-duplicate-func-name.psc", 'r') as f:
+            code = f.read()
+        p = parser.parse(code, tracking=True, lexer=PS_Lexer())
+        t = p_to_t_tree(p)
+        self.assertIsInstance(t.statements[0], TDot)
+        self.assertIsInstance(t.statements[1], TDot)
+        self.assertEqual(t.statements[0].rvalue.typ, BuiltinType.INT_32.value)
+        self.assertEqual(t.statements[1].rvalue.typ, BuiltinType.BOOL.value)
