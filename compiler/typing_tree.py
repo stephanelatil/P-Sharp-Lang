@@ -88,6 +88,7 @@ class Type:
         
         self._operators:dict[BinaryOperation,dict[Type, Type]] = {}
         self._unary_opertors:dict[UnaryOperation, Type] = {}
+        self._constructor_uuid = -1
     
     def can_cast_to(self, cast_to:"Type") -> bool:
         return cast_to in self.can_implicit_cast_to or cast_to in self.can_explicit_cast_to
@@ -204,6 +205,10 @@ class CustomType(Type):
                 f"The type '{identifier}' at location {self.location} has already been declared at location {CustomType.known_types[identifier].location}")
         else:
             CustomType.known_types[identifier] = self
+            
+    @staticmethod
+    def get_all_types():
+        return set(CustomType.known_types.values())
 
 class BuiltinType(Enum):
     MISSING = Type("", -1)
@@ -360,7 +365,7 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     #add concat
     BuiltinType.STRING.value._operators[BinaryOperation.PLUS][BuiltinType.STRING.value] = BuiltinType.STRING.value
     #Add builtin functions IDs
-    TTreeElem._known_func_scope.setdefault((BuiltinType.MISSING.value, 'print'), -1)
+    TTreeElem._known_func_scope.setdefault((BuiltinType.MISSING.value, 'print'), -2)
     root_vars.setdefault('print', ItemAndLoc(FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]), None))
     
 class ElemUUID:
@@ -435,12 +440,20 @@ class TTreeElem:
     def add_known_func_scope(self, typ:Type, id:str, scope_uuid:int):
         TTreeElem._known_func_scope[(typ,id)] = scope_uuid
     
-    def find_corresponding_scope_id(self, typ: Type|None, id: str):
+    def find_corresponding_scope_id(self, typ: Type|None, id: str) -> int:
+        """Gets the UUID of the corresponding function body given the function's name and parent's type. 
+        Eg. "abdc".SubString(0,2), string is the parent type and SubString is the function name (or id).
+
+        Args:
+            typ (Type | None): The parent type of the function. It should be None or BuiltinType.Missing.value if the function is standalone (not declared in a class or a function like 'print')
+            id (str): The name of the called function
+
+        Returns:
+            int: The uuid pointing to the body of the function. Or returns -1 if the function was not found. NB: Other stdlib functions have negative uuids like 'print' has the uuid -2
+        """
         if typ is None:
             typ = BuiltinType.MISSING.value
-        if id in TTreeElem._known_func_scope:
-            return TTreeElem._known_func_scope.get((typ,id))
-        return None
+        return TTreeElem._known_func_scope.get((typ,id), -1)
     
     def find_corresponding_var_typ(self, id:str) -> Type|None:
         if id in self._known_vars_type:
@@ -625,11 +638,12 @@ class TClassDecl(TTreeElem):
         self.fields = [TVarDecl(field, self) for field in elem.inner_scope.varDecl]
         self.methods = [TFuncDecl(pfuncdecl, self) for pfuncdecl in elem.inner_scope.funcDecl if not isinstance(pfuncdecl, PConstructor)]
         self.constructor = self._setup_constructor(elem.inner_scope.funcDecl, elem.inner_scope.varDecl)
+        self.typ._constructor_uuid = self.constructor.body.UUID
         #set class type fields, methods and size in memory
         if self.typ != BuiltinType.MISSING.value:
             self.typ.size = 8+sum([f.typ.size if f.typ.is_primitive else 8 for f in self.fields])
             self.typ.methods.update({m.id:m.typ for m in self.methods})
-            self.typ.methods.update({str(TConstructor._ID):self.constructor.typ})
+            self.typ.methods.update({TConstructor._ID:self.constructor.typ,})
             self.typ.fields.update({f.identifier:f.typ for f in self.fields})
     
     def _setup_constructor(self, methods:list[PFuncDecl], fields:list[PVarDecl]) -> "TConstructor":
@@ -1022,6 +1036,10 @@ class TNewObj(TExpression):
         except TypingError as e:
             self.errors.append(e)
             self.new_obj = BuiltinType.MISSING.value
+        if self.new_obj.is_primitive:
+            self.errors.append(TypingError(f"Cannot create new primitive object. The new keyword must be used with a defined class type (or string), not {self.new_obj}."))
+        if self.new_obj == BuiltinType.VOID.value:
+            self.errors.append(TypingError("Cannot create new void item. It is not a reference object type."))
         self.typ = self.new_obj
         self.args = [TExpression.get_correct_TTreeElem(arg)(arg, self) for arg in elem.args]
 
