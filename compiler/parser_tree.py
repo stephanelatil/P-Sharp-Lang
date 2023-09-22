@@ -183,9 +183,12 @@ class PlValue(PExpression):
         super().__init__(location, value, last_token_end=last_token_end)
 
 class PVarDecl(PlValue):
-    def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression|JSON_Val=JSON_Val(None),  last_token_end:Location|None=None):
+    def __init__(self, location, typ: PType, id: PIdentifier, init_value:PExpression|None=None,  last_token_end:Location|None=None):
         self.typ = typ
-        self.init_value = init_value
+        if init_value is None:
+            self.init_value = JSON_Val(None)
+        else:
+            self.init_value = init_value
         self.identifier = id
         super().__init__(location, id, last_token_end=last_token_end)
         if isinstance(id, PThis):

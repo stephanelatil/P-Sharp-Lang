@@ -647,13 +647,13 @@ class TClassDecl(TTreeElem):
                                        ,self)
         for field in fields:
             #assign default field values defined in field decleration 
-            if not isinstance(field.init_value, JSON_Val):
+            if not isinstance(field.init_value, PNull):
                 constructor.body.statements.insert(0,TAssign(PAssign(self.location, field.identifier, field.init_value),constructor.body))
             else: #otherwise set to null or 0 if primitive
                 constructor.body.statements.insert(0, TAssign(
                     PAssign(self.location, field.identifier,
                             PNumeric(self.location, 0) if CustomType.get_type_from_ptype(field.typ).is_primitive
-                            else PExpression(self.location, None)),
+                            else PNull(self.location, self.location)),
                     constructor.body))
             
         return constructor
@@ -664,16 +664,30 @@ class TClassDecl(TTreeElem):
 class TBool(TExpression):
     def __init__(self, elem: PBool, parent: TTreeElem, parent_typ: Type | None = None):
         super().__init__(elem, parent)
-        self.value = elem.value
+        self.value = elem.value._val
         self.typ = BuiltinType.BOOL.value
+        
+    def __str__(self) -> str:
+        return repr(self)
+    
+    def __repr__(self):
+        val = "true" if self.value else "false"
+        return f'{{"{self.__class__.__name__}" : {val}}}'
 
 class TNull(TExpression):
     def __init__(self, elem: PNull, parent: TTreeElem, parent_typ: Type = BuiltinType.MISSING.value):
         super().__init__(elem, parent)
-        self.value = elem.value
+        self.value = None
         self.typ = parent_typ
         if parent_typ.is_primitive:
-            self.errors.append(TypingError(f"Error at {self.location}. Primitive types (like {parent_typ}) are not nullable."))
+            self.errors.append(TypingError(
+                f"Error at {self.location}. Primitive types (like {parent_typ}) are not nullable."))
+
+    def __str__(self) -> str:
+        return repr(self)
+
+    def __repr__(self):
+        return f'{{"{self.__class__.__name__}" : null}}'
 
 class TlValue(TExpression):
     def __init__(self, elem: PlValue, parent: TTreeElem, parent_typ: Type | None = None):
@@ -704,7 +718,7 @@ class TVarDecl(TTreeElem):
             self.errors.append(e)
             self.typ = BuiltinType.MISSING.value
         self.identifier = elem.identifier.identifier
-        self.initial_value = elem.init_value if isinstance(elem.init_value, JSON_Val) else\
+        self.initial_value = TNull(elem.init_value, self, self.typ) if isinstance(elem.init_value, PNull) else\
                     TExpression.get_correct_TTreeElem(elem.init_value)(elem.init_value, self)
         if self.typ != BuiltinType.MISSING.value:
             if isinstance(self.initial_value, TNull):
