@@ -718,7 +718,7 @@ class TVarDecl(TTreeElem):
             self.errors.append(e)
             self.typ = BuiltinType.MISSING.value
         self.identifier = elem.identifier.identifier
-        self.initial_value = TNull(elem.init_value, self, self.typ) if isinstance(elem.init_value, PNull) else\
+        self.initial_value = JSON_Val(None) if isinstance(elem.init_value, JSON_Val) else\
                     TExpression.get_correct_TTreeElem(elem.init_value)(elem.init_value, self)
         if self.typ != BuiltinType.MISSING.value:
             if isinstance(self.initial_value, TNull):
