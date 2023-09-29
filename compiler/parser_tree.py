@@ -427,8 +427,8 @@ def p_statement(p: YaccProduction):
     p[0] = p[1]
     
 def p_statement_2(p: YaccProduction):
-    """Statement : Expr Punctuation_EoL
-                 | FuncCall Punctuation_EoL"""
+    """Statement : Expr Punctuation_EoL %prec UNOP
+                 | FuncCall Punctuation_EoL %prec UNOP"""
     p[0] = p[1]
     p[0].location_end =  p.slice[2].location_end
 
@@ -836,7 +836,8 @@ def p_new_obj_no_args_2(p: YaccProduction):
 
 def p_call(p: YaccProduction):
     """FuncCall : Ident Punctuation_OpenParen ExprList Punctuation_CloseParen %prec DUOP
-                | Ident Punctuation_OpenParen Expr Punctuation_CloseParen %prec DUOP"""
+                | Ident Punctuation_OpenParen Expr Punctuation_CloseParen %prec DUOP
+                | Ident Punctuation_OpenParen Ident Punctuation_CloseParen %prec DUOP"""
     #add precedence to avoid 'Ident (Expr)' getting reduced to 'Ident Expr'
     def place_pcall(node):
         if isinstance(node.rvalue, PDot):
