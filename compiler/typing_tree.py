@@ -518,6 +518,11 @@ class TStatement(TTreeElem):
 class TExpression(TTreeElem):
     @staticmethod
     def get_correct_TTreeElem(expr:PTreeElem):
+        if isinstance(expr, JSON_Val):
+            if expr._val is None:
+                return TNull
+            else:
+                return TBool
         if isinstance(expr, PlValue):
             return TlValue.get_correct_TTreeElem(expr)
         if isinstance(expr, PAssign):
@@ -678,7 +683,10 @@ class TClassDecl(TTreeElem):
 class TBool(TExpression):
     def __init__(self, elem: PBool, parent: TTreeElem, parent_typ: Type | None = None):
         super().__init__(elem, parent)
-        self.value = elem.value._val
+        if isinstance(elem, JSON_Val):
+            self.value = elem._val
+        else:
+            self.value = elem.value._val
         self.typ = BuiltinType.BOOL.value
         
     def __str__(self) -> str:
