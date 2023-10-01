@@ -459,7 +459,7 @@ def p_all_statements_addStatement(p: YaccProduction):
     """GlobalStatementList : Statement GlobalStatementList"""
     if isinstance(p[1], PVarDecl):
         p[0] = PModule(None, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
-            p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
+            p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=[p[1]]+deepcopy(p[2].statements))
     elif isinstance(p[1], PFuncDecl):
         p[0] = PModule(None, functions=[p[1]]+deepcopy(p[2].funcDecl), varDecl=deepcopy(
             p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
@@ -484,7 +484,7 @@ def p_bloc_single(p: YaccProduction):
     """StatementList : Statement"""
     if isinstance(p[1], PVarDecl):
         p[0] = PScope(get_loc(p,1)[0], functions=[], varDecl=[
-                      p[1]], statements=[], last_token_end=get_loc(p,1)[1])
+                      p[1]], statements=[p[1]], last_token_end=get_loc(p, 1)[1])
     elif isinstance(p[1], PFuncDecl):
         p[0] = PScope(get_loc(p,1)[0], functions=[p[1]], varDecl=[], statements=[],
                       last_token_end=get_loc(p,1)[1])
@@ -495,10 +495,11 @@ def p_bloc_single(p: YaccProduction):
 
 def p_bloc_list(p: YaccProduction):
     """StatementList : Statement StatementList"""
+    #Add vardecl to statements too
     loc = get_loc(p, 1)[0]
     if isinstance(p[1], PVarDecl):
         p[0] = PScope(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
-            p[2].varDecl), statements=deepcopy(p[2].statements))
+            p[2].varDecl), statements=[p[1]]+deepcopy(p[2].statements))
     elif isinstance(p[1], PFuncDecl):
         p[0] = PScope(loc, functions=[p[1]]+deepcopy(p[2].funcDecl), varDecl=deepcopy(
             p[2].varDecl), statements=deepcopy(p[2].statements))
