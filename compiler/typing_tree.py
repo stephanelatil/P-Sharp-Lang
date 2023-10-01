@@ -566,15 +566,16 @@ class TVar(TExpression):
         super().__init__(elem, parent)
         self.identifier = elem.identifier
         self.typ = BuiltinType.MISSING.value
-        typ = self.find_corresponding_var_typ(elem.identifier)
-        if typ is not None:
-            self.typ = typ
-        elif isinstance(parent_typ, Type):
+        if isinstance(parent_typ, Type):
             if self.identifier in parent_typ.methods:
                 func_typ = parent_typ.methods[self.identifier]
                 self.typ = func_typ.return_type
             else:
                 self.typ = parent_typ.fields.get(elem.identifier, BuiltinType.MISSING.value)
+        else:
+            typ = self.find_corresponding_var_typ(elem.identifier)
+            if typ is not None:
+                self.typ = typ
         if self.typ == BuiltinType.MISSING.value:
             self.errors.append(TypingError(f"Unknown type for identifier: '{self.identifier}' at location {self.location}"))
 
@@ -871,7 +872,7 @@ class TIndex(TExpression):
 class TDot(TlValue):
     def __init__(self, elem: PDot, parent:TTreeElem, parent_typ:Type|None=None):
         super().__init__(elem.rvalue, parent)
-        self.left = TExpression.get_correct_TTreeElem(elem.left)(elem.left, self)
+        self.left = TExpression.get_correct_TTreeElem(elem.left)(elem.left, self, parent_typ=parent_typ)
         self.rvalue = TExpression.get_correct_TTreeElem(elem.rvalue)(elem.rvalue, self, parent_typ=self.left.typ)
         self.typ:Type = self.rvalue.typ
         
