@@ -247,7 +247,8 @@ class PDot(PlValue):
         
 
 class PBinOp(PExpression):
-    def __init__(self, location, left: PlValue, op: BinaryOperation, right: PExpression, last_token_end:Location|None=None):
+    def __init__(self, location, left: PlValue, op: BinaryOperation,
+                 right: PExpression|None|bool, last_token_end:Location|None=None):
         self.left = left
         self.op = op
         super().__init__(location, right)

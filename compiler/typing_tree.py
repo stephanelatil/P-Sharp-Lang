@@ -484,6 +484,12 @@ class TTreeElem:
 class TStatement(TTreeElem):
     @staticmethod
     def get_correct_TTreeElem(statement):
+        if isinstance(statement, PVarDecl):
+            #PVarDecl becomes TAssign
+            # because the TVarDecl decleration is done at the beginning of the scope. 
+            # Now it just needs the assignment statement to be done at the correct time
+            # (Need to preserve the order of operations)
+            return TAssign
         if isinstance(statement, PSkip):
             return TSkip
         if isinstance(statement, PExpression):
@@ -902,7 +908,12 @@ class TBinOp(TExpression):
                 f"The '{self.operation}' operator is not defined between types '{self.left.typ}' and '{self.rvalue.typ}' at location {self.location}"))
             
 class TAssign(TBinOp):
-    def __init__(self, elem: PBinOp, parent: TTreeElem, parent_typ: Type | None = None):
+    def __init__(self, elem: PBinOp | PVarDecl, parent: TTreeElem, parent_typ: Type | None = None):
+        if isinstance(elem, PVarDecl):
+            elem = PBinOp(elem.location, left=elem.identifier,
+                          op=BinaryOperation.ASSIGN,
+                          right=elem.init_value._val if isinstance(elem.init_value, JSON_Val) else elem.init_value,
+                          last_token_end=elem.location_end)
         super().__init__(elem, parent, parent_typ)
         
 class TCopyAssign(TBinOp):
