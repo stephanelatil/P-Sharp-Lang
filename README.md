@@ -22,6 +22,10 @@ P# is a cutting-edge programming language designed for developers who want the b
 
 P# is the brainchild of a software developer who understand the nuances of both Python and C#. It combines the readability and ease of use of Python with C#'s performance and type system. This unique blend allows developers to write code that is both elegant and efficient, whether they're working on complex applications or quick scripting tasks.
 
+**Note** that many features and some syntax quirks may change over time as this is still in early development.
+
+Notably the parser will be reworked from a Yacc parser to a custom parser to handle syntaxis sugar and reduction prioritization more robustly.
+
 ## Key Features
 
 ### Static Typing
