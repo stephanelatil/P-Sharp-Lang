@@ -3,6 +3,8 @@ from argparse import ArgumentParser
 from lexer import PS_Lexer
 from parser_tree import parser, MultiParsingException, ParsingError
 from typing_tree import p_to_t_tree, MultiTypingException
+from typing_to_cfg import Context, typing_to_cfg
+from .interpreter.interpreter import Env
 
 def validate_path(path:str):
     assert(isinstance(path, str))
@@ -20,6 +22,8 @@ def parse_args():
                       help="Prints the abstract syntax tree as a string JSON object")
     args.add_argument("--print-att", required=False, default=False, action='store_true', dest='print_att',
                       help="Prints the abstract typing tree as a string JSON object")
+    args.add_argument("-i", '--interpret', required=False, default=False, action='store_true', dest='interpret',
+                      help="Interprets the code directly instead of compiling it.")
     args.add_argument('-C','--compile-to', required=False, choices=['L', 'P', 'T', 'B', 'M'], dest='stage', default='M',
                       help="Compiles until the given stage: L=Lexer, P=Parser, T=Typing, B=ByteCode (LLVM IR), M=Machine Code (default)")
     args.add_argument("filepath", metavar='FILE', help="The code file to pass to the compiler")
@@ -81,6 +85,11 @@ if args.print_att:
     print(t)
 
 if args.stage == 'T': #Typing only
+    exit(0)
+
+start, context = typing_to_cfg(t)
+if args.interpret:
+    Env(start, context)
     exit(0)
 
 if args.stage == 'R': #RTL only
