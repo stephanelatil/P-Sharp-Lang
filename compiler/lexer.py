@@ -376,6 +376,11 @@ class PS_Lexer:
 
     def t_ID(self, t):
         r'\b[a-zA-Z_][a-zA-Z_\d]*\b'
+        if t.value.startswith("__"):
+            line = str(t.lineno)
+            col = t.lexpos - self.code.rfind('\n', 0, t.lexpos)
+            raise LexerError("Identifiers starting with double underscores are reserved",
+                             location=Location(line, col), token=t.value)
         t.type = self.reserved.get(t.value, 'ID')    # Check for reserved words
         return t
 
