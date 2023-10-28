@@ -66,7 +66,7 @@ class CfgBool(CfgNode):
     def __init__(self, elem: TBool, context:Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
-        self.value = elem.value._val == True #assert it's True or False (NULL is set to False)
+        self.value = elem.value == True #assert it's True or False (NULL is set to False)
         
 class CfgBreak(CfgNode):
     def __init__(self, elem: TBreak, context:Context) -> None:
@@ -77,6 +77,7 @@ class CfgBinOp(CfgNode):
     def __init__(self, elem: TBinOp, context:Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
+        self.operation = elem.operation
         self.left = _Converter.ttree_elem_to_cfg(elem.left, context)
         self.right = _Converter.ttree_elem_to_cfg(
             elem.rvalue, context)
@@ -86,7 +87,7 @@ class CfgCall(CfgNode):
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
         self.args = [_Converter.ttree_elem_to_cfg(arg, context) for arg in elem.args]
-        self._functionCfg = context.known_functions[elem.function_body_uuid]
+        self._function_body_cfg = context.known_functions[elem.function_body_uuid]
         
 class CfgCast(CfgNode):
     def __init__(self, elem: TCast, context: Context) -> None:
@@ -236,6 +237,7 @@ class CfgReturn(CfgNode):
     def __init__(self, elem: TReturn, context: Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
+        self.returnVal = _Converter.ttree_elem_to_cfg(elem.returnVal, context)
 
 
 class CfgScope(CfgNode):
@@ -246,6 +248,9 @@ class CfgScope(CfgNode):
         self.functions: list[CfgFuncDecl] = [_Converter.ttree_elem_to_cfg(
             function, context) for function in elem.funcDecl]
         self.statements = [_Converter.ttree_elem_to_cfg(statement, context) for statement in elem.statements]
+        for i in range(len(self.statements)-1):
+            self.statements[i].add_outgoing(self.statements[i+1])
+            self.statements[i+1].add_incoming(self.statements[i])
 
 class CfgSkip(CfgNode):
     def __init__(self, elem: TTreeElem, context: Context) -> None:
@@ -268,7 +273,6 @@ class CfgTernary(CfgNode):
         self.if_false = _Converter.ttree_elem_to_cfg(elem.if_false, context)
         self.condition = _Converter.ttree_elem_to_cfg(elem.condition, context)
 
-
 class CfgUnOp(CfgNode):
     def __init__(self, elem: TUnOp, context: Context) -> None:
         super().__init__(elem, context)
@@ -281,7 +285,7 @@ class CfgVar(CfgNode):
     def __init__(self, elem: TVar, context: Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
-        self.id = elem.identifier
+        self.identifier = elem.identifier
 
 
 class CfgVarDecl(CfgNode):
@@ -296,7 +300,7 @@ class CfgVarDecl(CfgNode):
         else:
             _Converter.ttree_elem_to_cfg(elem.initial_value, context)
 
-class CfgWhileNode(CfgNode):
+class CfgWhile(CfgNode):
     def __init__(self, elem: TWhile, context: Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
