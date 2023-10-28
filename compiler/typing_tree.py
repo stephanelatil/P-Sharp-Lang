@@ -2,6 +2,7 @@ from parser_tree import *
 from enum import Enum
 from math import log10
 from random import randbytes, randint
+from typing import Callable
 
 class ItemAndLoc:
     def __init__(self, item, location:Location|None) -> None:
@@ -71,7 +72,7 @@ class ArrayInternalStructureOffsets:
 
 class Type:
     def __init__(self, identifier:str, size:int, _is_primitive=False,*,
-                 location:Location|None=None, _methods:"dict[str,FunctionType]|None" = None):
+                 location:Location|None=None, _op_functions:dict[tuple[BinaryOperation,'Type'],Callable]={}, _methods:"dict[str,FunctionType]|None" = None):
         self.ident:str = identifier
         self.size:int = size
         if not hasattr(self, "fields"):
@@ -89,6 +90,8 @@ class Type:
         self._operators:dict[BinaryOperation,dict[Type, Type]] = {}
         self._unary_opertors:dict[UnaryOperation, Type] = {}
         self._constructor_uuid = -1
+        self._op_functions:dict[tuple[BinaryOperation,'Type'],Callable] = {}
+        self._op_functions.update(_op_functions)
     
     def can_cast_to(self, cast_to:"Type") -> bool:
         return cast_to in self.can_implicit_cast_to or cast_to in self.can_explicit_cast_to
@@ -329,26 +332,48 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
                         t1._operators[op][t2] = Type.implicit_cast(t1,t2)
                     except:
                         pass #skip operations between non corresponding types
+            t1._op_functions.update({(BinaryOperation.PLUS, t2):lambda l,r:l+r,
+                                     (BinaryOperation.MINUS, t2):lambda l,r:l-r,
+                                     (BinaryOperation.TIMES, t2):lambda l,r:l*r,
+                                     (BinaryOperation.DIVIDE, t2):lambda l,r:l/r})
             #for t2 not a float set mod and shift
-            if t2 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}:
+            if t2 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value, BuiltinType.BOOL}:
                 # set left and right shift ops for t2 integer
                 t1._operators[BinaryOperation.SHIFT_LEFT][t2] = t1
-                t1._operators[BinaryOperation.SHIFT_RIGHT][t2] = t1                
+                t1._op_functions[(BinaryOperation.SHIFT_LEFT, t2)] = lambda l, r: l << r
+                t1._operators[BinaryOperation.SHIFT_RIGHT][t2] = t1
+                t1._op_functions[(BinaryOperation.SHIFT_RIGHT, t2)] = lambda l, r: l >> r
                 # for t2 not a float set modulus, XOR and AND/OR operators (valid on integers and bool)
-                if t1 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value}:
+                if t1 not in {BuiltinType.FLOAT_32.value, BuiltinType.FLOAT_64.value, BuiltinType.BOOL}:
                     try:
                         t1._operators[BinaryOperation.MOD][t2] = Type.implicit_cast(t1,t2)
+                        t1._op_functions[(BinaryOperation.MOD, t2)] = lambda l, r: l % r
                         t1._operators[BinaryOperation.XOR][t2] = Type.implicit_cast(t1,t2)
-                        t1._operators[BinaryOperation.LOGIC_AND][t2] = Type.implicit_cast(t1,t2)
+                        t1._op_functions[(BinaryOperation.XOR, t2)] = lambda l, r: l ^ r
+                        t1._operators[BinaryOperation.LOGIC_AND][t2] = Type.implicit_cast(
+                            t1, t2)
+                        t1._op_functions[(
+                            BinaryOperation.LOGIC_AND, t2)] = lambda l, r: l & r
                         t1._operators[BinaryOperation.LOGIC_OR][t2] = Type.implicit_cast(t1,t2)
+                        t1._op_functions[(BinaryOperation.LOGIC_OR, t2)] = lambda l, r: l | r
                     except:
                         pass  # skip operations between incompatible types
                     t1._operators[BinaryOperation.BOOL_AND][t2] = BuiltinType.BOOL.value
+                    t1._op_functions[(BinaryOperation.BOOL_AND, t2)] = lambda l, r: bool(l) and bool(r)
                     t1._operators[BinaryOperation.BOOL_OR][t2] = BuiltinType.BOOL.value
+                    t1._op_functions[(BinaryOperation.BOOL_OR, t2)] = lambda l, r: bool(l) or bool(r)
             # and comparators 
             for op in {BinaryOperation.BOOL_EQ, BinaryOperation.BOOL_GEQ, BinaryOperation.BOOL_GT,
                        BinaryOperation.BOOL_LEQ, BinaryOperation.BOOL_LT, BinaryOperation.BOOL_NEQ}:
                 t1._operators[op][t2] = BuiltinType.BOOL.value
+            t1._op_functions.update({
+                (BinaryOperation.BOOL_EQ, t2): lambda l, r: l == r,
+                (BinaryOperation.BOOL_GEQ, t2): lambda l,r: l>=r,
+                (BinaryOperation.BOOL_GT, t2): lambda l,r: l>r,
+                (BinaryOperation.BOOL_LEQ, t2): lambda l,r: l<=r,
+                (BinaryOperation.BOOL_LT, t2): lambda l,r: l<r,
+                (BinaryOperation.BOOL_NEQ, t2): lambda l,r: l!=r
+            })
                 
     #add unary operators
     for t in BuiltinType.get_numeric_types():
