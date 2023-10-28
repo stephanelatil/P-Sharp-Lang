@@ -408,6 +408,43 @@ class TTreeElem:
         if not hasattr(self, 'typ'):
             self.typ:Type = BuiltinType.MISSING.value
             
+    @property
+    def breakable(self):
+        """True if it is syntactically correct to 'break' from this node"""
+        node = self
+        while not node is None:
+            if isinstance(node, (TFuncDecl, TClassDecl,)):
+                return False # can't break from a function or class
+            if isinstance(node, (TFor, TForeach, TEnum, TWhile)):
+                return True # Break allowed in for, while and enums
+            node = node.parent
+        #reached top without being breakable so not breakable
+        return False
+            
+    @property
+    def continueable(self):
+        """True if it is syntactically correct to 'continue' from this node"""
+        node = self
+        while not node is None:
+            if isinstance(node, (TFuncDecl, TEnum, TClassDecl,)):
+                return False  # can't break from a function or class or enum
+            if isinstance(node, (TFor, TForeach, TWhile)):
+                return True  # Break allowed in for, while and enums
+            node = node.parent
+        # reached top without being breakable so not breakable
+        return False
+
+    @property
+    def returnable(self):
+        """True if it is syntactically correct to 'return' from this node"""
+        node = self
+        while not node is None:
+            if isinstance(node, TFuncDecl):
+                return True  # Can return from a function (includes constructors)
+            node = node.parent
+        # reached top without being breakable so not breakable
+        return False
+            
     def get_errors(self) ->list[TypingError]:
         err:list[TypingError] = self.errors[:]
         for k in self.__dict__.keys():
@@ -975,6 +1012,8 @@ class TSkip(TStatement):
 class TReturn(TStatement):
     def __init__(self, elem:PReturn, parent:TTreeElem):
         super().__init__(elem, parent)
+        if not self.returnable:
+            self.errors.append(TypingError(f'return at location {self.location} is not valid in this context'))
         self.returnVal = TExpression.get_correct_TTreeElem(elem.returnVal)(elem.returnVal, self)
         self.typ = self.returnVal.typ
 
@@ -993,10 +1032,16 @@ class TString(TExpression):
 class TContinue(TStatement):
     def __init__(self, elem:PContinue, parent:TTreeElem):
         super().__init__(elem, parent)
+        if not self.continueable:
+            self.errors.append(TypingError(
+                f'continue at location {self.location} is not valid in this context'))
 
 class TBreak(TStatement):
     def __init__(self, elem:PBreak, parent:TTreeElem):
         super().__init__(elem, parent)
+        if not self.breakable:
+            self.errors.append(TypingError(
+                f'break at location {self.location} is not valid in this context'))
 
 
 class TIf(TStatement):
