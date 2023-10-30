@@ -458,9 +458,17 @@ def p_all_statements_classDecl(p: YaccProduction):
 
 def p_all_statements_addStatement(p: YaccProduction):
     """GlobalStatementList : Statement GlobalStatementList"""
+    loc,end = get_loc(p,1)
     if isinstance(p[1], PVarDecl):
-        p[0] = PModule(None, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
-            p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=[p[1]]+deepcopy(p[2].statements))
+        vardecl: PVarDecl = p[1]
+        if not vardecl.init_value is None:  # set initial value as a statement in the correct place
+            assignement = PAssign(loc, PIdentifier(loc, vardecl.identifier, loc+len(vardecl.identifier)),
+                                  vardecl.init_value, end)
+            p[0] = PModule(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
+                p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=[assignement]+deepcopy(p[2].statements))
+        else:
+            p[0] = PModule(None, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
+                p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=[p[1]]+deepcopy(p[2].statements))
     elif isinstance(p[1], PFuncDecl):
         p[0] = PModule(None, functions=[p[1]]+deepcopy(p[2].funcDecl), varDecl=deepcopy(
             p[2].varDecl), classDecl=deepcopy(p[2].classDecl), statements=deepcopy(p[2].statements))
@@ -483,24 +491,37 @@ def p_bloc_empty(p: YaccProduction):
 
 def p_bloc_single(p: YaccProduction):
     """StatementList : Statement"""
+    loc,end = get_loc(p,1)
     if isinstance(p[1], PVarDecl):
-        p[0] = PScope(get_loc(p,1)[0], functions=[], varDecl=[
-                      p[1]], statements=[p[1]], last_token_end=get_loc(p, 1)[1])
+        vardecl: PVarDecl = p[1]
+        if not vardecl.init_value is None:  # set initial value as a statement in the correct place
+            assignement = PAssign(loc, PIdentifier(loc, vardecl.identifier, loc+len(vardecl.identifier)),
+                                  vardecl.init_value, end)
+            p[0] = PScope(loc, functions=[], varDecl=[p[1]], statements=[assignement])
+        else:
+            p[0] = PScope(loc, functions=[], varDecl=[p[1]], statements=[], last_token_end=end)
     elif isinstance(p[1], PFuncDecl):
-        p[0] = PScope(get_loc(p,1)[0], functions=[p[1]], varDecl=[], statements=[],
-                      last_token_end=get_loc(p,1)[1])
+        p[0] = PScope(loc, functions=[p[1]], varDecl=[], statements=[],
+                      last_token_end=end)
     else:
-        p[0] = PScope(get_loc(p,1)[0], functions=[],
-                      varDecl=[], statements=[p[1]], last_token_end=get_loc(p, 1)[1])
+        p[0] = PScope(loc, functions=[],
+                      varDecl=[], statements=[p[1]], last_token_end=end)
 
 
 def p_bloc_list(p: YaccProduction):
     """StatementList : Statement StatementList"""
     #Add vardecl to statements too
-    loc = get_loc(p, 1)[0]
+    loc, end = get_loc(p, 1)
     if isinstance(p[1], PVarDecl):
-        p[0] = PScope(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
-            p[2].varDecl), statements=[p[1]]+deepcopy(p[2].statements))
+        vardecl:PVarDecl = p[1]
+        if not vardecl.init_value is None: #set initial value as a statement in the correct place
+            assignement = PAssign(loc, PIdentifier(loc, vardecl.identifier, loc+len(vardecl.identifier)),
+                    vardecl.init_value, end)
+            p[0] = PScope(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
+                p[2].varDecl), statements=[assignement]+deepcopy(p[2].statements))
+        else:
+            p[0] = PScope(loc, functions=deepcopy(p[2].funcDecl), varDecl=[p[1]]+deepcopy(
+                p[2].varDecl), statements=deepcopy(p[2].statements))
     elif isinstance(p[1], PFuncDecl):
         p[0] = PScope(loc, functions=[p[1]]+deepcopy(p[2].funcDecl), varDecl=deepcopy(
             p[2].varDecl), statements=deepcopy(p[2].statements))
