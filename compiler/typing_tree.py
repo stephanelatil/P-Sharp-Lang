@@ -72,7 +72,7 @@ class ArrayInternalStructureOffsets:
 
 class Type:
     def __init__(self, identifier:str, size:int, _is_primitive=False,*,
-                 location:Location|None=None, _op_functions:dict[tuple[BinaryOperation,'Type'],Callable]={}, _methods:"dict[str,FunctionType]|None" = None):
+                 location:Location|None=None, _op_functions:dict[UnaryOperation|tuple[BinaryOperation,'Type'],Callable]={}, _methods:"dict[str,FunctionType]|None" = None):
         self.ident:str = identifier
         self.size:int = size
         if not hasattr(self, "fields"):
@@ -90,7 +90,7 @@ class Type:
         self._operators:dict[BinaryOperation,dict[Type, Type]] = {}
         self._unary_opertors:dict[UnaryOperation, Type] = {}
         self._constructor_uuid = -1
-        self._op_functions:dict[tuple[BinaryOperation,'Type'],Callable] = {}
+        self._op_functions:dict[UnaryOperation|tuple[BinaryOperation,'Type'],Callable] = {}
         self._op_functions.update(_op_functions)
     
     def can_cast_to(self, cast_to:"Type") -> bool:
@@ -319,7 +319,21 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
     # add shortcut to char as i8
     CustomType.known_types['char'] = BuiltinType.UINT_8.value
     
+    BuiltinType.BOOL.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: not x
+    BuiltinType.UINT_8.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFF
+    BuiltinType.INT_8.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFF
+    BuiltinType.UINT_16.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFFFF
+    BuiltinType.INT_16.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFFFF
+    BuiltinType.UINT_32.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFFFFFFFF
+    BuiltinType.INT_32.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFFFFFFFF
+    BuiltinType.UINT_64.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFFFFFFFFFFFFFFFF
+    BuiltinType.INT_64.value._op_functions[UnaryOperation.LOGIC_NOT] = lambda x: x ^ 0xFFFFFFFFFFFFFFFF
     for t1 in numeric_and_bool:
+        t1._op_functions[UnaryOperation.BOOL_NOT] = lambda x: not x
+        if t1 != BuiltinType.BOOL.value:
+            t1._op_functions[UnaryOperation.MINUS] = lambda x : -x
+            t1._op_functions[UnaryOperation.INCREMENT] = lambda x : x+1
+            t1._op_functions[UnaryOperation.DECREMENT] = lambda x : x-1            
         for t2 in numeric_and_bool:
             #set +,-,* and / operator types
             for op in {BinaryOperation.PLUS, BinaryOperation.MINUS, BinaryOperation.TIMES,
@@ -374,7 +388,7 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
                 (BinaryOperation.BOOL_LT, t2): lambda l,r: l<r,
                 (BinaryOperation.BOOL_NEQ, t2): lambda l,r: l!=r
             })
-                
+      
     #add unary operators
     for t in BuiltinType.get_numeric_types():
         if t == BuiltinType.BOOL.value:
