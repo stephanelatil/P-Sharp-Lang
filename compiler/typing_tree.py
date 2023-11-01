@@ -517,7 +517,7 @@ class TTreeElem:
         TTreeElem._known_func_scope[(typ,id)] = scope_uuid
     
     def find_corresponding_scope_id(self, typ: Type|None, id: str) -> int:
-        """Gets the UUID of the corresponding function body given the function's name and parent's type. 
+        """Gets the UUID of the corresponding function declaration given the function's name and parent's type. 
         Eg. "abdc".SubString(0,2), string is the parent type and SubString is the function name (or id).
 
         Args:
@@ -865,7 +865,7 @@ class TFuncDecl(TTreeElem):
         except TypingError as e:
             self.errors.append(e)
         parent.add_known_func_scope(self.parent_class_typ, self.id,
-                                    ElemUUID.peekNext()) #adds the Scope ID (next used uuid)
+                                    self.UUID)) #adds the function declaration
         self.body = TScope(elem.body, self)
 
 

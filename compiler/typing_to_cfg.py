@@ -115,7 +115,7 @@ class CfgConstructor(CfgNode):
     def __init__(self, elem: TConstructor, context: Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
-        context.known_functions[self.body.UUID] = LazyGetFunction(elem.body.UUID)
+        context.known_functions[self.body.UUID] = LazyGetFunction(elem.UUID)
         self.args:list[CfgVarDecl] = [_Converter.ttree_elem_to_cfg(arg, context) for arg in elem.args]
         self.body:CfgScope = _Converter.ttree_elem_to_cfg(elem, context)
         self.identifier = elem.id
@@ -172,7 +172,7 @@ class CfgFuncDecl(CfgNode):
     def __init__(self, elem: TFuncDecl, context: Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
-        context.known_functions[elem.body.UUID] = LazyGetFunction(elem.body.UUID)
+        context.known_functions[elem.body.UUID] = LazyGetFunction(elem.UUID)
         self.body = _Converter.ttree_elem_to_cfg(elem.body, context)
         self.identifier = elem.id
 
