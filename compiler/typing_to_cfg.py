@@ -175,6 +175,7 @@ class CfgFuncDecl(CfgNode):
         context.known_functions[elem.body.UUID] = LazyGetFunction(elem.UUID)
         self.body = _Converter.ttree_elem_to_cfg(elem.body, context)
         self.identifier = elem.id
+        self.args = [_Converter.ttree_elem_to_cfg(arg, context) for arg in elem.args]
 
 
 class CfgIf(CfgNode):
@@ -305,7 +306,7 @@ class CfgWhile(CfgNode):
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
         self.condition = _Converter.ttree_elem_to_cfg(elem.condition, context)
-        self.loop_block = _Converter.ttree_elem_to_cfg(elem.bloc, context)
+        self.bloc = _Converter.ttree_elem_to_cfg(elem.bloc, context)
         
             
 class _Converter:
