@@ -4,19 +4,9 @@ class Context:
     def __init__(self) -> None:
         # A Dict with a cfgNode for UUIDs in the Ttree. Note that some elements may not have a CfgNode or simply be aCfgSkip
         # For example, function declerations don't have a CfgNode because there is no work to be done at runtime
-        self.uuid_to_cfg_node: "dict[int, CfgNode]" = {}
+        self.uuid_to_cfg_node: "dict[int, CfgNode|None]" = {-1: None}
         # A dict that contains the function body CGF given its name, for easy lookup
-        self.known_functions:dict[int,'LazyGetFunction'] = {}
-        
-class LazyGetFunction:        
-    def __init__(self, cfg_function_node_id:int):
-        self.cfg_function_node_id = cfg_function_node_id
-    
-    def get(self, context:Context) -> 'CfgNode':
-        if isinstance(self.cfg_function_node_id, int):
-            self.cfg_function_node_id = context.uuid_to_cfg_node[self.cfg_function_node_id]
-        return self.cfg_function_node_id
-                
+        self.known_functions:dict[int, 'CfgFuncDecl'] = {}
 
 class CfgNode:    
     def __init__(self, elem: TTreeElem, context:Context) -> None:
@@ -87,7 +77,9 @@ class CfgCall(CfgNode):
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
         self.args = [_Converter.ttree_elem_to_cfg(arg, context) for arg in elem.args]
-        self._function_body_cfg = context.known_functions[elem.function_body_uuid]
+        self.function_name = elem.function_name
+        self._function_cfg:CfgFuncDecl|CfgConstructor|None = context.known_functions.get(
+                elem.function_body_uuid, None)
         
 class CfgCast(CfgNode):
     def __init__(self, elem: TCast, context: Context) -> None:
@@ -115,7 +107,7 @@ class CfgConstructor(CfgNode):
     def __init__(self, elem: TConstructor, context: Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
-        context.known_functions[self.body.UUID] = LazyGetFunction(elem.UUID)
+        context.known_functions[self.UUID] = self
         self.args:list[CfgVarDecl] = [_Converter.ttree_elem_to_cfg(arg, context) for arg in elem.args]
         self.body:CfgScope = _Converter.ttree_elem_to_cfg(elem, context)
         self.identifier = elem.id
@@ -172,7 +164,7 @@ class CfgFuncDecl(CfgNode):
     def __init__(self, elem: TFuncDecl, context: Context) -> None:
         super().__init__(elem, context)
         context.uuid_to_cfg_node[elem.UUID] = self
-        context.known_functions[elem.body.UUID] = LazyGetFunction(elem.UUID)
+        context.known_functions[elem.UUID] = self
         self.body = _Converter.ttree_elem_to_cfg(elem.body, context)
         self.identifier = elem.id
         self.args = [_Converter.ttree_elem_to_cfg(arg, context) for arg in elem.args]
@@ -315,8 +307,9 @@ class _Converter:
                                                          TClassDecl:CfgClassDecl,TConstructor:CfgConstructor, TDot:CfgDot,
                                                          TEnum:CfgEnum, TFor:CfgFor, TForeach:CfgForeach, TFuncDecl:CfgFuncDecl,
                                                          TIf:CfgIf, TIndex:CfgIndex, TModule:CfgModule, TNewArray:CfgNewArray,
-                                                         TNewObj:CfgNewObject, TNull:CfgNull, TNumeric:CfgNumeric, TScope:CfgScope,
-                                                         TSkip:CfgSkip,TString:CfgString, TTernary:CfgTernary, TUnOp:CfgUnOp,
+                                                         TNewObj: CfgNewObject, TNull: CfgNull, TNumeric: CfgNumeric,
+                                                         TReturn:CfgReturn, TScope: CfgScope, TSkip:CfgSkip,TString:CfgString,
+                                                         TTernary:CfgTernary, TUnOp:CfgUnOp,
                                                          TVar:CfgVar, TVarDecl:CfgVarDecl}
     
     @staticmethod
