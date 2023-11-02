@@ -1,5 +1,23 @@
 import ply.lex as lex
 from ply.yacc import NullLogger
+import re
+import codecs
+
+ESCAPE_SEQUENCE_RE = re.compile(r'''
+    ( \\U........      # 8-digit hex escapes
+    | \\u....          # 4-digit hex escapes
+    | \\x..            # 2-digit hex escapes
+    | \\[0-7]{1,3}     # Octal escapes
+    | \\N\{[^}]+\}     # Unicode characters by name
+    | \\[\\'"abfnrtv]  # Single-character escapes
+    )''', re.UNICODE | re.VERBOSE)
+
+
+def decode_escapes(s):
+    def decode_match(match):
+        return codecs.decode(match.group(0), 'unicode-escape')
+
+    return ESCAPE_SEQUENCE_RE.sub(decode_match, s)
 
 class Location:
     """Track the location of a token in the code"""
@@ -150,7 +168,7 @@ class PS_Lexer:
 
     def t_Literal_String(self,t):
         r'"((?:[^\n"\\]*|\\.)*)"'
-        t.value = t.value[1:-1]
+        t.value = decode_escapes(t.value[1:-1])
         return t
     
     def t_Number_Float(self,t):
