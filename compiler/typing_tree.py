@@ -403,6 +403,11 @@ def setup_builtin_types(root_vars: dict[str, ItemAndLoc]):
 
     #add concat
     BuiltinType.STRING.value._operators[BinaryOperation.PLUS][BuiltinType.STRING.value] = BuiltinType.STRING.value
+    BuiltinType.STRING.value._op_functions[(
+        BinaryOperation.PLUS, BuiltinType.STRING.value)] = lambda x, y: x+y
+    BuiltinType.STRING.value._operators[BinaryOperation.PLUS][BuiltinType.UINT_8.value] = BuiltinType.STRING.value
+    BuiltinType.STRING.value._op_functions[(
+        BinaryOperation.PLUS, BuiltinType.UINT_8.value)] = lambda x, y: x+chr(y)
     #Add builtin functions IDs
     TTreeElem._known_func_scope.setdefault((BuiltinType.MISSING.value, 'print'), -2)
     root_vars.setdefault('print', ItemAndLoc(FunctionType(BuiltinType.VOID.value, [BuiltinType.STRING.value]), None))
@@ -726,7 +731,7 @@ class TClassDecl(TTreeElem):
         self.fields = [TVarDecl(field, self) for field in elem.inner_scope.varDecl]
         self.methods = [TFuncDecl(pfuncdecl, self) for pfuncdecl in elem.inner_scope.funcDecl if not isinstance(pfuncdecl, PConstructor)]
         self.constructor = self._setup_constructor(elem.inner_scope.funcDecl, elem.inner_scope.varDecl)
-        self.typ._constructor_uuid = self.constructor.body.UUID
+        self.typ._constructor_uuid = self.constructor.UUID
         #set class type fields, methods and size in memory
         if self.typ != BuiltinType.MISSING.value:
             self.typ.size = 8+sum([f.typ.size if f.typ.is_primitive else 8 for f in self.fields])
@@ -865,7 +870,7 @@ class TFuncDecl(TTreeElem):
         except TypingError as e:
             self.errors.append(e)
         parent.add_known_func_scope(self.parent_class_typ, self.id,
-                                    self.UUID)) #adds the function declaration
+                                    self.UUID) #adds the function declaration
         self.body = TScope(elem.body, self)
 
 
