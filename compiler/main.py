@@ -4,7 +4,7 @@ from lexer import PS_Lexer
 from parser_tree import parser, MultiParsingException, ParsingError
 from typing_tree import p_to_t_tree, MultiTypingException
 from typing_to_cfg import Context, typing_to_cfg
-from .interpreter.interpreter import Env
+from interpreter.interpreter import Env
 
 def validate_path(path:str):
     assert(isinstance(path, str))
@@ -89,7 +89,8 @@ if args.stage == 'T': #Typing only
 
 start, context = typing_to_cfg(t)
 if args.interpret:
-    Env(start, context)
+    Env(start, context).run()
+    print('\n', end='', flush=True)
     exit(0)
 
 if args.stage == 'R': #RTL only
