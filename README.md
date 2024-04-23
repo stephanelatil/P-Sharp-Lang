@@ -1,8 +1,12 @@
 # P# Programming Language
 
+## **NOTE:** On Hold
+
+This project is currently on hold. Some features are available and you can run P# code in *Interpreted* mode on the `interpreter` branch with the -i flag (Extremly slow, used for testing at the moment).
+
 ![P# Logo](assets/img/psharp_logo.png)
 
-P# is a cutting-edge programming language designed for developers who want the best of both worlds: the simplicity and expressiveness of Python, combined with the power and performance of C#. With a focus on static typing, efficient memory management, and seamless integration with C libraries, P# opens up new possibilities for building high-performance applications and scripting tasks.
+P# is a programming language designed for developers who want the best of both worlds: the simplicity and expressiveness of Python, combined with the power and performance of C#. With a focus on static typing, efficient memory management, and seamless integration with C libraries, P# opens up new possibilities for building high-performance applications and scripting tasks.
 
 ## Table of Contents
 
@@ -131,6 +135,10 @@ Thanks to its lightweight nature and absence of main class/function requirements
 ## Contributing
 
 We welcome contributions to P# from the community. Feel free to submit issues, feature requests, and pull requests on our GitHub repository.
+
+### Help me work faster!
+
+To encourage me to complete the compiler and add new features feel free to <a href="https://www.buymeacoffee.com/stephanelatil" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
 
 ## License
 
