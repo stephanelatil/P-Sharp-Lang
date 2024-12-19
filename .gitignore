@@ -14,3 +14,4 @@ out.txt
 
 #ignores vscode files
 .vscode
+.venv
