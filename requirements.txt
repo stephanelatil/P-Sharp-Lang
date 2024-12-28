@@ -1,4 +1,4 @@
 autopep8
 llvmlite
 numpy
-faster-fifo
+coverage
