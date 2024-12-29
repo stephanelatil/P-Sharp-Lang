@@ -1,6 +1,6 @@
 from enum import Enum, auto
 from collections import deque
-from typing import TextIO, Generator, Optional
+from typing import TextIO, Generator, Optional, Union
 
 class LexemeType(Enum):
     # Keywords
@@ -93,7 +93,6 @@ class LexemeType(Enum):
 
     # Special
     WHITESPACE = auto()
-    EMPTY = auto()
     EOF = auto()
 
 class Position:
@@ -119,15 +118,9 @@ class Position:
 class Lexeme:
     @staticmethod
     def _default():
-        return Lexeme(LexemeType.EMPTY, '', Position(), '')
+        return Lexeme(LexemeType.EOF, '', Position(), '')
     
     default:'Lexeme' = None
-
-    # Add class initialization
-    def __class_getitem__(cls, _):
-        if cls.default is None:
-            cls.default = cls._default()
-        return cls.default
 
     def __init__(self, type:LexemeType, value:str, pos:Position, filename:str, end_pos:Position|None=None):
         self.type = type
@@ -180,6 +173,38 @@ class CharacterStream:
         if char is None:
             raise EOFError()
         return char
+
+    def position(self) -> Position:
+        return self.pos.copy()
+    
+class LexemeStream:
+    def __init__(self, lexmes:Generator[Lexeme, None, None]):
+        self.lexeme_gen = lexmes
+        self.buffer = deque()
+        self.pos = Position()
+        self.eof = False
+
+    def peek(self, amount=0) -> Lexeme:
+        if self.eof and len(self.buffer) == 0:
+            return Lexeme.default
+
+        while len(self.buffer) <= amount:
+            lexeme = next(self.lexeme_gen, None)
+            if not lexeme:
+                self.eof = True
+                return Lexeme.default
+            self.buffer.append(lexeme)
+
+        return self.buffer[amount]
+
+    def advance(self) -> Lexeme:
+        lexeme = self.peek()
+        if lexeme is not None:
+            self.buffer.popleft()
+            self.pos = lexeme.pos
+        if lexeme is None:
+            raise EOFError()
+        return lexeme
 
     def position(self) -> Position:
         return self.pos.copy()
