@@ -1,6 +1,216 @@
 from unittest import TestCase
 from io import StringIO
-from lexer import Lexer, LexemeType, LexerError
+from lexer import Lexer, LexemeType, LexerError, Position, CharacterStream
+
+class TestPosition(TestCase):
+    """
+    Test suite for the Position class which tracks line numbers, columns, and indices
+    in source code.
+    """
+    
+    def setUp(self) -> None:
+        """Initialize a fresh Position instance before each test."""
+        self.position = Position()
+
+    def test_position_initializes_with_default_values(self) -> None:
+        """Test that Position initializes with expected default values (line 1, column 1, index 0)."""
+        self.assertEqual(self.position.line, 1)
+        self.assertEqual(self.position.column, 1)
+        self.assertEqual(self.position.index, 0)
+
+    def test_position_advances_correctly_with_normal_characters(self) -> None:
+        """Test that Position advances correctly with regular characters."""
+        # Advance through a normal character
+        self.position.advance('a')
+        self.assertEqual(self.position.line, 1)
+        self.assertEqual(self.position.column, 2)
+        self.assertEqual(self.position.index, 1)
+
+    def test_position_handles_newline_characters_correctly(self) -> None:
+        """Test that Position correctly updates when encountering newline characters."""
+        # First advance some regular characters
+        for _ in range(3):
+            self.position.advance('a')
+        
+        # Then hit a newline
+        self.position.advance('\n')
+        
+        self.assertEqual(self.position.line, 2)  # Line should increment
+        self.assertEqual(self.position.column, 1)  # Column should reset
+        self.assertEqual(self.position.index, 4)  # Index should still increment
+
+    def test_position_copy_creates_independent_instance(self) -> None:
+        """Test that Position.copy() creates a completely independent copy."""
+        # Advance the original position
+        self.position.advance('a')
+        self.position.advance('b')
+        
+        # Create a copy
+        copied_position = self.position.copy()
+        
+        # Verify copy has same values
+        self.assertEqual(copied_position.line, self.position.line)
+        self.assertEqual(copied_position.column, self.position.column)
+        self.assertEqual(copied_position.index, self.position.index)
+        
+        # Modify original and verify copy remains unchanged
+        self.position.advance('c')
+        self.assertNotEqual(copied_position.column, self.position.column)
+        self.assertNotEqual(copied_position.index, self.position.index)
+
+    def test_position_arithmetic_addition_works_correctly(self) -> None:
+        """Test that Position addition creates correct new position."""
+        # Start position (1,1,0)
+        result = self.position + 5
+        
+        # New position should be offset by 5 columns
+        self.assertEqual(result.line, 1)
+        self.assertEqual(result.column, 6)
+        self.assertEqual(result.index, 5)
+        
+        # Original position should be unchanged
+        self.assertEqual(self.position.line, 1)
+        self.assertEqual(self.position.column, 1)
+        self.assertEqual(self.position.index, 0)
+
+
+class TestCharacterStream(TestCase):
+    """
+    Test suite for the CharacterStream class which handles reading and buffering
+    characters from an input stream.
+    """
+
+    def setUp(self) -> None:
+        """Initialize a fresh CharacterStream instance before each test."""
+        self.create_stream("")
+
+    def create_stream(self, content: str) -> None:
+        """Helper method to create a new stream with given content."""
+        self.stream = CharacterStream(StringIO(content))
+
+    def test_empty_stream_returns_none_on_peek(self) -> None:
+        """Test that peeking an empty stream returns None."""
+        self.assertIsNone(self.stream.peek())
+        self.assertTrue(self.stream.eof)
+
+    def test_stream_handles_single_character_correctly(self) -> None:
+        """Test reading a single character from the stream."""
+        self.create_stream("a")
+        
+        # Peek should show 'a' but not advance
+        self.assertEqual(self.stream.peek(), "a")
+        self.assertEqual(self.stream.position().column, 1)
+        
+        # Advance should return 'a' and move position
+        self.assertEqual(self.stream.advance(), "a")
+        self.assertEqual(self.stream.position().column, 2)
+
+    def test_stream_handles_multiple_characters_correctly(self) -> None:
+        """Test reading multiple characters from the stream."""
+        self.create_stream("abc")
+        
+        # Read each character and verify position
+        self.assertEqual(self.stream.advance(), "a")
+        self.assertEqual(self.stream.position().column, 2)
+        
+        self.assertEqual(self.stream.advance(), "b")
+        self.assertEqual(self.stream.position().column, 3)
+        
+        self.assertEqual(self.stream.advance(), "c")
+        self.assertEqual(self.stream.position().column, 4)
+
+    def test_stream_peek_with_different_lookahead_amounts(self) -> None:
+        """Test peeking ahead multiple characters in the stream."""
+        self.create_stream("abcd")
+        
+        # Peek at different positions without advancing
+        self.assertEqual(self.stream.peek(0), "a")
+        self.assertEqual(self.stream.peek(1), "b")
+        self.assertEqual(self.stream.peek(2), "c")
+        self.assertEqual(self.stream.peek(3), "d")
+        
+        # Position should not have changed
+        self.assertEqual(self.stream.position().column, 1)
+
+    def test_stream_handles_newlines_correctly(self) -> None:
+        """Test that stream correctly handles newline characters."""
+        self.create_stream("a\nb\nc")
+        
+        # Read through newlines and verify position
+        self.assertEqual(self.stream.advance(), "a")
+        self.assertEqual(self.stream.position().line, 1)
+        self.assertEqual(self.stream.position().column, 2)
+        
+        self.assertEqual(self.stream.advance(), "\n")
+        self.assertEqual(self.stream.position().line, 2)
+        self.assertEqual(self.stream.position().column, 1)
+        
+        self.assertEqual(self.stream.advance(), "b")
+        self.assertEqual(self.stream.position().line, 2)
+        self.assertEqual(self.stream.position().column, 2)
+
+    def test_stream_raises_eof_error_on_advance_past_end(self) -> None:
+        """Test that advancing past the end of stream raises EOFError."""
+        self.create_stream("a")
+        
+        # Read the only character
+        self.stream.advance()
+        
+        # Attempting to read past end should raise EOFError
+        with self.assertRaises(EOFError):
+            self.stream.advance()
+
+    def test_stream_eof_flag_sets_correctly(self) -> None:
+        """Test that EOF flag is set correctly when reaching end of stream."""
+        self.create_stream("a")
+        
+        # Initially EOF should be False
+        self.assertFalse(self.stream.eof)
+        
+        # Read content
+        self.stream.peek()
+        self.assertFalse(self.stream.eof)
+        # Read past the end of content
+        self.stream.peek(1)
+        self.assertTrue(self.stream.eof)
+        # Read past the end of content
+        self.stream.peek(100)
+        self.assertTrue(self.stream.eof)
+
+    def test_stream_position_tracking_with_mixed_content(self) -> None:
+        """Test position tracking with mix of characters, newlines, and multiple peeks."""
+        self.create_stream("abc\ndef\nghi")
+        
+        # Track position through mixed content
+        self.assertEqual(self.stream.advance(), "a")  # (1,2)
+        self.assertEqual(self.stream.advance(), "b")  # (1,3)
+        self.assertEqual(self.stream.advance(), "c")  # (1,4)
+        self.assertEqual(self.stream.advance(), "\n") # (2,1)
+        self.assertEqual(self.stream.advance(), "d")  # (2,2)
+        
+        pos = self.stream.position()
+        self.assertEqual(pos.line, 2)
+        self.assertEqual(pos.column, 2)
+        self.assertEqual(pos.index, 5)
+
+    def test_stream_buffer_management(self) -> None:
+        """Test that the stream's buffer is managed correctly with mixed peek and advance operations."""
+        self.create_stream("abcdef")
+        
+        # Peek ahead several characters
+        self.assertEqual(self.stream.peek(3), "d")
+        
+        # Buffer should contain 4 characters now
+        self.assertEqual(len(self.stream.buffer), 4)
+        
+        # Advance and verify buffer shrinks
+        self.stream.advance()  # 'a'
+        self.stream.advance()  # 'b'
+        self.assertEqual(len(self.stream.buffer), 2)
+        
+        # Peek again should refill buffer
+        self.assertEqual(self.stream.peek(2), "e")
+        self.assertEqual(len(self.stream.buffer), 3)
 
 class LexerTests(TestCase):
     def setUp(self) -> None:
@@ -129,6 +339,7 @@ class LexerTests(TestCase):
             "'\\x'",   # Incomplete hex escape
             "'\\x0'",  # Incomplete hex escape
             "'\\xGG'"  # Invalid hex digits
+            "'\\"      # Incomplete escape sequence
         ]
         for char in invalid_chars:
             with self.assertRaises(LexerError):
@@ -163,6 +374,10 @@ class LexerTests(TestCase):
             self.assertEqual(len(lexemes), 1)  # Operator
             self.assertEqual(lexemes[0].type, expected_type)
             self.assertEqual(lexemes[0].value, op)
+
+        with self.assertRaises(LexerError):
+            lexer = Lexer('test.ps', StringIO("@"))
+            val = list(lexer.lex())
 
     def test_keywords(self) -> None:
         """Test all language keywords."""
@@ -222,6 +437,8 @@ class LexerTests(TestCase):
             '"Unterminated string',           # Missing closing quote
             '"String with invalid \\escape"',   # Invalid escape sequence
             '"\n"',                           # Raw newline in string
+            '"\\',                           # Raw newline in string
+            '"\\x1"',                           # Raw newline in string
             '"String\vwith\\invalid\\controls"', # Invalid control characters
             '"'                               # Empty unterminated string
         ]
