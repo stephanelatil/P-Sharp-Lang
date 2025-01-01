@@ -225,11 +225,12 @@ class LexerTests(TestCase):
                 "/*Comment with \t various whitespaces\ntest\ttest\t\n\t\n\r\r test \n\n*/",
                 "/*\n*/",
                 "/*¡£©¶œβюॴ௴ඕ*/"]
-        for block in blocks:
-            lexer = Lexer('test.ps', StringIO(block))
-            lexemes = list(lexer.lex(include_comments=True))
-            self.assertEqual(len(lexemes), 1)
-            self.assertEqual(lexemes[0].type, LexemeType.COMMENT_MULTILINE)
+        for block_comment in blocks:
+            with self.subTest(block_comment=block_comment):
+                lexer = Lexer('test.ps', StringIO(block_comment))
+                lexemes = list(lexer.lex(include_comments=True))
+                self.assertEqual(len(lexemes), 1)
+                self.assertEqual(lexemes[0].type, LexemeType.COMMENT_MULTILINE)
 
     def test_line_comments_with_various_content(self) -> None:
         """Test single-line comments with different content."""
@@ -241,10 +242,11 @@ class LexerTests(TestCase):
             "// Unicode content ¡£©¶œβ\n"
         ]
         for comment in comments:
-            lexer = Lexer('test.ps', StringIO(comment))
-            lexemes = list(lexer.lex(include_comments=True))
-            self.assertEqual(len(lexemes), 1)
-            self.assertEqual(lexemes[0].type, LexemeType.COMMENT_SINGLELINE)
+            with self.subTest(comment=comment):
+                lexer = Lexer('test.ps', StringIO(comment))
+                lexemes = list(lexer.lex(include_comments=True))
+                self.assertEqual(len(lexemes), 1)
+                self.assertEqual(lexemes[0].type, LexemeType.COMMENT_SINGLELINE)
 
     def test_numeric_literals_integers(self) -> None:
         """Test various forms of integer literals."""
@@ -256,11 +258,12 @@ class LexerTests(TestCase):
             "0xDEAD_BEEF": (LexemeType.NUMBER_HEX, "0xDEADBEEF")
         }
         for input_str, expected in test_cases.items():
-            lexer = Lexer('test.ps', StringIO(input_str))
-            lexemes = list(lexer.lex())
-            self.assertEqual(len(lexemes), 1)  # Number
-            self.assertEqual(lexemes[0].type, expected[0])
-            self.assertEqual(lexemes[0].value, expected[1])
+            with self.subTest(input_str=input_str, expected=expected):
+                lexer = Lexer('test.ps', StringIO(input_str))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), 1)  # Number
+                self.assertEqual(lexemes[0].type, expected[0])
+                self.assertEqual(lexemes[0].value, expected[1])
 
     def test_numeric_literals_floats(self) -> None:
         """Test various forms of floating-point literals."""
@@ -275,11 +278,12 @@ class LexerTests(TestCase):
             "1__2_______3": (LexemeType.NUMBER_INT, "123") # Any number of underscores
         }
         for input_str, expected in test_cases.items():
-            lexer = Lexer('test.ps', StringIO(input_str))
-            lexemes = list(lexer.lex())
-            self.assertEqual(len(lexemes), 1)  # Float
-            self.assertEqual(lexemes[0].type, expected[0])
-            self.assertEqual(lexemes[0].value, expected[1])
+            with self.subTest(input_str=input_str, expected=expected):
+                lexer = Lexer('test.ps', StringIO(input_str))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), 1)  # Float
+                self.assertEqual(lexemes[0].type, expected[0])
+                self.assertEqual(lexemes[0].value, expected[1])
 
     def test_invalid_numeric_literals(self) -> None:
         """Test that invalid numeric literals raise appropriate errors."""
@@ -293,9 +297,10 @@ class LexerTests(TestCase):
             "1.5.2",   # Non-int exponent
         ]
         for num in invalid_numbers:
-            with self.assertRaises(LexerError):
-                lexer = Lexer('test.ps', StringIO(num))
-                list(lexer.lex())
+            with self.subTest(num=num):
+                with self.assertRaises(LexerError):
+                    lexer = Lexer('test.ps', StringIO(num))
+                    list(lexer.lex())
 
     def test_string_literals_with_escapes(self) -> None:
         """Test string literals with various escape sequences."""
@@ -308,11 +313,12 @@ class LexerTests(TestCase):
             '"Strings\\0 with escape sequences \\\\ \\\" \\\' \\n\\r\\f\\b\\x50"'
         }
         for input_str, expected in test_cases.items():
-            lexer = Lexer('test.ps', StringIO(input_str))
-            lexemes = list(lexer.lex())
-            self.assertEqual(len(lexemes), 1)  # String
-            self.assertEqual(lexemes[0].type, LexemeType.STRING_LITERAL)
-            self.assertEqual(lexemes[0].value, expected)
+            with self.subTest(input_str=input_str, excepted=expected):
+                lexer = Lexer('test.ps', StringIO(input_str))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), 1)  # String
+                self.assertEqual(lexemes[0].type, LexemeType.STRING_LITERAL)
+                self.assertEqual(lexemes[0].value, expected)
 
     def test_character_literals(self) -> None:
         """Test character literals including escape sequences."""
@@ -324,11 +330,12 @@ class LexerTests(TestCase):
             "'\\x41'": LexemeType.NUMBER_CHAR  # Hex escape
         }
         for input_str, expected_type in test_cases.items():
-            lexer = Lexer('test.ps', StringIO(input_str))
-            lexemes = list(lexer.lex())
-            self.assertEqual(len(lexemes), 1)  # Char
-            self.assertEqual(lexemes[0].type, expected_type)
-            self.assertEqual(lexemes[0].value, input_str)
+            with self.subTest(input_str=input_str, expected_type=expected_type):
+                lexer = Lexer('test.ps', StringIO(input_str))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), 1)  # Char
+                self.assertEqual(lexemes[0].type, expected_type)
+                self.assertEqual(lexemes[0].value, input_str)
 
     def test_invalid_character_literals(self) -> None:
         """Test that invalid character literals raise appropriate errors."""
@@ -342,9 +349,10 @@ class LexerTests(TestCase):
             "'\\"      # Incomplete escape sequence
         ]
         for char in invalid_chars:
-            with self.assertRaises(LexerError):
-                lexer = Lexer('test.ps', StringIO(char))
-                list(lexer.lex())
+            with self.subTest(char=char):
+                with self.assertRaises(LexerError):
+                    lexer = Lexer('test.ps', StringIO(char))
+                    list(lexer.lex())
 
     def test_operators_and_punctuation(self) -> None:
         """Test all operators and punctuation marks."""
@@ -369,11 +377,12 @@ class LexerTests(TestCase):
             ">>=": LexemeType.OPERATOR_BINARY_SHREQ
         }
         for op, expected_type in operators.items():
-            lexer = Lexer('test.ps', StringIO(op))
-            lexemes = list(lexer.lex())
-            self.assertEqual(len(lexemes), 1)  # Operator
-            self.assertEqual(lexemes[0].type, expected_type)
-            self.assertEqual(lexemes[0].value, op)
+            with self.subTest(operator=op, expected_type=expected_type):
+                lexer = Lexer('test.ps', StringIO(op))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), 1)  # Operator
+                self.assertEqual(lexemes[0].type, expected_type)
+                self.assertEqual(lexemes[0].value, op)
 
         with self.assertRaises(LexerError):
             lexer = Lexer('test.ps', StringIO("@"))
@@ -393,11 +402,12 @@ class LexerTests(TestCase):
             "false": LexemeType.KEYWORD_OBJECT_FALSE
         }
         for keyword, expected_type in keywords.items():
-            lexer = Lexer('test.ps', StringIO(keyword))
-            lexemes = list(lexer.lex())
-            self.assertEqual(len(lexemes), 1)  # Keyword
-            self.assertEqual(lexemes[0].type, expected_type)
-            self.assertEqual(lexemes[0].value, keyword)
+            with self.subTest(keyword=keyword, expected_type=expected_type):
+                lexer = Lexer('test.ps', StringIO(keyword))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), 1)  # Keyword
+                self.assertEqual(lexemes[0].type, expected_type)
+                self.assertEqual(lexemes[0].value, keyword)
 
     def test_identifiers(self) -> None:
         """Test valid and invalid identifier patterns."""
@@ -412,12 +422,13 @@ class LexerTests(TestCase):
             "contains___many__underscores______"
             "_" #single underscore for discard
         ]
-        for id in valid_ids:
-            lexer = Lexer('test.ps', StringIO(id))
-            lexemes = list(lexer.lex())
-            self.assertEqual(len(lexemes), 1)  # Identifier
-            self.assertEqual(lexemes[0].type, LexemeType.IDENTIFIER)
-            self.assertEqual(lexemes[0].value, id)
+        for identifier in valid_ids:
+            with self.subTest(identifier=identifier):
+                lexer = Lexer('test.ps', StringIO(identifier))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), 1)  # Identifier
+                self.assertEqual(lexemes[0].type, LexemeType.IDENTIFIER)
+                self.assertEqual(lexemes[0].value, id)
 
     def test_invalid_identifiers(self) -> None:
         """Test that invalid identifiers raise appropriate errors."""
@@ -426,10 +437,11 @@ class LexerTests(TestCase):
             "PS_GC__name",     # Cannot start with PS_GC__
             "__reserved",      # Cannot start with double underscore
         ]
-        for id in invalid_ids:
-            with self.assertRaises(LexerError):
-                lexer = Lexer('test.ps', StringIO(id))
-                vals = list(lexer.lex())
+        for identifier in invalid_ids:
+            with self.subTest(identifier=identifier):
+                with self.assertRaises(LexerError):
+                    lexer = Lexer('test.ps', StringIO(identifier))
+                    vals = list(lexer.lex())
 
     def test_invalid_string_literals(self) -> None:
         """Test that invalid string literals raise appropriate errors."""
@@ -442,10 +454,11 @@ class LexerTests(TestCase):
             '"String\vwith\\invalid\\controls"', # Invalid control characters
             '"'                               # Empty unterminated string
         ]
-        for string in invalid_strings:
-            with self.assertRaises(LexerError):
-                lexer = Lexer('test.ps', StringIO(string))
-                val = list(lexer.lex())
+        for string_expr in invalid_strings:
+            with self.subTest(string_expr=string_expr):
+                with self.assertRaises(LexerError):
+                    lexer = Lexer('test.ps', StringIO(string_expr))
+                    val = list(lexer.lex())
 
     def test_partial_line_comments(self) -> None:
         """Test comments that occupy only part of a line with code before/after."""
@@ -481,17 +494,19 @@ class LexerTests(TestCase):
         ]
         
         for input_str, expected_types, expected_types_with_comments in test_cases:
-            # Test without comments
-            lexer = Lexer('test.ps', StringIO(input_str))
-            lexemes = list(lexer.lex())
-            actual_types = [lexeme.type for lexeme in lexemes]
-            self.assertEqual(actual_types, expected_types)
-            
-            # Test with comments included
-            lexer = Lexer('test.ps', StringIO(input_str))
-            lexemes = list(lexer.lex(include_comments=True))
-            actual_types = [lexeme.type for lexeme in lexemes]
-            self.assertEqual(actual_types, expected_types_with_comments)
+            with self.subTest(input_str=input_str, expected_types=expected_types,
+                              expected_types_with_comments=expected_types_with_comments):
+                # Test without comments
+                lexer = Lexer('test.ps', StringIO(input_str))
+                lexemes = list(lexer.lex())
+                actual_types = [lexeme.type for lexeme in lexemes]
+                self.assertEqual(actual_types, expected_types)
+                
+                # Test with comments included
+                lexer = Lexer('test.ps', StringIO(input_str))
+                lexemes = list(lexer.lex(include_comments=True))
+                actual_types = [lexeme.type for lexeme in lexemes]
+                self.assertEqual(actual_types, expected_types_with_comments)
 
     def test_mixed_comments_types(self) -> None:
         """Test mixing of block and line comments in various configurations."""
@@ -523,10 +538,11 @@ class LexerTests(TestCase):
               LexemeType.COMMENT_SINGLELINE])
         ]
         for input_str, expected_types in test_cases:
-            lexer = Lexer('test.ps', StringIO(input_str))
-            lexemes = list(lexer.lex(include_comments=True))
-            actual_types = [lexeme.type for lexeme in lexemes]
-            self.assertEqual(actual_types, expected_types)
+            with self.subTest(input_str=input_str):
+                lexer = Lexer('test.ps', StringIO(input_str))
+                lexemes = list(lexer.lex(include_comments=True))
+                actual_types = [lexeme.type for lexeme in lexemes]
+                self.assertEqual(actual_types, expected_types)
 
     def test_invalid_block_comments(self) -> None:
         """Test invalid block comment formations."""
@@ -535,9 +551,10 @@ class LexerTests(TestCase):
             "/*/",  # unterminated
         ]
         for comment in invalid_comments:
-            with self.assertRaises(LexerError):
-                lexer = Lexer('test.ps', StringIO(comment))
-                val = list(lexer.lex())
+            with self.subTest(source=comment):
+                with self.assertRaises(LexerError):
+                    lexer = Lexer('test.ps', StringIO(comment))
+                    val = list(lexer.lex())
 
     def test_complex_expressions(self) -> None:
         """Test lexing of complex expressions with multiple token types."""
@@ -558,7 +575,8 @@ class LexerTests(TestCase):
                                               LexemeType.PUNCTUATION_CLOSEBRACE])
         ]
         for expr, expected_types in expressions:
-            lexer = Lexer('test.ps', StringIO(expr))
-            lexemes = list(lexer.lex())
-            actual_types = [lexeme.type for lexeme in lexemes]  # Exclude EOF
-            self.assertEqual(actual_types, expected_types)
+            with self.subTest(expr=expr, expected_types=expected_types):
+                lexer = Lexer('test.ps', StringIO(expr))
+                lexemes = list(lexer.lex())
+                actual_types = [lexeme.type for lexeme in lexemes]  # Exclude EOF
+                self.assertListEqual(actual_types, expected_types)
