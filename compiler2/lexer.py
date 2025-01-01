@@ -46,7 +46,10 @@ class LexemeType(Enum):
     OPERATOR_BINARY_SHR = auto()
     OPERATOR_BINARY_BOOL_AND = auto()
     OPERATOR_BINARY_BOOL_OR = auto()
-    OPERATOR_UNARY_NOT = auto()
+    OPERATOR_UNARY_LOGIC_NOT = auto()
+    OPERATOR_UNARY_BOOL_NOT = auto()
+    OPERATOR_UNARY_INCREMENT = auto()
+    OPERATOR_UNARY_DECREMENT = auto()
     OPERATOR_BINARY_BOOL_EQ = auto()
     OPERATOR_BINARY_BOOL_NEQ = auto()
     OPERATOR_BINARY_BOOL_GEQ = auto()
@@ -244,6 +247,9 @@ class Lexer:
             'f64':LexemeType.KEYWORD_TYPE_FLOAT64,
             'char':LexemeType.KEYWORD_TYPE_CHAR,
             'bool':LexemeType.KEYWORD_TYPE_BOOLEAN,
+            'and':LexemeType.OPERATOR_BINARY_BOOL_AND,
+            'or':LexemeType.OPERATOR_BINARY_BOOL_OR,
+            'not':LexemeType.OPERATOR_UNARY_BOOL_NOT,
             '_':LexemeType.DISCARD
         }
         
@@ -260,9 +266,9 @@ class Lexer:
             '^':LexemeType.OPERATOR_BINARY_XOR,
             '.':LexemeType.OPERATOR_DOT,
             '=':LexemeType.OPERATOR_BINARY_ASSIGN,
-            '<':LexemeType.OPERATOR_BINARY_BOOL_LEQ,
-            '>':LexemeType.OPERATOR_BINARY_BOOL_GEQ,
-            '!':LexemeType.OPERATOR_UNARY_NOT,
+            '<':LexemeType.OPERATOR_BINARY_BOOL_LT,
+            '>':LexemeType.OPERATOR_BINARY_BOOL_GT,
+            '!':LexemeType.OPERATOR_UNARY_LOGIC_NOT,
 
             # Punctuation
             '(':LexemeType.PUNCTUATION_OPENPAREN,
@@ -590,6 +596,8 @@ class Lexer:
         two_char_types = {
             '+=':LexemeType.OPERATOR_BINARY_PLUSEQ,
             '-=':LexemeType.OPERATOR_BINARY_MINUSEQ,
+            '++':LexemeType.OPERATOR_UNARY_INCREMENT,
+            '++':LexemeType.OPERATOR_UNARY_DECREMENT,
             '*=':LexemeType.OPERATOR_BINARY_TIMESEQ,
             '/=':LexemeType.OPERATOR_BINARY_DIVEQ,
             '&=':LexemeType.OPERATOR_BINARY_ANDEQ,
@@ -600,8 +608,6 @@ class Lexer:
             '>=':LexemeType.OPERATOR_BINARY_BOOL_GEQ,
             '<=':LexemeType.OPERATOR_BINARY_BOOL_LEQ,
             ':=':LexemeType.OPERATOR_BINARY_COPY,
-            '&&':LexemeType.OPERATOR_BINARY_BOOL_AND,
-            '||':LexemeType.OPERATOR_BINARY_BOOL_OR,
             '<<':LexemeType.OPERATOR_BINARY_SHL,
             '>>':LexemeType.OPERATOR_BINARY_SHR,
         }
