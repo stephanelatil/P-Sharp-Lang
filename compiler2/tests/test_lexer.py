@@ -580,3 +580,20 @@ class LexerTests(TestCase):
                 lexemes = list(lexer.lex())
                 actual_types = [lexeme.type for lexeme in lexemes]  # Exclude EOF
                 self.assertListEqual(actual_types, expected_types)
+
+    def test_unary_operators_simple(self):
+        test_cases = [("--", (LexemeType.OPERATOR_UNARY_DECREMENT,)),
+                      ("++", (LexemeType.OPERATOR_UNARY_INCREMENT,)),
+                      ("not", (LexemeType.OPERATOR_UNARY_BOOL_NOT,)),
+                      ("!", (LexemeType.OPERATOR_UNARY_LOGIC_NOT,)),
+                      ("x+++1", (LexemeType.IDENTIFIER,LexemeType.OPERATOR_UNARY_INCREMENT,
+                                 LexemeType.OPERATOR_BINARY_PLUS, LexemeType.NUMBER_INT)),
+                      ("-x---1", (LexemeType.OPERATOR_BINARY_MINUS, LexemeType.IDENTIFIER,
+                                  LexemeType.OPERATOR_UNARY_DECREMENT,LexemeType.OPERATOR_BINARY_MINUS,
+                                  LexemeType.NUMBER_INT)),]
+        
+        for expr, expected_ops in test_cases:
+            with self.subTest(expr=expr, expected_ops=expected_ops):
+                lexer = Lexer('test.ps', StringIO(expr))
+                lexemes = tuple(lexeme.type for lexeme in lexer.lex())
+                self.assertTupleEqual(lexemes, expected_ops)

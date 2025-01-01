@@ -597,7 +597,7 @@ class Lexer:
             '+=':LexemeType.OPERATOR_BINARY_PLUSEQ,
             '-=':LexemeType.OPERATOR_BINARY_MINUSEQ,
             '++':LexemeType.OPERATOR_UNARY_INCREMENT,
-            '++':LexemeType.OPERATOR_UNARY_DECREMENT,
+            '--':LexemeType.OPERATOR_UNARY_DECREMENT,
             '*=':LexemeType.OPERATOR_BINARY_TIMESEQ,
             '/=':LexemeType.OPERATOR_BINARY_DIVEQ,
             '&=':LexemeType.OPERATOR_BINARY_ANDEQ,
