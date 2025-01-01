@@ -123,7 +123,7 @@ class Lexeme:
     def _default():
         return Lexeme(LexemeType.EOF, '', Position(), '')
     
-    default:'Lexeme' = None
+    default:'Lexeme'
 
     def __init__(self, type:LexemeType, value:str, pos:Position, filename:str, end_pos:Position|None=None):
         self.type = type

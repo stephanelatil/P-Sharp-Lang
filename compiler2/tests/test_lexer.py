@@ -428,7 +428,7 @@ class LexerTests(TestCase):
                 lexemes = list(lexer.lex())
                 self.assertEqual(len(lexemes), 1)  # Identifier
                 self.assertEqual(lexemes[0].type, LexemeType.IDENTIFIER)
-                self.assertEqual(lexemes[0].value, id)
+                self.assertEqual(lexemes[0].value, identifier)
 
     def test_invalid_identifiers(self) -> None:
         """Test that invalid identifiers raise appropriate errors."""
