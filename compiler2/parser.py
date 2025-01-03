@@ -1,8 +1,7 @@
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Tuple
 from dataclasses import dataclass
 from enum import Enum, auto
 from lexer import Lexer, LexemeType, Lexeme, Position, LexemeStream
-from collections import deque
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
 
 class ParserError(Exception):
@@ -89,10 +88,10 @@ class PFunction(PStatement):
     """Function definition node"""
     name: str
     return_type: 'PType'
-    parameters: List[tuple[str, str]]  # List of (type, name) tuples
+    parameters: List[Tuple['PType', 'PIdentifier']]  # List of (type, name) tuples
     body: 'PBlock'
 
-    def __init__(self, name: str, return_type: 'PType', parameters: List[tuple[str, str]],
+    def __init__(self, name: str, return_type: 'PType', parameters: List[Tuple['PType', 'PIdentifier']],
                  body: 'PBlock', lexeme: Lexeme):
         super().__init__(NodeType.FUNCTION, lexeme.pos)
         self.name = name
@@ -501,6 +500,7 @@ class Parser:
             LexemeType.KEYWORD_TYPE_UINT32,
             LexemeType.KEYWORD_TYPE_UINT64,
             LexemeType.KEYWORD_TYPE_STRING,
+            LexemeType.KEYWORD_TYPE_FLOAT16,
             LexemeType.KEYWORD_TYPE_FLOAT32,
             LexemeType.KEYWORD_TYPE_FLOAT64,
             LexemeType.KEYWORD_TYPE_CHAR,

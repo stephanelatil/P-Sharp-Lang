@@ -29,6 +29,7 @@ class LexemeType(Enum):
     KEYWORD_TYPE_UINT32 = auto()
     KEYWORD_TYPE_UINT64 = auto()
     KEYWORD_TYPE_STRING = auto()
+    KEYWORD_TYPE_FLOAT16 = auto()
     KEYWORD_TYPE_FLOAT32 = auto()
     KEYWORD_TYPE_FLOAT64 = auto()
     KEYWORD_TYPE_BOOLEAN = auto()
@@ -243,6 +244,7 @@ class Lexer:
             'u32':LexemeType.KEYWORD_TYPE_INT32,
             'u64':LexemeType.KEYWORD_TYPE_INT64,
             'string':LexemeType.KEYWORD_TYPE_STRING,
+            'f16':LexemeType.KEYWORD_TYPE_FLOAT16,
             'f32':LexemeType.KEYWORD_TYPE_FLOAT32,
             'f64':LexemeType.KEYWORD_TYPE_FLOAT64,
             'char':LexemeType.KEYWORD_TYPE_CHAR,

@@ -103,6 +103,7 @@ class TestParserUtilities(TestParserBase):
         self.assertIn(LexemeType.KEYWORD_TYPE_UINT16, type_keywords)
         self.assertIn(LexemeType.KEYWORD_TYPE_UINT32, type_keywords)
         self.assertIn(LexemeType.KEYWORD_TYPE_UINT64, type_keywords)
+        self.assertIn(LexemeType.KEYWORD_TYPE_FLOAT16, type_keywords)
         self.assertIn(LexemeType.KEYWORD_TYPE_FLOAT32, type_keywords)
         self.assertIn(LexemeType.KEYWORD_TYPE_FLOAT64, type_keywords)
         self.assertIn(LexemeType.KEYWORD_TYPE_BOOLEAN, type_keywords)
