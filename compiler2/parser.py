@@ -379,17 +379,17 @@ class PArrayInstantiation(PExpression):
         self.size = size
 
 @dataclass    
-class PType(PExpression):
-    base_type:Union[str, 'PType']
+class PType(PStatement):
+    type_string:str
     
-    def __init__(self, base_type:Union[str,'PType'], lexeme:Lexeme):
-        super().__init__(NodeType.TYPE, lexeme.pos)
-        self.base_type = base_type
+    def __init__(self, base_type:str, lexeme_pos:Union[Lexeme,Position]):
+        super().__init__(NodeType.TYPE, lexeme_pos if isinstance(lexeme_pos, Position) else lexeme_pos.pos)
+        self.type_string = base_type
     
     def __str__(self):
-        if isinstance(self.base_type, str):
-            return self.base_type
-        return str(self.base_type)
+        if isinstance(self.type_string, str):
+            return self.type_string
+        return str(self.type_string)
 
 @dataclass
 class PArrayType(PType):
@@ -397,10 +397,11 @@ class PArrayType(PType):
     Represents an array type in the AST.
     For example: int[] or MyClass[][]
     """
-    base_type: PType
+    base_type: Union['PArrayType',PType]
     
-    def __init__(self, base_type:Union[str,'PType'], lexeme:Lexeme):
-        super().__init__(base_type, lexeme)
+    def __init__(self, base_type:Union['PArrayType',PType], lexeme_pos:Union[Lexeme, Position]):
+        self.base_type = base_type
+        super().__init__(str(base_type), lexeme_pos)
 
     def __str__(self) -> str:
         """Convert array type to string representation"""
