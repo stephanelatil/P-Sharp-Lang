@@ -117,14 +117,14 @@ class PClass(PStatement):
 class PClassProperty(PStatement):
     """Class property definition node"""
     name: str
-    type: 'PType'
+    var_type: 'PType'
     is_public: bool
     default_value: Optional[PExpression]
 
     def __init__(self, name: str, type: 'PType', is_public: bool, lexeme: Lexeme, default_value:Optional[PExpression]):
         super().__init__(NodeType.CLASS_PROPERTY, lexeme.pos)
         self.name = name
-        self.type = type
+        self.var_type = type
         self.is_public = is_public
         self.default_value = default_value
 

@@ -980,7 +980,7 @@ class TestParserClassDefinitions(TestParserBase):
             self.assertEqual(len(class_def.properties), 2)
             for i,(typ, name) in enumerate([('i32[]', 'elements'), ("i32","size")]):
                 self.assertIsInstance(class_def.properties[i], PClassProperty)
-                self.assertEqual(typ, str(class_def.properties[i].type))
+                self.assertEqual(typ, str(class_def.properties[i].var_type))
                 self.assertEqual(name, class_def.properties[i].name)
             
             #test methods
