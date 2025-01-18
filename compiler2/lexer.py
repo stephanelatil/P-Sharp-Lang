@@ -115,15 +115,18 @@ class Position:
 
     def copy(self) -> 'Position':
         return Position(self.line, self.column, self.index)
-    
+
     def __add__(self, num_chars:int):
         return Position(self.line, self.column+num_chars, self.index+num_chars)
+    
+    def __str__(self):
+        return f"line {self.line}, column {self.column}"
 
 class Lexeme:
     @staticmethod
     def _default():
         return Lexeme(LexemeType.EOF, '', Position(), '')
-    
+
     default:'Lexeme'
 
     def __init__(self, type:LexemeType, value:str, pos:Position, filename:str, end_pos:Position|None=None):
@@ -135,7 +138,7 @@ class Lexeme:
 
     def __str__(self):
         return f"{self.type.name}({self.value}) at {self.filename}:{self.pos.line}:{self.pos.column}"
-    
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -180,7 +183,7 @@ class CharacterStream:
 
     def position(self) -> Position:
         return self.pos.copy()
-    
+
 class LexemeStream:
     def __init__(self, lexmes:Generator[Lexeme, None, None]):
         self.lexeme_gen = lexmes
@@ -254,7 +257,7 @@ class Lexer:
             'not':LexemeType.OPERATOR_UNARY_BOOL_NOT,
             '_':LexemeType.DISCARD
         }
-        
+
         # Build operator lookup table
         self.operators = {
             # Single character operators
@@ -465,7 +468,7 @@ class Lexer:
 
     def _lex_string(self) -> Lexeme:
         """Parse a string literal with proper escape sequence handling.
-        
+
         Valid escape sequences:
         - \\n - newline
         - \\r - carriage return
@@ -477,20 +480,20 @@ class Lexer:
         - \\f - form feed
         - \\0 - null character
         - \\xhh - hex escape (exactly 2 hex digits)
-        
+
         Returns:
             Lexeme: A STRING_LITERAL lexeme containing the parsed string
-            
+
         Raises:
             LexerError: If string is unterminated or contains invalid escape sequences
         """
         start_pos = self.stream.position()
         value = self.stream.advance()  # Opening quote
-        
+
         # Map of valid simple escape sequences
         valid_escapes = {
             'n': '\n',
-            'r': '\r', 
+            'r': '\r',
             't': '\t',
             '\\': '\\',
             '"': '"',
@@ -503,38 +506,38 @@ class Lexer:
 
         while True:
             char = self.stream.peek()
-            
+
             if char is None or char == '\n':
                 raise LexerError("Unterminated string literal", start_pos, self.filename, self.stream.position())
-                
+
             # Handle escape sequences
             if char == '\\':
                 escape_start = self.stream.position()
                 value += self.stream.advance()  # Add the backslash
-                
+
                 next_char = self.stream.peek()
                 if next_char is None:
                     raise LexerError("Unterminated escape sequence", escape_start, self.filename, self.stream.position())
-                    
+
                 # Handle hex escape sequence
                 if next_char == 'x':
                     value += self.stream.advance()  # Add 'x'
                     hex_digits = ''
-                    
+
                     # Read exactly 2 hex digits
                     for _ in range(2):
                         digit = self.stream.peek()
                         if digit is None or not (digit.isdigit() or digit.lower() in 'abcdef'):
                             raise LexerError(
                                 "Invalid hex escape sequence - must be exactly 2 hex digits",
-                                escape_start, 
+                                escape_start,
                                 self.filename,
                                 self.stream.position()
                             )
                         hex_digits += self.stream.advance()
                     value += hex_digits
                     continue
-                    
+
                 # Handle simple escape sequences
                 if next_char not in valid_escapes:
                     raise LexerError(
@@ -543,18 +546,18 @@ class Lexer:
                         self.filename,
                         self.stream.position() + 1
                     )
-                
+
                 value += self.stream.advance()
                 continue
-                
+
             # Handle string termination
             if char == '"':
                 value += self.stream.advance()
                 break
-                
+
             # Add regular character
             value += self.stream.advance()
-            
+
         return Lexeme(LexemeType.STRING_LITERAL, value, start_pos, self.filename)
 
     def _lex_char(self) -> Lexeme:

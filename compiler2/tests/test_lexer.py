@@ -7,7 +7,7 @@ class TestPosition(TestCase):
     Test suite for the Position class which tracks line numbers, columns, and indices
     in source code.
     """
-    
+
     def setUp(self) -> None:
         """Initialize a fresh Position instance before each test."""
         self.position = Position()
@@ -31,10 +31,10 @@ class TestPosition(TestCase):
         # First advance some regular characters
         for _ in range(3):
             self.position.advance('a')
-        
+
         # Then hit a newline
         self.position.advance('\n')
-        
+
         self.assertEqual(self.position.line, 2)  # Line should increment
         self.assertEqual(self.position.column, 1)  # Column should reset
         self.assertEqual(self.position.index, 4)  # Index should still increment
@@ -44,15 +44,15 @@ class TestPosition(TestCase):
         # Advance the original position
         self.position.advance('a')
         self.position.advance('b')
-        
+
         # Create a copy
         copied_position = self.position.copy()
-        
+
         # Verify copy has same values
         self.assertEqual(copied_position.line, self.position.line)
         self.assertEqual(copied_position.column, self.position.column)
         self.assertEqual(copied_position.index, self.position.index)
-        
+
         # Modify original and verify copy remains unchanged
         self.position.advance('c')
         self.assertNotEqual(copied_position.column, self.position.column)
@@ -62,12 +62,12 @@ class TestPosition(TestCase):
         """Test that Position addition creates correct new position."""
         # Start position (1,1,0)
         result = self.position + 5
-        
+
         # New position should be offset by 5 columns
         self.assertEqual(result.line, 1)
         self.assertEqual(result.column, 6)
         self.assertEqual(result.index, 5)
-        
+
         # Original position should be unchanged
         self.assertEqual(self.position.line, 1)
         self.assertEqual(self.position.column, 1)
@@ -96,11 +96,11 @@ class TestCharacterStream(TestCase):
     def test_stream_handles_single_character_correctly(self) -> None:
         """Test reading a single character from the stream."""
         self.create_stream("a")
-        
+
         # Peek should show 'a' but not advance
         self.assertEqual(self.stream.peek(), "a")
         self.assertEqual(self.stream.position().column, 1)
-        
+
         # Advance should return 'a' and move position
         self.assertEqual(self.stream.advance(), "a")
         self.assertEqual(self.stream.position().column, 2)
@@ -108,43 +108,43 @@ class TestCharacterStream(TestCase):
     def test_stream_handles_multiple_characters_correctly(self) -> None:
         """Test reading multiple characters from the stream."""
         self.create_stream("abc")
-        
+
         # Read each character and verify position
         self.assertEqual(self.stream.advance(), "a")
         self.assertEqual(self.stream.position().column, 2)
-        
+
         self.assertEqual(self.stream.advance(), "b")
         self.assertEqual(self.stream.position().column, 3)
-        
+
         self.assertEqual(self.stream.advance(), "c")
         self.assertEqual(self.stream.position().column, 4)
 
     def test_stream_peek_with_different_lookahead_amounts(self) -> None:
         """Test peeking ahead multiple characters in the stream."""
         self.create_stream("abcd")
-        
+
         # Peek at different positions without advancing
         self.assertEqual(self.stream.peek(0), "a")
         self.assertEqual(self.stream.peek(1), "b")
         self.assertEqual(self.stream.peek(2), "c")
         self.assertEqual(self.stream.peek(3), "d")
-        
+
         # Position should not have changed
         self.assertEqual(self.stream.position().column, 1)
 
     def test_stream_handles_newlines_correctly(self) -> None:
         """Test that stream correctly handles newline characters."""
         self.create_stream("a\nb\nc")
-        
+
         # Read through newlines and verify position
         self.assertEqual(self.stream.advance(), "a")
         self.assertEqual(self.stream.position().line, 1)
         self.assertEqual(self.stream.position().column, 2)
-        
+
         self.assertEqual(self.stream.advance(), "\n")
         self.assertEqual(self.stream.position().line, 2)
         self.assertEqual(self.stream.position().column, 1)
-        
+
         self.assertEqual(self.stream.advance(), "b")
         self.assertEqual(self.stream.position().line, 2)
         self.assertEqual(self.stream.position().column, 2)
@@ -152,10 +152,10 @@ class TestCharacterStream(TestCase):
     def test_stream_raises_eof_error_on_advance_past_end(self) -> None:
         """Test that advancing past the end of stream raises EOFError."""
         self.create_stream("a")
-        
+
         # Read the only character
         self.stream.advance()
-        
+
         # Attempting to read past end should raise EOFError
         with self.assertRaises(EOFError):
             self.stream.advance()
@@ -163,10 +163,10 @@ class TestCharacterStream(TestCase):
     def test_stream_eof_flag_sets_correctly(self) -> None:
         """Test that EOF flag is set correctly when reaching end of stream."""
         self.create_stream("a")
-        
+
         # Initially EOF should be False
         self.assertFalse(self.stream.eof)
-        
+
         # Read content
         self.stream.peek()
         self.assertFalse(self.stream.eof)
@@ -180,14 +180,14 @@ class TestCharacterStream(TestCase):
     def test_stream_position_tracking_with_mixed_content(self) -> None:
         """Test position tracking with mix of characters, newlines, and multiple peeks."""
         self.create_stream("abc\ndef\nghi")
-        
+
         # Track position through mixed content
         self.assertEqual(self.stream.advance(), "a")  # (1,2)
         self.assertEqual(self.stream.advance(), "b")  # (1,3)
         self.assertEqual(self.stream.advance(), "c")  # (1,4)
         self.assertEqual(self.stream.advance(), "\n") # (2,1)
         self.assertEqual(self.stream.advance(), "d")  # (2,2)
-        
+
         pos = self.stream.position()
         self.assertEqual(pos.line, 2)
         self.assertEqual(pos.column, 2)
@@ -196,18 +196,18 @@ class TestCharacterStream(TestCase):
     def test_stream_buffer_management(self) -> None:
         """Test that the stream's buffer is managed correctly with mixed peek and advance operations."""
         self.create_stream("abcdef")
-        
+
         # Peek ahead several characters
         self.assertEqual(self.stream.peek(3), "d")
-        
+
         # Buffer should contain 4 characters now
         self.assertEqual(len(self.stream.buffer), 4)
-        
+
         # Advance and verify buffer shrinks
         self.stream.advance()  # 'a'
         self.stream.advance()  # 'b'
         self.assertEqual(len(self.stream.buffer), 2)
-        
+
         # Peek again should refill buffer
         self.assertEqual(self.stream.peek(2), "e")
         self.assertEqual(len(self.stream.buffer), 3)
@@ -409,6 +409,24 @@ class LexerTests(TestCase):
                 self.assertEqual(lexemes[0].type, expected_type)
                 self.assertEqual(lexemes[0].value, keyword)
 
+    def test_discard(self) -> None:
+        """Test all language keywords."""
+        test_case = {
+            "_": [LexemeType.DISCARD],
+            "_ = a()": [LexemeType.DISCARD, LexemeType.OPERATOR_BINARY_ASSIGN,
+                        LexemeType.IDENTIFIER, LexemeType.PUNCTUATION_OPENPAREN,
+                        LexemeType.PUNCTUATION_CLOSEPAREN],
+            "f(_)": [LexemeType.IDENTIFIER, LexemeType.PUNCTUATION_OPENPAREN,
+                     LexemeType.DISCARD ,LexemeType.PUNCTUATION_CLOSEPAREN],
+            "_a": [LexemeType.IDENTIFIER]
+        }
+        for source, expected_types in test_case.items():
+            with self.subTest(keyword=source, expected_type=expected_types):
+                lexer = Lexer('test.ps', StringIO(source))
+                lexemes = list(lexer.lex())
+                self.assertEqual(len(lexemes), len(expected_types))  # Keyword
+                self.assertListEqual([l.type for l in lexemes], expected_types)
+
     def test_identifiers(self) -> None:
         """Test valid and invalid identifier patterns."""
         valid_ids = [
@@ -464,13 +482,13 @@ class LexerTests(TestCase):
         """Test comments that occupy only part of a line with code before/after."""
         test_cases = [
             # Code before comment
-            ("x = 42; // This is a comment\n", 
-             [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN, 
+            ("x = 42; // This is a comment\n",
+             [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
               LexemeType.NUMBER_INT, LexemeType.PUNCTUATION_SEMICOLON],
-             [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN, 
+             [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
               LexemeType.NUMBER_INT, LexemeType.PUNCTUATION_SEMICOLON,
               LexemeType.COMMENT_SINGLELINE]),
-            
+
             # Code after comment on next line
             ("// First line comment\nx = 42;",
              [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
@@ -478,7 +496,7 @@ class LexerTests(TestCase):
              [LexemeType.COMMENT_SINGLELINE,
               LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
               LexemeType.NUMBER_INT, LexemeType.PUNCTUATION_SEMICOLON]),
-            
+
             # Multiple comments and code segments
             ("x = 42; // First comment\ny = 73; // Second comment\n",
              [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
@@ -492,7 +510,7 @@ class LexerTests(TestCase):
               LexemeType.NUMBER_INT, LexemeType.PUNCTUATION_SEMICOLON,
               LexemeType.COMMENT_SINGLELINE])
         ]
-        
+
         for input_str, expected_types, expected_types_with_comments in test_cases:
             with self.subTest(input_str=input_str, expected_types=expected_types,
                               expected_types_with_comments=expected_types_with_comments):
@@ -501,7 +519,7 @@ class LexerTests(TestCase):
                 lexemes = list(lexer.lex())
                 actual_types = [lexeme.type for lexeme in lexemes]
                 self.assertEqual(actual_types, expected_types)
-                
+
                 # Test with comments included
                 lexer = Lexer('test.ps', StringIO(input_str))
                 lexemes = list(lexer.lex(include_comments=True))
@@ -514,10 +532,10 @@ class LexerTests(TestCase):
             # Block comment followed by line comment
             ("/* Block comment */ // Line comment\n",
              [LexemeType.COMMENT_MULTILINE, LexemeType.COMMENT_SINGLELINE]),
-            
+
             # Line comment inside block comment (should be part of block comment)
             ("/* Block contains\n // nested line comment\n */", [LexemeType.COMMENT_MULTILINE]),
-            
+
             # Code with mixed comment types
             ("x = 42; /* block */ y = 73; // line\n",
              [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
@@ -526,7 +544,7 @@ class LexerTests(TestCase):
               LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
               LexemeType.NUMBER_INT, LexemeType.PUNCTUATION_SEMICOLON,
               LexemeType.COMMENT_SINGLELINE]),
-            
+
             # Complex mixing
             ("/* Start block\n" +
              "// Nested line\n" +
@@ -559,10 +577,10 @@ class LexerTests(TestCase):
     def test_complex_expressions(self) -> None:
         """Test lexing of complex expressions with multiple token types."""
         expressions = [
-            ("x = 42 + y;", [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN, 
-                            LexemeType.NUMBER_INT, LexemeType.OPERATOR_BINARY_PLUS, 
+            ("x = 42 + y;", [LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_ASSIGN,
+                            LexemeType.NUMBER_INT, LexemeType.OPERATOR_BINARY_PLUS,
                             LexemeType.IDENTIFIER, LexemeType.PUNCTUATION_SEMICOLON]),
-            ("if (x <= 10) { return true; }", [LexemeType.KEYWORD_CONTROL_IF, 
+            ("if (x <= 10) { return true; }", [LexemeType.KEYWORD_CONTROL_IF,
                                               LexemeType.PUNCTUATION_OPENPAREN,
                                               LexemeType.IDENTIFIER,
                                               LexemeType.OPERATOR_BINARY_BOOL_LEQ,
@@ -591,7 +609,7 @@ class LexerTests(TestCase):
                       ("-x---1", (LexemeType.OPERATOR_BINARY_MINUS, LexemeType.IDENTIFIER,
                                   LexemeType.OPERATOR_UNARY_DECREMENT,LexemeType.OPERATOR_BINARY_MINUS,
                                   LexemeType.NUMBER_INT)),]
-        
+
         for expr, expected_ops in test_cases:
             with self.subTest(expr=expr, expected_ops=expected_ops):
                 lexer = Lexer('test.ps', StringIO(expr))

@@ -36,7 +36,7 @@ class UnaryOperation(Enum):
 
     def __repr__(self):
         return f"\"UnaryOperation.{self.name}\""
-    
+
 class TernaryOperator(Enum):
     QUESTIONMARK = auto()
     COLON = auto()
