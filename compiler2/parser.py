@@ -35,7 +35,7 @@ class ParserError(Exception):
     def __init__(self, message: str, lexeme: Lexeme):
         self.message = message
         self.lexeme = lexeme
-        super().__init__(f"{message} at {lexeme.filename}:{lexeme.pos.line}:{lexeme.pos.column} with lexeme: {lexeme}")
+        super().__init__(f"{message} at {lexeme.pos} with lexeme: {lexeme}")
 
 class NodeType(Enum):
     """Enumeration of all possible node types in the parser tree"""
@@ -492,7 +492,7 @@ class Parser:
 
     def __init__(self, lexer: Lexer):
         self.lexer = lexer
-        self.lexeme_stream = LexemeStream(lexer.lex())
+        self.lexeme_stream = LexemeStream(lexer.lex(), lexer.filename)
 
         # Define operator precedence
         self.precedence: Dict[Union[BinaryOperation, UnaryOperation, TernaryOperator], int] = {

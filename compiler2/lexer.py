@@ -126,19 +126,18 @@ class Position:
 class Lexeme:
     @staticmethod
     def _default():
-        return Lexeme(LexemeType.EOF, '', Position(), '')
+        return Lexeme(LexemeType.EOF, '', Position())
 
     default:'Lexeme'
 
-    def __init__(self, type:LexemeType, value:str, pos:Position, filename:str, end_pos:Position|None=None):
+    def __init__(self, type:LexemeType, value:str, pos:Position, end_pos:Position|None=None):
         self.type = type
         self.value = value
         self.pos = pos
-        self.filename = filename
         self.end_pos = pos + len(value)
 
     def __str__(self):
-        return f"{self.type.name}({self.value}) at {self.filename}:{self.pos.line}:{self.pos.column}"
+        return f"{self.type.name}({self.value}) at {self.pos}"
 
     def __repr__(self) -> str:
         return str(self)
@@ -146,18 +145,18 @@ class Lexeme:
 Lexeme.default = Lexeme._default()
 
 class LexerError(Exception):
-    def __init__(self, message:str, start_pos:Position, filename:str, end_pos:Position|None = None):
+    def __init__(self, message:str, start_pos:Position, end_pos:Position|None = None):
         self.message = message
         self.pos = start_pos
-        self.end_pos = end_pos or Position(start_pos.line, start_pos.column+1, start_pos.index+1)
-        self.filename = filename
-        super().__init__(f"{message} at {filename}:{start_pos.line}:{start_pos.column}")
+        self.end_pos = end_pos or start_pos + 1
+        self.filename = start_pos.filename
+        super().__init__(f"{message} at {start_pos}")
 
 class CharacterStream:
-    def __init__(self, file:TextIO):
+    def __init__(self, file:TextIO, filename:str):
         self.file = file
         self.buffer = deque()
-        self.pos = Position()
+        self.pos = Position(filename=filename)
         self.eof = False
 
     def peek(self, amount=0) -> Optional[str]:
@@ -186,7 +185,7 @@ class CharacterStream:
         return self.pos.copy()
 
 class LexemeStream:
-    def __init__(self, lexmes:Generator[Lexeme, None, None]):
+    def __init__(self, lexmes:Generator[Lexeme, None, None], filename:str):
         self.lexeme_gen = lexmes
         self.buffer = deque()
         self.pos = Position()
@@ -220,7 +219,7 @@ class LexemeStream:
 class Lexer:
     def __init__(self, filename:str, file:TextIO):
         self.filename = filename
-        self.stream = CharacterStream(file)
+        self.stream = CharacterStream(file, filename)
         self.keywords = {
             'if':LexemeType.KEYWORD_CONTROL_IF,
             'else':LexemeType.KEYWORD_CONTROL_ELSE,
@@ -306,7 +305,7 @@ class Lexer:
 
         # Handle EOF
         if char is None:
-            return Lexeme(LexemeType.EOF, "", self.stream.position(), self.filename)
+            return Lexeme(LexemeType.EOF, "", self.stream.position())
 
         # Handle whitespace
         if char.isspace():
@@ -345,7 +344,7 @@ class Lexer:
         while (char := self.stream.peek()) and char.isspace():
             value += self.stream.advance()
 
-        return Lexeme(LexemeType.WHITESPACE, value, start_pos, self.filename, self.stream.position())
+        return Lexeme(LexemeType.WHITESPACE, value, start_pos, self.stream.position())
 
     def _try_lex_comment(self) -> Lexeme:
         start_pos = self.stream.position()
@@ -359,7 +358,7 @@ class Lexer:
             while (char := self.stream.peek()) and char != '\n':
                 value += self.stream.advance()
 
-            return Lexeme(LexemeType.COMMENT_SINGLELINE, value, start_pos, self.filename, self.stream.position())
+            return Lexeme(LexemeType.COMMENT_SINGLELINE, value, start_pos, self.stream.position())
 
         elif next_char == '*': # Multi-line comment
             value = '/*'
@@ -369,7 +368,7 @@ class Lexer:
             while True:
                 char = self.stream.peek()
                 if char is None:
-                    raise LexerError("Unterminated multi-line comment", start_pos, self.filename, self.stream.position())
+                    raise LexerError("Unterminated multi-line comment", start_pos, self.stream.position())
 
                 value += self.stream.advance()
                 if char == '*' and self.stream.peek() == '/':
@@ -377,7 +376,7 @@ class Lexer:
                     value = value[:-1]+"*/"
                     break
 
-            return Lexeme(LexemeType.COMMENT_MULTILINE, value, start_pos, self.filename, self.stream.position())
+            return Lexeme(LexemeType.COMMENT_MULTILINE, value, start_pos, self.stream.position())
 
         else: # it's an operator
             return Lexeme.default
@@ -390,15 +389,15 @@ class Lexer:
             value += self.stream.advance()
 
         if value in self.keywords:
-            return Lexeme(self.keywords[value], value, start_pos, self.filename, self.stream.position())
+            return Lexeme(self.keywords[value], value, start_pos, self.stream.position())
 
         if value.startswith("PS_GC__"):
-            raise LexerError("Identifiers cannot start with PS_GC__", start_pos, self.filename, self.stream.position())
+            raise LexerError("Identifiers cannot start with PS_GC__", start_pos, self.stream.position())
 
         if value.startswith("__"):
-            raise LexerError("Identifiers cannot start with double underscore", start_pos, self.filename, self.stream.position())
+            raise LexerError("Identifiers cannot start with double underscore", start_pos, self.stream.position())
 
-        return Lexeme(LexemeType.IDENTIFIER, value, start_pos, self.filename, self.stream.position())
+        return Lexeme(LexemeType.IDENTIFIER, value, start_pos, self.stream.position())
 
     def _lex_number(self) -> Lexeme:
         start_pos = self.stream.position()
@@ -418,9 +417,9 @@ class Lexer:
                 has_digit = True
 
             if not has_digit:
-                raise LexerError("Invalid hex number", start_pos, self.filename)
+                raise LexerError("Invalid hex number", start_pos)
 
-            return Lexeme(LexemeType.NUMBER_HEX, value, start_pos, self.filename)
+            return Lexeme(LexemeType.NUMBER_HEX, value, start_pos)
 
         # Handle regular numbers
         is_float = False
@@ -434,7 +433,7 @@ class Lexer:
                 self.stream.advance() #ignore underscores
             elif char == '.':
                 if is_float or not has_digit:
-                    raise LexerError("Invalid number format", start_pos, self.filename, start_pos+len(value)+1)
+                    raise LexerError("Invalid number format", start_pos, start_pos+len(value)+1)
                 value += self.stream.advance()
                 is_float = True
                 has_digit = False
@@ -451,20 +450,19 @@ class Lexer:
                 break
                 #stop parsing number if detects non-num value
             else:
-                raise LexerError("Invalid number format", start_pos, self.filename, start_pos+len(value))
+                raise LexerError("Invalid number format", start_pos, start_pos+len(value))
 
         # allow numbers to end with a period to auto-cast to float
         if value[-1] == '.':
             has_digit = True
 
         if not has_digit:
-            raise LexerError("Invalid number format", start_pos, self.filename, start_pos+len(value))
+            raise LexerError("Invalid number format", start_pos, start_pos+len(value))
 
         return Lexeme(
             LexemeType.NUMBER_FLOAT if is_float else LexemeType.NUMBER_INT,
             value,
-            start_pos,
-            self.filename
+            start_pos
         )
 
     def _lex_string(self) -> Lexeme:
@@ -509,7 +507,7 @@ class Lexer:
             char = self.stream.peek()
 
             if char is None or char == '\n':
-                raise LexerError("Unterminated string literal", start_pos, self.filename, self.stream.position())
+                raise LexerError("Unterminated string literal", start_pos, self.stream.position())
 
             # Handle escape sequences
             if char == '\\':
@@ -518,7 +516,7 @@ class Lexer:
 
                 next_char = self.stream.peek()
                 if next_char is None:
-                    raise LexerError("Unterminated escape sequence", escape_start, self.filename, self.stream.position())
+                    raise LexerError("Unterminated escape sequence", escape_start, self.stream.position())
 
                 # Handle hex escape sequence
                 if next_char == 'x':
@@ -532,7 +530,6 @@ class Lexer:
                             raise LexerError(
                                 "Invalid hex escape sequence - must be exactly 2 hex digits",
                                 escape_start,
-                                self.filename,
                                 self.stream.position()
                             )
                         hex_digits += self.stream.advance()
@@ -544,7 +541,6 @@ class Lexer:
                     raise LexerError(
                         f"Invalid escape sequence '\\{next_char}'",
                         escape_start,
-                        self.filename,
                         self.stream.position() + 1
                     )
 
@@ -559,7 +555,7 @@ class Lexer:
             # Add regular character
             value += self.stream.advance()
 
-        return Lexeme(LexemeType.STRING_LITERAL, value, start_pos, self.filename)
+        return Lexeme(LexemeType.STRING_LITERAL, value, start_pos)
 
     def _lex_char(self) -> Lexeme:
         start_pos = self.stream.position()
@@ -567,19 +563,19 @@ class Lexer:
 
         char = self.stream.peek()
         if char is None:
-            raise LexerError("Unterminated character literal", start_pos, self.filename)
+            raise LexerError("Unterminated character literal", start_pos)
 
         if char == '\\': # Handle escape sequences
             value += self.stream.advance()
             char = self.stream.peek()
             if char is None:
-                raise LexerError("Unterminated character literal", start_pos, self.filename)
+                raise LexerError("Unterminated character literal", start_pos)
             if char == 'x': # Handle hex escape sequence
                 value += self.stream.advance()  # 'x'
                 for _ in range(2): # Expect exactly 2 hex digits
                     char = self.stream.peek()
                     if char is None or not (char.isdigit() or char.lower() in 'abcdef'):
-                        raise LexerError("Invalid hex escape sequence in character literal", start_pos, self.filename)
+                        raise LexerError("Invalid hex escape sequence in character literal", start_pos)
                     value += self.stream.advance()
             else: # Handle other escape sequences
                 value += self.stream.advance()
@@ -589,10 +585,10 @@ class Lexer:
         # Expect closing quote
         char = self.stream.peek()
         if char != "'":
-            raise LexerError("Unterminated character literal", start_pos, self.filename)
+            raise LexerError("Unterminated character literal", start_pos)
         value += self.stream.advance()
 
-        return Lexeme(LexemeType.NUMBER_CHAR, value, start_pos, self.filename)
+        return Lexeme(LexemeType.NUMBER_CHAR, value, start_pos)
 
     def _lex_operator(self) -> Lexeme:
         start_pos = self.stream.position()
@@ -634,21 +630,19 @@ class Lexer:
                             LexemeType.OPERATOR_BINARY_SHLEQ if two_char == '<<' else LexemeType.OPERATOR_BINARY_SHREQ,
                             two_char + '=',
                             start_pos,
-                            self.filename,
                             end_pos=start_pos+3
                         )
                     return Lexeme(
                         LexemeType.OPERATOR_BINARY_SHL if two_char == '<<' else LexemeType.OPERATOR_BINARY_SHR,
                         two_char,
                         start_pos,
-                        self.filename,
                         start_pos+2
                     )
 
-                return Lexeme(two_char_types[two_char], two_char, start_pos, self.filename)
+                return Lexeme(two_char_types[two_char], two_char, start_pos)
 
         # Handle other single character operators from the lookup table
         if char in self.operators:
-            return Lexeme(self.operators[char], char, start_pos, self.filename)
+            return Lexeme(self.operators[char], char, start_pos)
 
-        raise LexerError(f"Invalid character:{char}", start_pos, self.filename)
+        raise LexerError(f"Invalid character:{char}", start_pos)

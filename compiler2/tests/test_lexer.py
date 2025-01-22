@@ -86,7 +86,7 @@ class TestCharacterStream(TestCase):
 
     def create_stream(self, content: str) -> None:
         """Helper method to create a new stream with given content."""
-        self.stream = CharacterStream(StringIO(content))
+        self.stream = CharacterStream(StringIO(content), 'test.cs')
 
     def test_empty_stream_returns_none_on_peek(self) -> None:
         """Test that peeking an empty stream returns None."""
