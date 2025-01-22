@@ -100,10 +100,11 @@ class LexemeType(Enum):
     EOF = auto()
 
 class Position:
-    def __init__(self, line:int = 1, column:int = 1, index:int = 0):
+    def __init__(self, line:int = 1, column:int = 1, index:int = 0, filename:str='??'):
         self.line = line
         self.column = column
         self.index = index
+        self.filename = filename
 
     def advance(self, char:str):
         if char == '\n':
@@ -114,13 +115,13 @@ class Position:
         self.index += 1
 
     def copy(self) -> 'Position':
-        return Position(self.line, self.column, self.index)
+        return Position(self.line, self.column, self.index, self.filename)
 
     def __add__(self, num_chars:int):
-        return Position(self.line, self.column+num_chars, self.index+num_chars)
+        return Position(self.line, self.column+num_chars, self.index+num_chars, self.filename)
     
     def __str__(self):
-        return f"line {self.line}, column {self.column}"
+        return f'File "{self.filename}", line {self.line}, column {self.column}'
 
 class Lexeme:
     @staticmethod
