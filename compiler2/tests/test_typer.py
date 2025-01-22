@@ -1,0 +1,1109 @@
+from unittest import TestCase, main
+from io import StringIO
+from typing import List, Optional, Type, Union
+from lexer import Lexer, Position, Lexeme
+from parser import (Parser, PProgram, PType, PArrayType, PVariableDeclaration,
+                    PExpression, PMethodCall, PClassProperty, PClass,
+                    PBinaryOperation, PUnaryOperation, PIfStatement,
+                    PWhileStatement, PForStatement)
+from operations import BinaryOperation
+from typer import (Typer, TypeInfo, TypeClass, TYPE_INFO, Typ,
+                  UnknownTypeError, TypingError, TypingConversionError,
+                  SymbolNotFoundError, SymbolRedefinitionError)
+
+class TestTypeConversions(TestCase):
+    """Test type conversion logic and compatibility checks"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_numeric_type_detection(self):
+        """Test detection of numeric types"""
+        numeric_types = [
+            PType("i8", Position()),
+            PType("i16", Position()),
+            PType("i32", Position()),
+            PType("i64", Position()),
+            PType("u8", Position()),
+            PType("u16", Position()),
+            PType("u32", Position()),
+            PType("u64", Position()),
+            PType("f16", Position()),
+            PType("f32", Position()),
+            PType("f64", Position()),
+            PType("char", Position())
+        ]
+
+        for type_ in numeric_types:
+            with self.subTest(type_=type_):
+                self.assertTrue(
+                    self.typer.is_numeric_type(self.typer._type_ptype(type_)))
+
+    def test_non_numeric_type_detection(self):
+        """Test detection of non-numeric types"""
+
+        non_numeric_types = [
+            PType("bool", Position()),
+            PType("string", Position()),
+            PType("void", Position()),
+            PArrayType(PType("i32", Position()), Position())
+        ]
+
+        for type_ in non_numeric_types:
+            with self.subTest(type_=type_):
+                self.assertFalse(
+                    self.typer.is_numeric_type(self.typer._type_ptype(type_)))
+
+    def test_numeric_conversions(self):
+        """Test numeric type conversion rules"""
+        test_cases = [
+            # Same type conversions
+            ("i32", "i32", True),
+            ("f32", "f32", True),
+
+            # Integer width conversions
+            ("i8", "i16", True),
+            ("i16", "i32", True),
+            ("i32", "i64", True),
+            ("i16", "i8", False),  # No narrowing
+
+            # Unsigned to signed conversions
+            ("u8", "i16", True),   # Fits with extra sign bit
+            ("u16", "i32", True),
+            ("u8", "i8", False),   # Need extra bit for sign
+
+            # Float width conversions
+            ("f16", "f32", True),
+            ("f32", "f64", True),
+            ("f64", "f32", False), # No narrowing
+
+            # Integer to float conversions
+            ("i8", "f16", True),   # Small integers to f16
+            ("i16", "f32", True),  # Larger integers need bigger float
+            ("i32", "f64", True),
+            ("i64", "f64", True),
+
+            # Float to integer requires explicit cast
+            ("f32", "i32", False),
+            ("f64", "i64", False)
+        ]
+
+        for from_type, to_type, expected in test_cases:
+            with self.subTest(from_type=from_type, to_type=to_type):
+                actual = self.typer.can_convert_numeric(
+                    self.typer.known_types[from_type],
+                    self.typer.known_types[to_type]
+                )
+                self.assertEqual(actual, expected)
+
+    def test_array_type_compatibility(self):
+        """Test array type compatibility checks"""
+        test_cases = [
+            # Same array types
+            (PArrayType(PType("i32", Position()), Position()), PArrayType(PType("i32", Position()), Position()), True),
+            (PArrayType(PType("string", Position()), Position()), PArrayType(PType("string", Position()), Position()), True),
+
+            # Different array types
+            (PArrayType(PType("i32", Position()), Position()), PArrayType(PType("i64", Position()), Position()), False),
+            (PArrayType(PType("i32", Position()), Position()), PArrayType(PType("f32", Position()), Position()), False),
+
+            # Nested arrays
+            (PArrayType(PArrayType(PType("i32", Position()), Position()), Position()),
+                PArrayType(PArrayType(PType("i32", Position()), Position()), Position()), True),
+            (PArrayType(PType("i32", Position()), Position()), 
+                PArrayType(PArrayType(PType("i32", Position()), Position()), Position()), False),
+
+            # Array of custom types
+            (PArrayType(PType("MyClass", Position()), Position()), PArrayType(PType("MyClass", Position()), Position()), True),
+            (PArrayType(PType("MyClass", Position()), Position()), PArrayType(PType("OtherClass", Position()), Position()), False)
+        ]
+
+        self.typer.known_types["MyClass"] = Typ("MyClass", [], [])
+        self.typer.known_types["OtherClass"] = Typ("OtherClass", [], [])
+        for type1, type2, expected in test_cases:
+            with self.subTest(type1=type1, type2=type2):
+                actual = self.typer.check_types_match(
+                    self.typer._type_ptype(type1),
+                    self.typer._type_ptype(type2)
+                )
+                self.assertEqual(actual, expected)
+
+    def test_common_numeric_types(self):
+        """Test finding common type for numeric operations"""
+        test_cases = [
+            # Same type cases
+            ("i32", "i32", "i32"),
+            ("f32", "f32", "f32"),
+
+            # Integer width promotion
+            ("i8", "i16", "i16"),
+            ("i16", "i32", "i32"),
+            ("i32", "i64", "i64"),
+
+            # Unsigned/signed mixing
+            ("u8", "i8", "u8"),
+            ("u16", "i16", "u16"),
+            ("u32", "i32", "u32"),
+
+            # Float mixing
+            ("f16", "f32", "f32"),
+            ("f32", "f64", "f64"),
+
+            # Integer to float mixing
+            ("i8", "f16", "f16"),    # Small int can use f16
+            ("i16", "f32", "f32"),   # Larger ints need bigger floats
+            ("i32", "f32", "f32"),
+            ("i64", "f64", "f64")
+        ]
+
+        for type1, type2, expected in test_cases:
+            with self.subTest(type1=type1, type2=type2):
+                result = self.typer.get_common_type(
+                    self.typer.known_types[type1],
+                    self.typer.known_types[type2]
+                )
+                self.assertEqual(result, self.typer.known_types[expected])
+
+    def test_character_conversion_rules(self):
+        """Test character conversion rules with 8-bit integers"""
+        test_cases = [
+            # Char to 8-bit integers
+            ("char", "i8", False), #chars are unsigned
+            ("char", "u8", True),
+
+            # 8-bit integers to char
+            ("i8", "char", False), #char is equivalent to u8
+            ("u8", "char", True),
+
+            # Invalid conversions
+            ("char", "i16", True),
+            ("char", "f32", True),
+            ("i16", "char", False)  #fits should be ok
+        ]
+
+        for to_type, from_type, expected in test_cases:
+            with self.subTest(from_type=from_type, to_type=to_type):
+                actual = self.typer.check_types_match(
+                    self.typer.known_types[from_type],
+                    self.typer.known_types[to_type])
+                self.assertEqual(actual, expected)
+
+class TestTypeInfoHandling(TestCase):
+    """Test TypeInfo handling and type classification"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_builtin_type_info(self):
+        """Test TypeInfo for built-in types"""
+        test_cases = [
+            ("i8", TypeClass.INTEGER, 8, True),
+            ("u8", TypeClass.INTEGER, 8, False),
+            ("f32", TypeClass.FLOAT, 32, True),
+            ("bool", TypeClass.BOOLEAN, 8, False),
+            ("char", TypeClass.INTEGER, 8, False),
+            ("string", TypeClass.STRING, 0, True),
+            ("void", TypeClass.VOID, 0, True)
+        ]
+
+        for type_name, expected_class, expected_width, expected_signed in test_cases:
+            with self.subTest(type_name=type_name):
+                info = self.typer.get_type_info(self.typer.known_types[type_name])
+                self.assertEqual(info.type_class, expected_class)
+                self.assertEqual(info.bit_width, expected_width)
+                self.assertEqual(info.is_signed, expected_signed)
+                self.assertTrue(info.is_builtin)
+
+    def test_array_type_info(self):
+        """Test TypeInfo for array types"""
+        array_types = [
+            "i32[] x;",
+            "string[] x;",
+            "MyClass[] x;",
+            "i32[][] x;"
+        ]
+
+        # Add custom type
+
+        for var_decl in array_types:
+            with self.subTest(type_name=var_decl):
+                self.typer = Typer(Parser(Lexer('test.ps', StringIO(var_decl))))
+                self.typer.known_types["MyClass"] = Typ("MyClass", [], [])
+                ast = self.typer.type_program()
+                self.assertIsInstance(ast.statements[0], PVariableDeclaration)
+                assert isinstance(ast.statements[0], PVariableDeclaration)
+                self.assertIsInstance(ast.statements[0].var_type, PArrayType)
+                assert isinstance(ast.statements[0].var_type, PArrayType)
+                typ_ = self.typer._type_ptype(ast.statements[0].var_type)
+                info = self.typer.get_type_info(typ_)
+                self.assertEqual(info.type_class, TypeClass.ARRAY)
+                self.assertEqual(info.bit_width, 0)
+                self.assertTrue(info.is_builtin)
+
+    def test_custom_class_type_info(self):
+        """Test TypeInfo for custom class types"""
+        # Add some custom classes
+        custom_classes = ["MyClass", "AnotherClass", "DataHolder"]
+        for class_name in custom_classes:
+            self.typer.known_types[class_name] = Typ(class_name, [], [])
+
+        for class_name in custom_classes:
+            with self.subTest(class_name=class_name):
+                info = self.typer.get_type_info(self.typer.known_types[class_name])
+                self.assertEqual(info.type_class, TypeClass.CLASS)
+                self.assertEqual(info.bit_width, 0)
+                self.assertFalse(info.is_builtin)
+
+class TestErrorHandling(TestCase):
+    """Test error handling in typer"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_unknown_type_error(self):
+        """Test UnknownTypeError is raised for unknown types"""
+        unknown_types = [
+            "UnknownType",
+            "NonExistentClass",
+            "Invalid[]"
+        ]
+
+        for type_name in unknown_types:
+            with self.subTest(type_name=type_name):
+                with self.assertRaises(UnknownTypeError):
+                    self.typer._type_ptype(PType(type_name, Position()))
+
+    def test_typing_conversion_error(self):
+        """Test TypingConversionError is raised for invalid conversions"""
+        # Example: Try to convert string to int
+        with self.assertRaises(TypingConversionError):
+            from parser import PVariableDeclaration, PLiteral
+            var_decl = PVariableDeclaration(
+                "x",
+                PType("i32", Position()),
+                PLiteral("invalid", "string", Lexeme.default),
+                Lexeme.default
+            )
+            self.typer._type_variable_declaration(var_decl)
+
+    def test_typing_error(self):
+        """Test TypingError is raised for invalid typing scenarios"""
+        with self.assertRaises(TypingError):
+            # Try to type an invalid node type
+            class InvalidNode(PProgram):
+                pass
+            self.typer._type_statement(InvalidNode([], Lexeme.default))
+
+class TestTyperBasicDeclarations(TestCase):
+    """Test basic variable and function declarations"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_primitive_literal_declarations(self):
+        """Test valid primitive type declarations"""
+        test_cases = [
+            "i32 x = 42;",
+            "f64 pi = 3.14159;",
+            "string msg = \"hello\";",
+            "bool flag = true;",
+            "char c = 'a';"
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
+
+    def test_invalid_primitive_declarations(self):
+        """Test invalid primitive type declarations"""
+        test_cases = [
+            ("i32 x = \"string\";", TypingConversionError),
+            ("string s = 42;", TypingConversionError),
+            ("bool b = 1;", TypingConversionError),
+            ("UnknownType x = 42;", UnknownTypeError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
+
+    def test_valid_array_declarations(self):
+        """Test valid array declarations"""
+        test_cases = [
+            ("i32[] numbers = new i32[10];", "i32[]"),
+            ("string[] names = new string[5];", "string[]"),
+            ("bool[] flags = new bool[3];", "bool[]"),
+            ("i32[][] matrix = new i32[3][];", "i32[][]")
+        ]
+
+        for source, expected_type in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                var_decl = prog.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                self.assertIsInstance(var_decl.initial_value, PExpression)
+                assert isinstance(var_decl.initial_value, PExpression)
+                self.assertIsInstance(var_decl.initial_value.expr_type, Typ)
+                assert isinstance(var_decl.initial_value.expr_type, Typ)
+                self.assertTrue(var_decl.initial_value.expr_type.is_array)
+                self.assertEqual(var_decl.initial_value.expr_type.name, expected_type)
+
+    def test_invalid_array_declarations(self):
+        """Test invalid array declarations"""
+        test_cases = [
+            ("i32[] arr = new f32[10];", TypingConversionError),
+            ("string[] arr = new i32[5];", TypingConversionError),
+            ("i32[] arr = new i32[5][];", TypingConversionError),
+            ("i32[][] arr = new i32[5];", TypingConversionError),
+            ("UnknownType[] arr = new UnknownType[5];", UnknownTypeError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
+
+class TestTyperFunctionDeclarations(TestCase):
+    """Test function declarations and return types"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_void_functions(self):
+        """Test valid void function declarations"""
+        test_cases = [
+            """
+            void empty() {
+            }
+            """,
+            """
+            void printMessage(string msg) {
+                // Empty function with parameter
+            }
+            """
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                self.parse_and_type(source)
+
+    def test_valid_return_type_functions(self):
+        """Test valid functions with return values"""
+        test_cases = [
+            """
+            i32 add(i32 a, i32 b) {
+                return a + b;
+            }
+            """,
+            """
+            string greet(string name) {
+                return "Hello " + name;
+            }
+            """
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                self.parse_and_type(source)
+
+    def test_invalid_return_types(self):
+        """Test functions with invalid return types"""
+        test_cases = [
+            """
+            i32 wrong() {
+                return "string";
+            }
+            """,
+            """
+            bool getBool() {
+                return 42;
+            }
+            """
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(TypingConversionError):
+                    self.parse_and_type(source)
+
+class TestTyperClassDeclarations(TestCase):
+    """Test class declarations and member access"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_simple_class(self):
+        """Test valid simple class declaration"""
+        source = """
+        class Point {
+            i32 x;
+            i32 y;
+        }
+        """
+        self.parse_and_type(source)
+        self.assertIn('Point', self.typer.known_types)
+        typ = self.typer.known_types['Point']
+        self.assertFalse(typ.is_array)
+        self.assertTrue(typ.is_reference_type)
+        self.assertEqual(len(typ.methods), 1)
+        self.assertEqual(len(typ.properties), 2)
+        self.assertEqual(typ.properties[0].var_type.type_string, "i32")
+        self.assertEqual(typ.properties[1].var_type.type_string, "i32")
+        
+
+    def test_valid_class_with_methods(self):
+        """Test valid class with method declarations"""
+        source = """
+        class Rectangle {
+            i32 width;
+            i32 height;
+
+            i32 getArea() {
+                return this.width * this.height;
+            }
+
+            void setSize(i32 w, i32 h) {
+                this.width = w;
+                this.height = h;
+            }
+        }
+        """
+        prog = self.parse_and_type(source)
+        class_decl = prog.statements[0]
+        self.assertIsInstance(class_decl, PClass)
+        assert isinstance(class_decl, PClass)
+        self.assertEqual(len(class_decl.properties), 2)
+        self.assertEqual(len(class_decl.methods), 2+1) #+ the default ToString method
+        self.assertIn(class_decl.name, self.typer.known_types)
+
+    def test_invalid_class_property_types(self):
+        """Test class with invalid property types"""
+        test_cases = [
+            """
+            class Invalid {
+                UnknownType x;
+            }
+            """,
+            """
+            class TypeMismatch {
+                i32 x = "string";
+            }
+            """
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises((UnknownTypeError, TypingConversionError)):
+                    self.parse_and_type(source)
+
+class TestTyperMethodCalls(TestCase):
+    """Test method calls and method chaining"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_simple_method_calls(self):
+        """Test valid simple method calls"""
+        source = """
+        class Calculator {
+            i32 add(i32 a, i32 b) {
+                return a + b;
+            }
+        }
+
+        Calculator calc = new Calculator();
+        i32 result = calc.add(5, 3);
+        """
+        prog = self.parse_and_type(source)
+        last = prog.statements[-1]
+        self.assertIsInstance(last, PVariableDeclaration)
+        assert isinstance(last, PVariableDeclaration)
+        self.assertIsNotNone(last.initial_value)
+        assert last.initial_value is not None
+        method_call = last.initial_value
+        self.assertIsInstance(method_call, PMethodCall)
+        assert isinstance(method_call, PMethodCall)
+        self.assertEqual(len(method_call.arguments), 2)
+        self.assertIsNotNone(method_call.expr_type)
+        assert method_call.expr_type is not None
+        self.assertEqual(method_call.object.expr_type, self.typer.known_types['Calculator'])
+        self.assertEqual(method_call.expr_type, self.typer.known_types['i32'])
+
+    def test_valid_method_chaining(self):
+        """Test valid method chaining"""
+        source = """
+        class StringBuilder {
+            string value;
+
+            StringBuilder append(string text) {
+                this.value = this.value + text;
+                return this;
+            }
+
+            string ToString() {
+                return this.value;
+            }
+        }
+
+        StringBuilder builder = new StringBuilder();
+        string result = builder.append("Hello").append(" ").append("World").ToString();
+        """
+        prog = self.parse_and_type(source)
+        last = prog.statements[-1]
+        self.assertIsInstance(last, PVariableDeclaration)
+        assert isinstance(last, PVariableDeclaration)
+        self.assertIsNotNone(last.initial_value)
+        assert last.initial_value is not None
+        method_call = last.initial_value
+        #go up the call tree
+        for _ in range(4):
+            self.assertIsInstance(method_call, PMethodCall)
+            assert isinstance(method_call, PMethodCall)
+            self.assertIsNotNone(method_call.expr_type)
+            assert method_call.expr_type is not None
+            self.assertEqual(method_call.object.expr_type, self.typer.known_types['StringBuilder'])
+            method_call = method_call.object
+
+    def test_invalid_method_calls(self):
+        """Test invalid method calls"""
+        test_cases = [
+            """
+            class Calculator {
+                i32 add(i32 a, i32 b) {
+                    return a + b;
+                }
+            }
+
+            Calculator calc = new Calculator();
+            i32 result = calc.add("5", 3);
+            """,
+            """
+            class Test {
+                void method() {}
+            }
+
+            Test t = new Test();
+            t.unknownMethod();
+            """
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises((TypingError, TypingConversionError)):
+                    self.parse_and_type(source)
+
+class TestTyperArrayOperations(TestCase):
+    """Test array operations and indexing"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_array_indexing(self):
+        """Test valid array indexing operations"""
+        test_cases = [
+            """
+            i32[] arr = new i32[10];
+            arr[0] = 42;
+            i32 x = arr[5];
+            """,
+            """
+            i32[][] matrix = new i32[3][];
+            matrix[0] = new i32[3];
+            matrix[0][0] = 1;
+            i32 x = matrix[1][1];
+            """
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                self.parse_and_type(source)
+
+    def test_invalid_array_indexing(self):
+        """Test invalid array indexing operations"""
+        test_cases = [
+            ("""
+            i32[] arr = new i32[10];
+            arr["string"] = 42;
+            """, TypingError),
+
+            ("""
+            i32[] arr = new i32[10];
+            bool x = arr[0];
+            """, TypingConversionError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
+
+class TestTyperOperators(TestCase):
+    """Test operator type checking"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_arithmetic_operators(self):
+        """Test valid arithmetic operators"""
+        test_cases = [
+            "i32 a = 1 + 2;",
+            "i32 b = 3 - 4;",
+            "i32 c = 5 * 6;",
+            "i32 d = 8 / 2;",
+            "i32 e = 10 % 3;"
+        ]
+        for source in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                var_decl = prog.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                self.assertIsNotNone(var_decl.initial_value)
+                assert var_decl.initial_value is not None
+                self.assertEqual(var_decl.initial_value.expr_type, self.typer.known_types['i32'])
+            
+
+    def test_valid_comparison_operators(self):
+        """Test valid comparison operators"""
+        test_cases = [
+            "bool a = 1 < 2;",
+            "bool b = 3 > 4;",
+            "bool c = 5 <= 6;",
+            "bool d = 7 >= 8;",
+            "bool e = 9 == 10;",
+            "bool f = 11 != 12;"
+        ]
+        for source in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                var_decl = prog.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                self.assertIsNotNone(var_decl.initial_value)
+                assert var_decl.initial_value is not None
+                self.assertEqual(var_decl.initial_value.expr_type, self.typer.known_types['bool'])
+
+    def test_valid_logical_operators(self):
+        """Test valid logical operators"""
+        test_cases = [
+            "bool a = true and false;",
+            "bool b = true or false;",
+            "bool c = not true;"
+        ]
+        for source in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                var_decl = prog.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                self.assertIsNotNone(var_decl.initial_value)
+                assert var_decl.initial_value is not None
+                self.assertEqual(var_decl.initial_value.expr_type, self.typer.known_types['bool'])
+                if isinstance(var_decl.initial_value, PBinaryOperation):
+                    self.assertEqual(var_decl.initial_value.left.expr_type, self.typer.known_types['bool'])
+                    self.assertEqual(var_decl.initial_value.right.expr_type, self.typer.known_types['bool'])
+                else:
+                    self.assertIsInstance(var_decl.initial_value, PUnaryOperation)
+                    assert isinstance(var_decl.initial_value, PUnaryOperation)
+                    self.assertEqual(var_decl.initial_value.operand.expr_type, self.typer.known_types['bool'])
+
+
+    def test_invalid_operators(self):
+        """Test invalid operator usage"""
+        test_cases = [
+            ("i32 x = \"string\" + 42;", TypingError),
+
+            ("bool x = 1 + true;", TypingError),
+
+            ("string s = \"hello\" - \"world\";", TypingError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
+
+class TestTyperControlFlow(TestCase):
+    """Test type checking in control flow statements"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_if_conditions(self):
+        """Test valid if statement conditions"""
+        test_cases = [
+            """
+            if (true) {
+                i32 x = 1;
+            }
+            """,
+            """
+            if (1 < 2) {
+                i32 y = 2;
+            }
+            """,
+            """
+            if (not false) {
+                i32 z = 3;
+            }"""]
+        for source in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                if_statement = prog.statements[0]
+                self.assertIsInstance(if_statement, PIfStatement)
+                assert isinstance(if_statement, PIfStatement)
+                self.assertEqual(if_statement.condition.expr_type, self.typer.known_types['bool'])
+            
+
+    def test_valid_while_conditions(self):
+        """Test valid while loop conditions"""
+        source = """
+            while (true) {
+                i32 x = 1;
+            }
+            i32 i = 0;
+            while (i < 10) {
+                i = i + 1;
+            }
+        """
+        prog = self.parse_and_type(source)
+        for statement in prog.statements:
+            if isinstance(statement, PVariableDeclaration):
+                break
+            self.assertIsInstance(statement, PWhileStatement)
+            assert isinstance(statement, PWhileStatement)
+            self.assertEqual(statement.condition.expr_type, self.typer.known_types['bool'])
+
+    def test_valid_for_components(self):
+        """Test valid for loop components"""
+        source = """
+            for (i32 i = 0; i < 10; i = i + 1) {
+                i32 x = i;
+            }
+            for (i32 j = 10; j > 0; j = j - 1) {
+                i32 y = j;
+            }
+            for (;;){}
+        """
+        prog = self.parse_and_type(source)
+        for statement in prog.statements:
+            self.assertIsInstance(statement, PForStatement)
+            assert isinstance(statement, PForStatement)
+            self.assertEqual(statement.condition.expr_type, self.typer.known_types['bool'])
+
+    def test_invalid_control_flow_conditions(self):
+        """Test invalid conditions in control flow statements"""
+        test_cases = [
+            ("""
+                if (42) {
+                    i32 x = 1;
+                }
+            """, TypingConversionError),
+
+            ("""
+                while ("string") {
+                    i32 x = 1;
+                }
+            """, TypingConversionError),
+
+            ("""
+                for (string s = "start"; s < 10; s = s + 1) {
+                    i32 x = 1;
+                }
+            """, TypingError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
+
+class TestTyperImplicitConversions(TestCase):
+    """Test implicit type conversion rules"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_integer_promotions(self):
+        """Test valid integer type promotions"""
+        source = """
+        i8 small = (i8)42;
+        i16 medium = small;  // i8 -> i16
+        i32 large = medium;  // i16 -> i32
+        i64 huge = large;    // i32 -> i64
+        """
+        typer = Typer(Parser(Lexer('test.cs', StringIO(source))))
+        prog = typer.type_program()
+        for statement in prog.statements:
+            self.assertIsInstance(statement, PVariableDeclaration)
+            assert isinstance(statement, PVariableDeclaration)
+            self.assertIsNotNone(statement.initial_value)
+            assert statement.initial_value is not None
+            self.assertIsNotNone(statement.initial_value.expr_type)
+            assert statement.initial_value.expr_type is not None
+            self.assertTrue(typer.can_convert_numeric(statement.initial_value.expr_type,
+                                                      typer.known_types[statement.var_type.type_string]))
+
+    def test_valid_float_promotions(self):
+        """Test valid float type promotions"""
+        source = """
+        f32 single = 3.14;
+        f64 double = single;  // f32 -> f64
+        """
+        typer = Typer(Parser(Lexer('test.cs', StringIO(source))))
+        prog = typer.type_program()
+        for statement in prog.statements:
+            self.assertIsInstance(statement, PVariableDeclaration)
+            assert isinstance(statement, PVariableDeclaration)
+            self.assertIsNotNone(statement.initial_value)
+            assert statement.initial_value is not None
+            self.assertIsNotNone(statement.initial_value.expr_type)
+            assert statement.initial_value.expr_type is not None
+            self.assertTrue(typer.can_convert_numeric(statement.initial_value.expr_type,
+                                                      typer.known_types[statement.var_type.type_string]))
+
+    def test_valid_integer_to_float_conversions(self):
+        """Test valid integer to float conversions"""
+        test_cases = [
+            "f32 float32 = (i8) 123;    // i8 -> f32",
+            "f32 another = (i16) 123;    // i16 -> f32",
+            "f64 float64 = (i32) 123;    // i32 -> f64"
+        ]
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
+
+class TestTyperTypeCasting(TestCase):
+    """Test explicit type casting operations"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_numeric_down_casts(self):
+        """Test valid numeric down casting"""
+        source = """
+        i64 large = 42;
+        i32 medium = (i32)large;  // i64 -> i32
+        i16 small = (i16)medium;  // i32 -> i16
+        i8 tiny = (i8)small;      // i16 -> i8
+        """
+        try:
+            self.parse_and_type(source)
+        except Exception as e:
+            self.fail(f"Failed to parse valid numeric down casts: {e}")
+
+    def test_valid_float_to_integer_casts(self):
+        """Test valid float to integer casts"""
+        source = """
+        f64 double = 3.14;
+        i32 int32 = (i32)double;  // f64 -> i32
+        f32 single = 2.718;
+        i16 int16 = (i16)single;  // f32 -> i16
+        """
+        try:
+            self.parse_and_type(source)
+        except Exception as e:
+            self.fail(f"Failed to parse valid float to integer casts: {e}")
+
+    def test_invalid_casts(self):
+        """Test invalid type casts"""
+        test_cases = [
+            ("""
+            string str = "42";
+            i32 num = (i32)str;  // Can't cast string to int
+            """, TypingError),
+            ("""
+            bool[] flag = new bool[1];
+            f64 double = (f64)flag;  // Can't cast array to float
+            """, TypingError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
+
+class TestTyperUnaryOperations(TestCase):
+    """Test type checking of unary operations"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_numeric_negation(self):
+        """Test valid numeric negation"""
+        test_cases = (
+            "i32 a = -42;",
+            "f64 b = -3.14;",
+            "i32 c = -(1 + 2);",
+            "f32 d = -(2.0 * 3.0);"
+        )
+        for var_decl in test_cases:
+            with self.subTest(source=var_decl):
+                program = self.parse_and_type(var_decl)
+                #TODO add assertions
+
+    def test_valid_logical_not(self):
+        """Test valid logical not operations"""
+        test_cases = ("bool a = not true;",
+                      "bool b = not (1 < 2);",
+                      "bool c = not (true and false);",
+                      "bool d = not not true;")
+        for var_decl in test_cases:
+            with self.subTest(source=var_decl):
+                program = self.parse_and_type(var_decl)
+                #TODO add assertions
+
+    def test_valid_increment_decrement(self):
+        """Test valid increment/decrement operations"""
+        test_cases = ("i32 x = 0; x++;",
+                      "i32 x = 0; ++x;",
+                      "i32 x = 0; x--;",
+                      "i32 x = 0; --x;",
+                      "i32 x = 0; i32 y = x++;",
+                      "i32 x = 0; i32 z = ++x;")
+        for source in test_cases:
+            with self.subTest(source=source):
+                program = self.parse_and_type(source)
+                #TODO add assertions
+
+    def test_invalid_unary_operations(self):
+        """Test invalid unary operations"""
+        test_cases = [
+            ("""
+                string s = "hello";
+                -s;  // Can't negate string
+            """, TypingError),
+
+            ("""
+                i32[] x;
+                x++;  // Can't increment array
+            """, TypingError),
+
+            ("""
+                bool b = true;
+                b++;  // Can't increment boolean
+            """, TypingError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(expected_error):
+                    prog = self.parse_and_type(source)
+
+class TestTyperScopeRules(TestCase):
+    """Test scope rules and variable shadowing"""
+    def setUp(self):
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        return self.typer.type_program()
+
+    def test_valid_variable_shadowing(self):
+        """Test valid variable shadowing"""
+        source = """
+            i32 x = 1;
+            {
+                i32 y = x + 1;  // Uses inner x
+            }
+            i32 z = x + 1;  // Uses outer x
+        """
+        self.parse_and_type(source)
+
+    def test_valid_function_parameter_shadowing(self):
+        """Test valid parameter shadowing"""
+        source = """
+        void process(i32 x) {
+            i32 z = x + 1;  // Uses parameter x
+        }
+        """
+        self.parse_and_type(source)
+
+    def test_invalid_scope_access(self):
+        """Test invalid scope access"""
+        test_cases = [
+            ("""
+            {
+                i32 x = 1;
+            }
+            i32 y = x;  // x not in scope
+            """, SymbolNotFoundError),
+            ("""
+            void test1() {
+                i32 x = 1;
+            }
+            void test2() {
+                i32 y = x;  // x not in scope
+            }
+            """, SymbolNotFoundError),
+            ("""
+             i32 x = 1;
+             i64 x = 2; // redefinition
+            """, SymbolRedefinitionError),
+            ("""
+            i32 x = 1;
+            {
+                i32 x = 2; // Attempt to shadow existing var
+            }
+            """, SymbolRedefinitionError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
