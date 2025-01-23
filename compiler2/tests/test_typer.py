@@ -14,11 +14,11 @@ from typer import (Typer, TypeInfo, TypeClass, TYPE_INFO, Typ,
 class TestTypeConversions(TestCase):
     """Test type conversion logic and compatibility checks"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_numeric_type_detection(self):
@@ -195,11 +195,11 @@ class TestTypeConversions(TestCase):
 class TestTypeInfoHandling(TestCase):
     """Test TypeInfo handling and type classification"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_builtin_type_info(self):
@@ -235,7 +235,7 @@ class TestTypeInfoHandling(TestCase):
 
         for var_decl in array_types:
             with self.subTest(type_name=var_decl):
-                self.typer = Typer(Parser(Lexer('test.ps', StringIO(var_decl))))
+                self.typer = Typer('text.cs', StringIO(var_decl))
                 self.typer.known_types["MyClass"] = Typ("MyClass", [], [])
                 ast = self.typer.type_program()
                 self.assertIsInstance(ast.statements[0], PVariableDeclaration)
@@ -265,11 +265,11 @@ class TestTypeInfoHandling(TestCase):
 class TestErrorHandling(TestCase):
     """Test error handling in typer"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_unknown_type_error(self):
@@ -309,11 +309,11 @@ class TestErrorHandling(TestCase):
 class TestTyperBasicDeclarations(TestCase):
     """Test basic variable and function declarations"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_primitive_literal_declarations(self):
@@ -384,11 +384,11 @@ class TestTyperBasicDeclarations(TestCase):
 class TestTyperFunctionDeclarations(TestCase):
     """Test function declarations and return types"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_void_functions(self):
@@ -451,11 +451,11 @@ class TestTyperFunctionDeclarations(TestCase):
 class TestTyperClassDeclarations(TestCase):
     """Test class declarations and member access"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_simple_class(self):
@@ -525,11 +525,11 @@ class TestTyperClassDeclarations(TestCase):
 class TestTyperMethodCalls(TestCase):
     """Test method calls and method chaining"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_simple_method_calls(self):
@@ -625,11 +625,11 @@ class TestTyperMethodCalls(TestCase):
 class TestTyperArrayOperations(TestCase):
     """Test array operations and indexing"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_array_indexing(self):
@@ -674,11 +674,11 @@ class TestTyperArrayOperations(TestCase):
 class TestTyperOperators(TestCase):
     """Test operator type checking"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_arithmetic_operators(self):
@@ -764,11 +764,11 @@ class TestTyperOperators(TestCase):
 class TestTyperControlFlow(TestCase):
     """Test type checking in control flow statements"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_if_conditions(self):
@@ -863,11 +863,11 @@ class TestTyperControlFlow(TestCase):
 class TestTyperImplicitConversions(TestCase):
     """Test implicit type conversion rules"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_integer_promotions(self):
@@ -878,8 +878,7 @@ class TestTyperImplicitConversions(TestCase):
         i32 large = medium;  // i16 -> i32
         i64 huge = large;    // i32 -> i64
         """
-        typer = Typer(Parser(Lexer('test.cs', StringIO(source))))
-        prog = typer.type_program()
+        prog = self.parse_and_type(source)
         for statement in prog.statements:
             self.assertIsInstance(statement, PVariableDeclaration)
             assert isinstance(statement, PVariableDeclaration)
@@ -887,8 +886,8 @@ class TestTyperImplicitConversions(TestCase):
             assert statement.initial_value is not None
             self.assertIsNotNone(statement.initial_value.expr_type)
             assert statement.initial_value.expr_type is not None
-            self.assertTrue(typer.can_convert_numeric(statement.initial_value.expr_type,
-                                                      typer.known_types[statement.var_type.type_string]))
+            self.assertTrue(self.typer.can_convert_numeric(statement.initial_value.expr_type,
+                                                      self.typer.known_types[statement.var_type.type_string]))
 
     def test_valid_float_promotions(self):
         """Test valid float type promotions"""
@@ -896,8 +895,7 @@ class TestTyperImplicitConversions(TestCase):
         f32 single = 3.14;
         f64 double = single;  // f32 -> f64
         """
-        typer = Typer(Parser(Lexer('test.cs', StringIO(source))))
-        prog = typer.type_program()
+        prog = self.parse_and_type(source)
         for statement in prog.statements:
             self.assertIsInstance(statement, PVariableDeclaration)
             assert isinstance(statement, PVariableDeclaration)
@@ -905,8 +903,8 @@ class TestTyperImplicitConversions(TestCase):
             assert statement.initial_value is not None
             self.assertIsNotNone(statement.initial_value.expr_type)
             assert statement.initial_value.expr_type is not None
-            self.assertTrue(typer.can_convert_numeric(statement.initial_value.expr_type,
-                                                      typer.known_types[statement.var_type.type_string]))
+            self.assertTrue(self.typer.can_convert_numeric(statement.initial_value.expr_type,
+                                                      self.typer.known_types[statement.var_type.type_string]))
 
     def test_valid_integer_to_float_conversions(self):
         """Test valid integer to float conversions"""
@@ -922,11 +920,11 @@ class TestTyperImplicitConversions(TestCase):
 class TestTyperTypeCasting(TestCase):
     """Test explicit type casting operations"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_numeric_down_casts(self):
@@ -976,11 +974,11 @@ class TestTyperTypeCasting(TestCase):
 class TestTyperUnaryOperations(TestCase):
     """Test type checking of unary operations"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_numeric_negation(self):
@@ -1047,11 +1045,11 @@ class TestTyperUnaryOperations(TestCase):
 class TestTyperScopeRules(TestCase):
     """Test scope rules and variable shadowing"""
     def setUp(self):
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(''))))
+        self.typer = Typer('test.ps', StringIO(''))
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
-        self.typer = Typer(Parser(Lexer('test.ps', StringIO(source))))
+        self.typer = Typer('test.ps', StringIO(source))
         return self.typer.type_program()
 
     def test_valid_variable_shadowing(self):

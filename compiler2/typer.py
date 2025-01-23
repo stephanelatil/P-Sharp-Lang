@@ -1,6 +1,6 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, TextIO
 from dataclasses import dataclass, field
-from lexer import Lexeme
+from lexer import Lexeme, Lexer
 from utils import TypeClass, TypeInfo, TYPE_INFO
 from operations import BinaryOperation, UnaryOperation
 from parser import (Parser, PFunction, PClassProperty, PProgram, PType,
@@ -348,8 +348,8 @@ class TypingConversionError(Exception):
 
 class Typer:
     """Handles type checking and returns a Typed AST"""
-    def __init__(self, parser: Parser):
-        self.parser = parser
+    def __init__(self, filename:str, file:TextIO):
+        self.parser = Parser(Lexer(filename, file))
         self.known_types = _builtin_types.copy()
         self._in_class:Optional[PType] = None
         self.expected_return_type:Optional[Typ] = None
