@@ -1,14 +1,15 @@
-from typing import List, Optional, Dict, Any, Union, Tuple
+from typing import List, Optional, Dict, Any, Union
 from dataclasses import dataclass
 from enum import Enum, auto
-from lexer import Lexer, LexemeType, Lexeme, Position, LexemeStream
+from lexer import Lexer, LexemeType, Lexeme, LexemeStream
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
+from utils import Position
 
 @dataclass
 class Typ:
     """Represents a type in the P# language with its methods and properties"""
     name:str
-    methods: List['PFunction']
+    methods: List['PMethod']
     properties: List['PClassProperty']
     is_reference_type:bool = True
     is_array:bool = False
@@ -18,7 +19,7 @@ class Typ:
             if function.name == "ToString" and len(function.parameters) == 0:
                 return
         #add default ToString method if it does not exist. Just returns the Type name
-        self.methods.append(PFunction("ToString", 
+        self.methods.append(PMethod("ToString", 
                                       PType('string', Lexeme.default), 
                                       [],
                                       PBlock([], Lexeme.default),
@@ -123,6 +124,7 @@ class PFunction(PStatement):
     return_type: 'PType'
     parameters: List['PVariableDeclaration']  # List of (type, name) tuples
     body: 'PBlock'
+    is_called: bool = False
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
                  body: 'PBlock', lexeme: Lexeme):
@@ -131,16 +133,18 @@ class PFunction(PStatement):
         self.return_type = return_type
         self.parameters = parameters
         self.body = body
+        
+class PMethod(PFunction): pass
 
 @dataclass
 class PClass(PStatement):
     """Class definition node"""
     name: str
     properties: List['PClassProperty']
-    methods: List[PFunction]
+    methods: List[PMethod]
 
     def __init__(self, name: str, properties: List['PClassProperty'],
-                 methods: List[PFunction], lexeme: Lexeme):
+                 methods: List[PMethod], lexeme: Lexeme):
         super().__init__(NodeType.CLASS, lexeme.pos)
         self.name = name
         self.properties = properties
@@ -153,6 +157,8 @@ class PClassProperty(PStatement):
     var_type: 'PType'
     is_public: bool
     default_value: Optional[PExpression]
+    is_assigned: bool = False
+    is_read: bool = False
 
     def __init__(self, name: str, type: 'PType', is_public: bool, lexeme: Lexeme, default_value:Optional[PExpression]):
         super().__init__(NodeType.CLASS_PROPERTY, lexeme.pos)
@@ -276,6 +282,12 @@ class PReturnStatement(PStatement):
     def __init__(self, value: Optional[PExpression], lexeme: Lexeme):
         super().__init__(NodeType.RETURN_STATEMENT, lexeme.pos)
         self.value = value or PVoid(lexeme)
+    
+    @staticmethod
+    def implicit_return(position:Position):
+        ret = PReturnStatement(None, Lexeme.default)
+        ret.position = position
+        return ret
 
 @dataclass
 class PFunctionCall(PExpression):
@@ -1229,7 +1241,7 @@ class Parser:
 
         self._expect(LexemeType.PUNCTUATION_OPENBRACE)
         properties: List[PClassProperty] = []
-        methods: List[PFunction] = []
+        methods: List[PMethod] = []
 
         while not self._match(LexemeType.PUNCTUATION_CLOSEBRACE):
             if self._match(*self.type_keywords, LexemeType.IDENTIFIER):
@@ -1247,7 +1259,10 @@ class Parser:
                                                                                          is_class=True,
                                                                                          is_function=True,
                                                                                          return_type=type_name))
-                    methods.append(method)
+                    methods.append(
+                        PMethod(method.name, method.return_type,
+                                method.parameters, method.body, name_lexeme)
+                    )
                 else:
                     # Property
                     is_public = True  # TODO: Handle visibility modifiers
