@@ -1,6 +1,7 @@
 from enum import Enum, auto
 from collections import deque
-from typing import TextIO, Generator, Optional, Union
+from typing import TextIO, Generator, Optional
+from utils import Position
 
 class LexemeType(Enum):
     # Keywords
@@ -99,34 +100,10 @@ class LexemeType(Enum):
     WHITESPACE = auto()
     EOF = auto()
 
-class Position:
-    def __init__(self, line:int = 1, column:int = 1, index:int = 0, filename:str='??'):
-        self.line = line
-        self.column = column
-        self.index = index
-        self.filename = filename
-
-    def advance(self, char:str):
-        if char == '\n':
-            self.line += 1
-            self.column = 1
-        else:
-            self.column += 1
-        self.index += 1
-
-    def copy(self) -> 'Position':
-        return Position(self.line, self.column, self.index, self.filename)
-
-    def __add__(self, num_chars:int):
-        return Position(self.line, self.column+num_chars, self.index+num_chars, self.filename)
-    
-    def __str__(self):
-        return f'File "{self.filename}", line {self.line}, column {self.column}'
-
 class Lexeme:
     @staticmethod
     def _default():
-        return Lexeme(LexemeType.EOF, '', Position())
+        return Lexeme(LexemeType.EOF, '', Position.default)
 
     default:'Lexeme'
 
@@ -188,7 +165,7 @@ class LexemeStream:
     def __init__(self, lexmes:Generator[Lexeme, None, None], filename:str):
         self.lexeme_gen = lexmes
         self.buffer = deque()
-        self.pos = Position()
+        self.pos = Position(filename=filename)
         self.eof = False
 
     def peek(self, amount=0) -> Lexeme:
