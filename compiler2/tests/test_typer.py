@@ -24,18 +24,18 @@ class TestTypeConversions(TestCase):
     def test_numeric_type_detection(self):
         """Test detection of numeric types"""
         numeric_types = [
-            PType("i8", Position()),
-            PType("i16", Position()),
-            PType("i32", Position()),
-            PType("i64", Position()),
-            PType("u8", Position()),
-            PType("u16", Position()),
-            PType("u32", Position()),
-            PType("u64", Position()),
-            PType("f16", Position()),
-            PType("f32", Position()),
-            PType("f64", Position()),
-            PType("char", Position())
+            PType("i8", Position.default),
+            PType("i16", Position.default),
+            PType("i32", Position.default),
+            PType("i64", Position.default),
+            PType("u8", Position.default),
+            PType("u16", Position.default),
+            PType("u32", Position.default),
+            PType("u64", Position.default),
+            PType("f16", Position.default),
+            PType("f32", Position.default),
+            PType("f64", Position.default),
+            PType("char", Position.default)
         ]
 
         for type_ in numeric_types:
@@ -47,10 +47,10 @@ class TestTypeConversions(TestCase):
         """Test detection of non-numeric types"""
 
         non_numeric_types = [
-            PType("bool", Position()),
-            PType("string", Position()),
-            PType("void", Position()),
-            PArrayType(PType("i32", Position()), Position())
+            PType("bool", Position.default),
+            PType("string", Position.default),
+            PType("void", Position.default),
+            PArrayType(PType("i32", Position.default), Position.default)
         ]
 
         for type_ in non_numeric_types:
@@ -104,22 +104,22 @@ class TestTypeConversions(TestCase):
         """Test array type compatibility checks"""
         test_cases = [
             # Same array types
-            (PArrayType(PType("i32", Position()), Position()), PArrayType(PType("i32", Position()), Position()), True),
-            (PArrayType(PType("string", Position()), Position()), PArrayType(PType("string", Position()), Position()), True),
+            (PArrayType(PType("i32", Position.default), Position.default), PArrayType(PType("i32", Position.default), Position.default), True),
+            (PArrayType(PType("string", Position.default), Position.default), PArrayType(PType("string", Position.default), Position.default), True),
 
             # Different array types
-            (PArrayType(PType("i32", Position()), Position()), PArrayType(PType("i64", Position()), Position()), False),
-            (PArrayType(PType("i32", Position()), Position()), PArrayType(PType("f32", Position()), Position()), False),
+            (PArrayType(PType("i32", Position.default), Position.default), PArrayType(PType("i64", Position.default), Position.default), False),
+            (PArrayType(PType("i32", Position.default), Position.default), PArrayType(PType("f32", Position.default), Position.default), False),
 
             # Nested arrays
-            (PArrayType(PArrayType(PType("i32", Position()), Position()), Position()),
-                PArrayType(PArrayType(PType("i32", Position()), Position()), Position()), True),
-            (PArrayType(PType("i32", Position()), Position()), 
-                PArrayType(PArrayType(PType("i32", Position()), Position()), Position()), False),
+            (PArrayType(PArrayType(PType("i32", Position.default), Position.default), Position.default),
+                PArrayType(PArrayType(PType("i32", Position.default), Position.default), Position.default), True),
+            (PArrayType(PType("i32", Position.default), Position.default), 
+                PArrayType(PArrayType(PType("i32", Position.default), Position.default), Position.default), False),
 
             # Array of custom types
-            (PArrayType(PType("MyClass", Position()), Position()), PArrayType(PType("MyClass", Position()), Position()), True),
-            (PArrayType(PType("MyClass", Position()), Position()), PArrayType(PType("OtherClass", Position()), Position()), False)
+            (PArrayType(PType("MyClass", Position.default), Position.default), PArrayType(PType("MyClass", Position.default), Position.default), True),
+            (PArrayType(PType("MyClass", Position.default), Position.default), PArrayType(PType("OtherClass", Position.default), Position.default), False)
         ]
 
         self.typer.known_types["MyClass"] = Typ("MyClass", [], [])
@@ -283,7 +283,7 @@ class TestErrorHandling(TestCase):
         for type_name in unknown_types:
             with self.subTest(type_name=type_name):
                 with self.assertRaises(UnknownTypeError):
-                    self.typer._type_ptype(PType(type_name, Position()))
+                    self.typer._type_ptype(PType(type_name, Position.default))
 
     def test_typing_conversion_error(self):
         """Test TypingConversionError is raised for invalid conversions"""
@@ -292,7 +292,7 @@ class TestErrorHandling(TestCase):
             from parser import PVariableDeclaration, PLiteral
             var_decl = PVariableDeclaration(
                 "x",
-                PType("i32", Position()),
+                PType("i32", Position.default),
                 PLiteral("invalid", "string", Lexeme.default),
                 Lexeme.default
             )
@@ -1105,3 +1105,43 @@ class TestTyperScopeRules(TestCase):
             with self.subTest(source=source.strip()):
                 with self.assertRaises(expected_error):
                     self.parse_and_type(source)
+
+class TestTyperUsageWarnings(TestCase):
+    def setUp(self):
+        self.typer = Typer('test.ps', StringIO(''))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        self.typer = Typer('test.ps', StringIO(source))
+        return self.typer.type_program()
+
+    def test_unused_variable_warning(self):
+        source = "i32 x;"
+        self.parse_and_type(source)
+        self.assertEqual(len(self.typer.warnings), 1)
+        self.assertIn("Variable 'x' is declared but never read", str(self.typer.warnings[0]))
+
+    def test_unused_function_warning(self):
+        source = "void unusedFunc() {}"
+        self.parse_and_type(source)
+        self.assertEqual(len(self.typer.warnings), 1)
+        self.assertIn("Function 'unusedFunc' is declared but never called", str(self.typer.warnings[0]))
+
+    def test_unused_class_property_warning(self):
+        source = """
+        class Test {
+            i32 unusedProp;
+        }
+        """
+        self.parse_and_type(source)
+        self.assertEqual(len(self.typer.warnings), 1)
+        self.assertIn("Class property 'unusedProp' is never used", str(self.typer.warnings[0]))
+
+    def test_unused_class_method_warning(self):
+        source = """
+        class Test {
+            void unusedMethod() {}
+        }
+        """
+        self.parse_and_type(source)
+        self.assertEqual(len(self.typer.warnings), 1)
+        self.assertIn("Method 'unusedMethod' is declared but never called", str(self.typer.warnings[0]))
