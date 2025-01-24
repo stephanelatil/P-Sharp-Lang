@@ -717,13 +717,25 @@ class Typer:
                 raise UnknownTypeError(ptype)
         return self.known_types[ptype.type_string]
 
-    def _type_function(self, function: PFunction) -> None:
+    def _type_function(self, function: PFunction|PMethod) -> None:
         """Type checks a function definition"""        
         if self.expected_return_type is not None:
             raise TypingError("Cannot define a function inside another function")
+        if not isinstance(function, PMethod):
+            self.all_functions.append(function)
         
         self.expected_return_type = self._type_ptype(function.return_type)
         self._type_block(function.body, function.parameters)
+        
+        #add implicit return at the end of a void function if there isn't one already
+        if self.get_type_info(self.expected_return_type).type_class == TypeClass.VOID:
+            if len(function.body.statements) == 0:
+                function.body.statements.append(
+                    PReturnStatement.implicit_return(function.body.position))
+            if not isinstance(function.body.statements[-1], PReturnStatement):
+                function.body.statements.append(
+                    PReturnStatement.implicit_return(
+                        function.body.statements[-1].position))
         self.expected_return_type = None
 
 
