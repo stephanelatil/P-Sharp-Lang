@@ -39,7 +39,7 @@ def create_property(name: str, type_str: str) -> PClassProperty:
         default_value=None
     )
 
-def create_method(name: str, return_type: str, params: List[tuple[str, str]]) -> PMethod:
+def create_method(name: str, return_type: str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
     """Helper function to create a method"""
     return PMethod(
         name=name,
@@ -446,6 +446,7 @@ class Typer:
         self._check_unused_symbols()
 
         self._print_warnings()
+        self._cfg_check(self._ast)
         return self._ast
 
     def _check_unused_symbols(self):
@@ -759,6 +760,7 @@ class Typer:
     def _type_void(self, void:PVoid):
         """Type check a Noop (optional entry) Always valid type checks to true"""
         void.expr_type = self.known_types['void']
+        return void.expr_type
 
     def _type_class(self, class_def: PClass) -> None:
         """Type checks a class definition and returns its type"""
@@ -1147,8 +1149,26 @@ class Typer:
             if self.get_type_info(message_type).type_class != TypeClass.STRING:
                 raise TypingError(f"An assertion message must be a string!")
             
-    def _cfg_check(self, program:PProgram):
-        pass
+    def _cfg_check(self, program:Union[PProgram,PBlock]) -> None:
+        """Check to ensure all functions have a valid return. Raises error if invalid otherwise returns None"""
+        for statement in program.statements:
+            if isinstance(statement, (PFunction, PMethod)):
+                if not self._has_return(statement.body):
+                    raise TypingError(f"Not all code paths return a value for function {statement.name} at {statement.position}")
+            elif isinstance(statement, PClass):
+                for method in statement.methods:
+                    if method.is_builtin:
+                        continue #ignore builtin methods. Just here for linking
+                    if not self._has_return(method.body):
+                        raise TypingError(f"Not all code paths return a value for function {method.name} at {method.position}")
+            elif isinstance(statement, PIfStatement):
+                self._cfg_check(statement.then_block)
+                if statement.else_block is not None:
+                    self._cfg_check(statement.else_block)
+            elif isinstance(statement, (PForStatement, PWhileStatement)):
+                self._cfg_check(statement.body)
+            elif isinstance(statement, PBlock):
+                self._cfg_check(statement)
     
     def _has_return(self, statement:Optional[PStatement]) -> bool:
         if statement is None:
@@ -1159,7 +1179,9 @@ class Typer:
         
         if isinstance(statement, PBlock):
             for stmnt in statement.statements:
-                return self._has_return(stmnt)
+                if self._has_return(stmnt):
+                    return True
+            return False
             
         if isinstance(statement, PIfStatement):
             return self._has_return(statement.else_block) and self._has_return(statement.then_block)

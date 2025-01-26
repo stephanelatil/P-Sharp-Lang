@@ -23,7 +23,7 @@ class Typ:
                                       PType('string', Lexeme.default), 
                                       [],
                                       PBlock([], Lexeme.default),
-                                      Lexeme.default))
+                                      Lexeme.default, is_builtin=True))
 
     def copy_with(self, name, is_array):
         return Typ(name, self.methods, self.properties, is_array=is_array)
@@ -133,8 +133,15 @@ class PFunction(PStatement):
         self.return_type = return_type
         self.parameters = parameters
         self.body = body
-        
-class PMethod(PFunction): pass
+
+@dataclass    
+class PMethod(PFunction): 
+    is_builtin:bool=False
+
+    def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
+                 body: 'PBlock', lexeme: Lexeme, is_builtin:bool = False):
+        super().__init__(name, return_type, parameters, body, lexeme)
+        self.is_builtin = is_builtin
 
 @dataclass
 class PClass(PStatement):
