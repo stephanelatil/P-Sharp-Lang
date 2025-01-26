@@ -1145,3 +1145,288 @@ class TestTyperUsageWarnings(TestCase):
         self.parse_and_type(source)
         self.assertEqual(len(self.typer.warnings), 1)
         self.assertIn("Method 'unusedMethod' is declared but never called", str(self.typer.warnings[0]))
+
+class TestTyperFunctionReturnPaths(TestCase):
+    """Test that the typer correctly checks return paths in functions."""
+
+    def setUp(self):
+        self.typer = Typer('test.ps', StringIO(''))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code."""
+        self.typer = Typer('test.ps', StringIO(source))
+        return self.typer.type_program()
+
+    def test_valid_single_return(self):
+        """Test functions with a single return statement."""
+        test_cases = [
+            (
+                "i32 valid1() { return 42; }",
+                "Single return statement"
+            ),
+            (
+                "string valid2() { return \"hello\"; }",
+                "Single return statement with string"
+            ),
+            (
+                "bool valid3() { return true; }",
+                "Single return statement with boolean"
+            )
+        ]
+
+        for source, description in test_cases:
+            with self.subTest(description=description):
+                self.parse_and_type(source.strip())
+
+    def test_valid_if_else_return(self):
+        """Test functions with returns in all if-else branches."""
+        test_cases = [
+            (
+                """
+                i32 valid1(bool b) {
+                    if (b) {
+                        return 1;
+                    } else {
+                        return 0;
+                    }
+                }
+                """,
+                "If-else with returns in both branches"
+            ),
+            (
+                """
+                string valid2(bool b) {
+                    if (b) {
+                        return "true";
+                    }
+                    return "false";
+                }
+                """,
+                "If with return, and return after if"
+            ),
+            (
+                """
+                i32 valid3(i32 x) {
+                    if (x > 0) {
+                        return x;
+                    } else if (x < 0) {
+                        return -x;
+                    } else {
+                        return 0;
+                    }
+                }
+                """,
+                "Multiple if-else branches with returns"
+            )
+        ]
+
+        for source, description in test_cases:
+            with self.subTest(description=description):
+                self.parse_and_type(source.strip())
+
+    def test_valid_loop_return(self):
+        """Test functions with returns inside loops."""
+        test_cases = [
+            (
+                """
+                i32 valid1() {
+                    while (true) {
+                        return 5;
+                    }
+                }
+                """,
+                "Infinite loop with return"
+            ),
+            (
+                """
+                i32 valid2(i32 x) {
+                    for (i32 i = 0; i < x; i++) {
+                        if (i == 5) {
+                            return i;
+                        }
+                    }
+                    return -1;
+                }
+                """,
+                "For loop with return inside and after"
+            ),
+            (
+                """
+                i32 valid3(i32 x) {
+                    while (x > 0) {
+                        if (x == 5) {
+                            return x;
+                        }
+                        x--;
+                    }
+                    return 0;
+                }
+                """,
+                "While loop with return inside and after"
+            )
+        ]
+
+        for source, description in test_cases:
+            with self.subTest(description=description):
+                self.parse_and_type(source.strip())
+
+    def test_valid_void_functions(self):
+        """Test void functions, which do not require explicit returns."""
+        test_cases = [
+            (
+                """
+                void valid1() {
+                    // No return needed
+                }
+                """,
+                "Void function with no return"
+            ),
+            (
+                """
+                void valid2(bool b) {
+                    if (b) {
+                        return;
+                    }
+                    // No return needed in else branch
+                }
+                """,
+                "Void function with optional return"
+            ),
+            (
+                """
+                void valid3() {
+                    while (true) {
+                        return;
+                    }
+                }
+                """,
+                "Void function with return in infinite loop"
+            )
+        ]
+
+        for source, description in test_cases:
+            with self.subTest(description=description):
+                self.parse_and_type(source.strip())
+
+    def test_invalid_missing_return(self):
+        """Test functions with missing return statements."""
+        test_cases = [
+            (
+                "i32 invalid1() { }",
+                "Missing return statement",
+                TypingError
+            ),
+            (
+                """
+                i32 invalid2(bool b) {
+                    if (b) {
+                        return 1;
+                    }
+                    // No return if b is false
+                }
+                """,
+                "Missing return in else path",
+                TypingError
+            ),
+            (
+                """
+                i32 invalid3(i32 x) {
+                    while (x > 0) {
+                        if (x == 5) {
+                            return x;
+                        }
+                        x--;
+                    }
+                    // No return if loop exits
+                }
+                """,
+                "Missing return after loop",
+                TypingError
+            ),
+            (
+                """
+                i32 invalid4(bool b) {
+                    if (b) {
+                        return 1;
+                    } else if (!b) {
+                        // No return here
+                    } else {
+                        return 0;
+                    }
+                }
+                """,
+                "Missing return in nested if-else",
+                TypingError
+            )
+        ]
+
+        for source, description, expected_error in test_cases:
+            with self.subTest(description=description):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source.strip())
+
+    def test_invalid_void_with_return_value(self):
+        """Test void functions that incorrectly return a value."""
+        test_cases = [
+            (
+                """
+                void invalid1() {
+                    return 42;
+                }
+                """,
+                "Void function returning a value",
+                TypingConversionError
+            ),
+            (
+                """
+                void invalid2(bool b) {
+                    if (b) {
+                        return "string";
+                    }
+                }
+                """,
+                "Void function returning a string",
+                TypingConversionError
+            )
+        ]
+
+        for source, description, expected_error in test_cases:
+            with self.subTest(description=description):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source.strip())
+
+    def test_invalid_non_void_missing_return(self):
+        """Test non-void functions that are missing a return statement."""
+        test_cases = [
+            (
+                """
+                i32 invalid1(bool b) {
+                    if (b) {
+                        return 1;
+                    }
+                    // No return if b is false
+                }
+                """,
+                "Missing return in non-void function",
+                TypingError
+            ),
+            (
+                """
+                string invalid2(i32 x) {
+                    if (x > 0) {
+                        return "positive";
+                    } else if (x < 0) {
+                        return "negative";
+                    }
+                    // No return if x == 0
+                }
+                """,
+                "Missing return in nested if-else",
+                TypingError
+            )
+        ]
+
+        for source, description, expected_error in test_cases:
+            with self.subTest(description=description):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source.strip())
