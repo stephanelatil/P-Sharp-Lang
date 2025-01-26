@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Union, TextIO
 from dataclasses import dataclass, field
 from lexer import Lexeme, Lexer
-from utils import TypeClass, TypeInfo, TYPE_INFO
+from utils import TypeClass, TypeInfo, TYPE_INFO, CompilerWarning, Position
 from operations import BinaryOperation, UnaryOperation
 from parser import (Parser, PFunction, PClassProperty, PProgram, PType,
                    PIdentifier, PArrayIndexing, PArrayInstantiation,
@@ -9,13 +9,13 @@ from parser import (Parser, PFunction, PClassProperty, PProgram, PType,
                    PBinaryOperation, PBreakStatement, PCast, PClass,
                    PContinueStatement, PDotAttribute, PExpression,
                    PForStatement, PUnaryOperation, PFunctionCall, PNoop,
-                   PIfStatement, PLiteral, PMethodCall,
+                   PIfStatement, PLiteral, PMethodCall, PMethod,
                    PObjectInstantiation, PReturnStatement, PStatement,
                    PTernaryOperation, PThis,PVariableDeclaration, 
                    PWhileStatement, PDiscard, PVoid, Typ)
 
 @dataclass
-class TypingProperties:
+class ArchProperties:
     pointer_size:int=64
     max_int_size:int=64
     max_float_size:int=64
@@ -39,9 +39,9 @@ def create_property(name: str, type_str: str) -> PClassProperty:
         default_value=None
     )
 
-def create_method(name: str, return_type: str, params: List[tuple[str, str]]) -> PFunction:
+def create_method(name: str, return_type: str, params: List[tuple[str, str]]) -> PMethod:
     """Helper function to create a method"""
-    return PFunction(
+    return PMethod(
         name=name,
         return_type=PType(return_type, Lexeme.default),
         parameters=[PVariableDeclaration(n, PType(t, Lexeme.default), None, Lexeme.default) for t, n in params],
@@ -240,6 +240,9 @@ class Symbol:
     declaration: PStatement
     is_function: bool = False
     parameters: Optional[List[PVariableDeclaration]] = None
+    #checks symbol use
+    is_assigned: bool = False # Checks if a function is assigned before use (can be bypassed if global used in function)
+    is_read: bool = False # checks if a variable is read (must be after assignment)
 
 @dataclass
 class Scope:
@@ -249,13 +252,14 @@ class Scope:
 
     def define(self, name: str, type_: PType, declaration: PStatement,
                is_function: bool = False,
-               parameters: Optional[List[PVariableDeclaration]] = None) -> None:
+               parameters: Optional[List[PVariableDeclaration]] = None) -> Symbol:
         """Define a new symbol in the current scope"""
 
         #ensure one does not yet exist
         if (symbol:=self.lookup(name)) is not None:
             raise SymbolRedefinitionError(name,  symbol, declaration)
         self.symbols[name] = Symbol(name, type_, declaration, is_function, parameters)
+        return self.symbols[name]
 
     def lookup(self, name: str) -> Optional[Symbol]:
         """Look up a symbol in this scope or any parent scope"""
@@ -304,13 +308,13 @@ class ScopeManager:
             raise RuntimeError("Cannot exit global scope")
         self.current_scope = self.current_scope.parent
 
-    def define_variable(self, var_decl: PVariableDeclaration) -> None:
+    def define_variable(self, var_decl: PVariableDeclaration) -> Symbol:
         """Define a variable in the current scope"""
-        self.current_scope.define(var_decl.name, var_decl.var_type, var_decl)
+        return self.current_scope.define(var_decl.name, var_decl.var_type, var_decl)
 
-    def define_function(self, function: PFunction) -> None:
+    def define_function(self, function: PFunction) -> Symbol:
         """Define a function in the current scope"""
-        self.current_scope.define(
+        return self.current_scope.define(
             function.name,
             function.return_type,
             function,
@@ -348,12 +352,21 @@ class TypingConversionError(Exception):
 
 class Typer:
     """Handles type checking and returns a Typed AST"""
-    def __init__(self, filename:str, file:TextIO):
+    def __init__(self, filename:str, file:TextIO, archProps:Optional[ArchProperties]=None):
+        self.archProperties = archProps or ArchProperties()
         self.parser = Parser(Lexer(filename, file))
         self.known_types = _builtin_types.copy()
         self._in_class:Optional[PType] = None
         self.expected_return_type:Optional[Typ] = None
         self._scope_manager = ScopeManager()
+        self.is_assignment = False #set to true when typing an identifier to be assigned
+        self.warnings: List[CompilerWarning] = []
+        self._ast: Optional[PProgram] = None
+        
+        self.all_symbols: List[Symbol] = []  # Track all symbols
+        self.all_functions: List[PFunction] = []  # Track all functions
+        self.all_class_properties: List[PClassProperty] = []  # Track class properties
+        self.all_class_methods: List[PFunction] = []  # Track class methods
 
         self._node_function_map = {
             # Array operations
@@ -401,17 +414,25 @@ class Typer:
             # Program structure
             PBlock: self._type_block,
             PFunction: self._type_function,
+            PMethod: self._type_function,
 
             # Special cases
             PThis: self._type_this
         }
+        
+    def _print_warnings(self):
+        for warning in self.warnings:
+            print(str(warning))
 
-    def type_program(self) -> PProgram:
+    def type_program(self, warnings:bool = False) -> PProgram:
         """Type check the entire source code and return the typed AST"""
-        tree: PProgram = self.parser.parse()
+        if self._ast is not None:
+            self._print_warnings()
+            return self._ast
+        self._ast = self.parser.parse()
 
         # First pass (quick) to build type list with user defined classes
-        for statement in tree.statements:
+        for statement in self._ast.statements:
             if isinstance(statement, PClass):
                 self.known_types[statement.name] = Typ(statement.name, statement.methods, statement.properties)
             elif isinstance(statement, PFunction):
@@ -419,11 +440,56 @@ class Typer:
             continue
 
         # Full tree traversal pass
-        for statement in tree.statements:
+        for statement in self._ast.statements:
             self._type_statement(statement)
+        
+        self._check_unused_symbols()
 
-        return tree
+        self._print_warnings()
+        return self._ast
 
+    def _check_unused_symbols(self):
+        # Check variables
+        for symbol in self.all_symbols:
+            if not symbol.is_read and not symbol.is_function:
+                self.warnings.append(CompilerWarning(
+                    f"Variable '{symbol.name}' is declared but never read",
+                    symbol.declaration.position
+                ))
+        # Check functions
+        for func in self.all_functions:
+            if func.position is Position.default:
+                pass
+            if not func.is_called and func.name != 'main':  # Exclude main if present
+                self.warnings.append(CompilerWarning(
+                    f"Function '{func.name}' is declared but never called",
+                    func.position
+                ))
+        # Check class properties and methods
+        for prop in self.all_class_properties:
+            if not prop.is_read and not prop.is_assigned:
+                self.warnings.append(CompilerWarning(
+                    f"Class property '{prop.name}' is never used",
+                    prop.position
+                ))
+        for method in self.all_class_methods:
+            if method.position is Position.default:
+                continue #ignore unused builtins
+            if not method.is_called:
+                self.warnings.append(CompilerWarning(
+                    f"Method '{method.name}' is declared but never called",
+                    method.position
+                ))
+
+    def get_typ_size(self, type_:Typ):
+        size = 0
+        for prop in type_.properties:
+            prop_typ = self._type_ptype(prop.var_type)
+            typeinfo = self.get_type_info(prop_typ)
+            if typeinfo.type_class in (TypeClass.ARRAY, TypeClass.CLASS, TypeClass.STRING):
+                size += self.archProperties.pointer_size
+            else:
+                size += typeinfo.bit_width
 
     def get_type_info(self, type_: Typ) -> TypeInfo:
         """Get TypeInfo for a given type, handling array types"""
@@ -703,6 +769,7 @@ class Typer:
         self._in_class = PType(class_def.name, class_def.position)
         # self._scope_manager.current_scope.define("this", self._in_class, class_def)
         for method in class_def.methods:
+            self.all_class_methods.append(method)
             self._type_function(method)
         # self._scope_manager.exit_scope()
 
@@ -715,7 +782,10 @@ class Typer:
             return self.known_types['__array'].copy_with(str(ptype), is_array=True)
         if not ptype.type_string in self.known_types:
                 raise UnknownTypeError(ptype)
-        return self.known_types[ptype.type_string]
+        type_ = self.known_types[ptype.type_string]
+        if not self.archProperties.type_is_supported(type_info = self.get_type_info(type_)):
+            raise TypingError(f"Type {type_} is too large to be supported on this architecture")
+        return type_
 
     def _type_function(self, function: PFunction|PMethod) -> None:
         """Type checks a function definition"""        
@@ -738,7 +808,6 @@ class Typer:
                         function.body.statements[-1].position))
         self.expected_return_type = None
 
-
     def _type_block(self, block: PBlock, params:Optional[List[PVariableDeclaration]]=None) -> None:
         """Type checks a block of statements, optionally verifying return type"""
         self._scope_manager.enter_scope()
@@ -756,14 +825,16 @@ class Typer:
             self._type_statement(statement)
         self._scope_manager.exit_scope()
 
-
     def _type_variable_declaration(self, var_decl: PVariableDeclaration) -> None:
         """Type checks a variable declaration"""
-        self._scope_manager.define_variable(var_decl)
+        symbol = self._scope_manager.define_variable(var_decl)
+        self.all_symbols.append(symbol)
         var_type = self._type_ptype(var_decl.var_type)
 
         if var_decl.initial_value is None:
             return
+        
+        symbol.is_assigned = True
         expr_type = self._type_expression(var_decl.initial_value)
         if not self.check_types_match(var_type, expr_type):
             raise TypingConversionError(var_type, expr_type, var_decl)
@@ -771,19 +842,23 @@ class Typer:
     def _type_discard(self, discard:PDiscard) -> None:
         self._type_expression(discard.expression)
 
-    def _type_class_property(self, property:PClassProperty) -> None:
+    def _type_class_property(self, prop:PClassProperty) -> None:
         """Type checks a variable declaration"""
-        var_type = self._type_ptype(property.var_type)
+        var_type = self._type_ptype(prop.var_type)
+        self.all_class_properties.append(prop)
 
-        if property.default_value is None:
+        if prop.default_value is None:
             return
-        expr_type = self._type_expression(property.default_value)
+        prop.is_assigned = True
+        expr_type = self._type_expression(prop.default_value)
         if not self.check_types_match(var_type, expr_type):
-            raise TypingConversionError(var_type, expr_type, property)
+            raise TypingConversionError(var_type, expr_type, prop)
 
     def _type_assignment(self, assignment: PAssignment) -> Typ:
         """Type checks an assignment and returns the assigned type"""
+        self.is_assignment = True
         ident_type = self._type_expression(assignment.target)
+        self.is_assignment = False
         assignment.expr_type = ident_type
         expression_type = self._type_expression(assignment.value)
         
@@ -869,6 +944,9 @@ class Typer:
         if not symbol.is_function or symbol.parameters is None:
             raise TypingError(f"Symbol {symbol.name} is {symbol.type.type_string} and not a function at location {func_call.position}")
         
+        assert isinstance(symbol.declaration, PFunction)
+        symbol.declaration.is_called = True
+        
         if len(symbol.parameters) != len(func_call.arguments):
             raise TypingError(f"The function expects {len(func_call.arguments)} arguments but got {len(symbol.parameters)}"+\
                               f"at location {func_call.position}")
@@ -891,6 +969,7 @@ class Typer:
         else:
             raise TypingError(f"Method {method_call.method_name} of type {obj_type} if unknown at location {method_call.position}")
         
+        method.is_called = True
         if len(method.parameters) != len(method_call.arguments):
             raise TypingError(f"The function expects {len(method_call.arguments)} arguments but got {len(method.parameters)}"+\
                               f"at location {method_call.position}")
@@ -908,6 +987,15 @@ class Typer:
         """Type checks an identifier and returns its type"""
         symbol = self._scope_manager.lookup(identifier.name, identifier)
         identifier.expr_type = self._type_ptype(symbol.type)
+        if self.is_assignment:
+            symbol.is_assigned = True
+        else:
+            if not symbol.is_assigned:
+                self.warnings.append(CompilerWarning(
+                    f"Symbol '{symbol.name}' is potentially not assigned (it will have it's default value)",
+                    identifier.position
+                ))
+            symbol.is_read = True
         return identifier.expr_type
 
     def _type_literal(self, literal: PLiteral) -> Typ:
@@ -1010,12 +1098,15 @@ class Typer:
 
     def _type_dot_attribute(self, dot_attr: PDotAttribute) -> Typ:
         """Type checks a dot attribute access and returns its type"""
+        tmp_assignment = self.is_assignment
+        self.is_assignment = False
         left_type = self._type_expression(dot_attr.left)
         for prop in left_type.properties:
             if prop.name == dot_attr.right.name:
                 if dot_attr.right.expr_type is None:
                     dot_attr.right.expr_type = self._type_ptype(prop.var_type)
                 dot_attr.expr_type = dot_attr.right.expr_type
+                prop.is_assigned |= tmp_assignment
                 break
         else:
             raise TypingError(f"'{dot_attr.right.name}' is not a known property of '{left_type}'")
@@ -1055,3 +1146,36 @@ class Typer:
             message_type = self._type_expression(assert_stmt.message)
             if self.get_type_info(message_type).type_class != TypeClass.STRING:
                 raise TypingError(f"An assertion message must be a string!")
+            
+    def _cfg_check(self, program:PProgram):
+        pass
+    
+    def _has_return(self, statement:Optional[PStatement]) -> bool:
+        if statement is None:
+            return False
+        
+        if isinstance(statement, PReturnStatement):
+            return True
+        
+        if isinstance(statement, PBlock):
+            for stmnt in statement.statements:
+                return self._has_return(stmnt)
+            
+        if isinstance(statement, PIfStatement):
+            return self._has_return(statement.else_block) and self._has_return(statement.then_block)
+        
+        if isinstance(statement, (PWhileStatement,PForStatement)):
+            return self._has_return(statement.body)
+        
+        return False
+    
+    def _function_has_return(self, func:PFunction):
+        # void functions are always valid because they do not need a return (implicitly added at the end)
+        if self.get_type_info(self._type_ptype(func.return_type)).type_class == TypeClass.VOID:
+            return True
+        
+        for statement in func.body.statements:
+            if self._has_return(statement):
+                return True
+            
+        return False
