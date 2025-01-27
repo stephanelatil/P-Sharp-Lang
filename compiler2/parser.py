@@ -125,6 +125,7 @@ class PFunction(PStatement):
     parameters: List['PVariableDeclaration']  # List of (type, name) tuples
     body: 'PBlock'
     is_called: bool = False
+    return_typ_typed:Optional[Typ] = None
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
                  body: 'PBlock', lexeme: Lexeme):

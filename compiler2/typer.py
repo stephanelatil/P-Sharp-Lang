@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Union, TextIO
 from dataclasses import dataclass, field
+from io import StringIO
 from lexer import Lexeme, Lexer
 from utils import TypeClass, TypeInfo, TYPE_INFO, CompilerWarning, Position
 from operations import BinaryOperation, UnaryOperation
@@ -351,6 +352,8 @@ class TypingConversionError(Exception):
         )
 
 class Typer:
+    default:'Typer'
+    
     """Handles type checking and returns a Typed AST"""
     def __init__(self, filename:str, file:TextIO, archProps:Optional[ArchProperties]=None):
         self.archProperties = archProps or ArchProperties()
@@ -797,6 +800,7 @@ class Typer:
             self.all_functions.append(function)
         
         self.expected_return_type = self._type_ptype(function.return_type)
+        function.return_typ_typed = self.expected_return_type
         self._type_block(function.body, function.parameters)
         
         #add implicit return at the end of a void function if there isn't one already
@@ -1201,3 +1205,5 @@ class Typer:
                 return True
             
         return False
+
+Typer.default = Typer('??', StringIO(''))
