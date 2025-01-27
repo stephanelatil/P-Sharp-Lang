@@ -60,7 +60,7 @@ class TypeInfo:
 # Mapping of type names to their TypeInfo
 TYPE_INFO: Dict[str, TypeInfo] = {
     "void": TypeInfo(TypeClass.VOID),
-    "bool": TypeInfo(TypeClass.BOOLEAN, 8, False),
+    "bool": TypeInfo(TypeClass.BOOLEAN, 1, False),
     "string": TypeInfo(TypeClass.STRING),
     "char": TypeInfo(TypeClass.INTEGER, 8, False),
 
