@@ -163,6 +163,7 @@ class PClassProperty(PStatement):
     """Class property definition node"""
     name: str
     var_type: 'PType'
+    typer_pass_var_type: Optional[Typ]
     is_public: bool
     default_value: Optional[PExpression]
     is_assigned: bool = False

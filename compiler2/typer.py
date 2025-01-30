@@ -851,6 +851,7 @@ class Typer:
     def _type_class_property(self, prop:PClassProperty) -> None:
         """Type checks a variable declaration"""
         var_type = self._type_ptype(prop.var_type)
+        prop.typer_pass_var_type = var_type
         self.all_class_properties.append(prop)
 
         if prop.default_value is None:
