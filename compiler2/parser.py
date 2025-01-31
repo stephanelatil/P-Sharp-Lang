@@ -125,7 +125,13 @@ class PFunction(PStatement):
     parameters: List['PVariableDeclaration']  # List of (type, name) tuples
     body: 'PBlock'
     is_called: bool = False
-    return_typ_typed:Optional[Typ] = None
+    _return_typ_typed:Optional[Typ] = None
+    
+    @property
+    def return_typ_typed(self) -> Typ:
+        if self._return_typ_typed is None:
+            raise TypingError(f"Function has not been typed yet")
+        return self._return_typ_typed
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
                  body: 'PBlock', lexeme: Lexeme):
@@ -191,7 +197,15 @@ class PVariableDeclaration(PStatement):
     """Variable declaration node"""
     name: str
     var_type: 'PType'
+    _typer_pass_var_type: Optional[Typ]
+    
     initial_value: Optional[PExpression]
+    
+    @property
+    def typer_pass_var_type(self) -> Typ:
+        if self._typer_pass_var_type is None:
+            raise 
+        return self._typer_pass_var_type
 
     def __init__(self, name: str, var_type: 'PType', initial_value: Optional[PExpression], lexeme: Lexeme):
         super().__init__(NodeType.VARIABLE_DECLARATION, lexeme.pos)

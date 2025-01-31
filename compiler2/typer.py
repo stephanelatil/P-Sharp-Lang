@@ -800,7 +800,7 @@ class Typer:
             self.all_functions.append(function)
         
         self.expected_return_type = self._type_ptype(function.return_type)
-        function.return_typ_typed = self.expected_return_type
+        function._return_typ_typed = self.expected_return_type
         self._type_block(function.body, function.parameters)
         
         #add implicit return at the end of a void function if there isn't one already
@@ -836,6 +836,7 @@ class Typer:
         symbol = self._scope_manager.define_variable(var_decl)
         self.all_symbols.append(symbol)
         var_type = self._type_ptype(var_decl.var_type)
+        var_decl._typer_pass_var_type = var_type
 
         if var_decl.initial_value is None:
             return
