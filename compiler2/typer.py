@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Union, TextIO
 from dataclasses import dataclass, field
 from io import StringIO
 from lexer import Lexeme, Lexer
-from utils import TypeClass, TypeInfo, TYPE_INFO, CompilerWarning, Position
+from utils import TypeClass, TypeInfo, TYPE_INFO, CompilerWarning, Position, TypingError
 from operations import BinaryOperation, UnaryOperation
 from parser import (Parser, PFunction, PClassProperty, PProgram, PType,
                    PIdentifier, PArrayIndexing, PArrayInstantiation,

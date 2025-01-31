@@ -39,6 +39,10 @@ class CompilerWarning(Warning):
     def __str__(self):
         return self.message + f" at location {self.position}"
 
+class TypingError(Exception):
+    def __init__(self, msg) -> None:
+        super().__init__(msg)
+
 class TypeClass(Enum):
     """Classification of types for conversion rules"""
     VOID = auto()
