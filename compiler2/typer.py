@@ -337,10 +337,6 @@ class UnknownTypeError(Exception):
             f"Use of unknown type {type_} at {type_.position.line}:{type_.position.column}"
         )
 
-class TypingError(Exception):
-    def __init__(self, msg) -> None:
-        super().__init__(msg)
-
 class TypingConversionError(Exception):
     """Raised when an invalid type conversion is attempted"""
     def __init__(self, from_type: Typ, to_type: Typ, node: PStatement):

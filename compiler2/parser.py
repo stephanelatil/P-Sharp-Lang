@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from lexer import Lexer, LexemeType, Lexeme, LexemeStream
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
-from utils import Position
+from utils import Position, TypingError
 
 @dataclass
 class Typ:
