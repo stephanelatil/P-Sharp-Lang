@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict
-
+from typing import Optional, List, Dict, Callable, Any
+from llvmlite import ir
 
 class Position:
     default:'Position'
@@ -85,3 +85,75 @@ TYPE_INFO: Dict[str, TypeInfo] = {
     "f32": TypeInfo(TypeClass.FLOAT, 32),
     "f64": TypeInfo(TypeClass.FLOAT, 64),
 }
+
+
+@dataclass
+class VarInfo:
+    name:str
+    type_:ir.Type
+    alloca:Optional[ir.AllocaInstr]=None
+    func_ptr:Optional[ir.Function]=None
+    
+    @property
+    def is_function(self) -> bool:
+        return self.func_ptr is not None
+
+class ScopeVars:
+    def __init__(self):
+        self.scope_vars = {}
+        
+    def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
+        if name in self.scope_vars:
+            raise CompilerError(f"Variable already exists!")
+        self.scope_vars["name"] = VarInfo(name, return_type, func_ptr=function_ptr)
+        
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.AllocaInstr):
+        if name in self.scope_vars:
+            raise CompilerError(f"Variable already exists!")
+        self.scope_vars["name"] = VarInfo(name, type_, alloca=alloca)
+        
+    def get_var(self, name:str) -> Optional[VarInfo]:
+        return self.scope_vars.get(name, None)
+
+
+class Scopes:
+    def __init__(self):
+        self.scopes:List[ScopeVars] = []
+
+    def enter_scope(self):
+        self.scopes.append(ScopeVars())
+
+    def leave_scope(self):
+        self.scopes.pop()
+
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.AllocaInstr):
+        self.scopes[-1].declare_var(name, type_, alloca)
+        
+    def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
+        self.declare_func(name, return_type, function_ptr)
+
+    def get_var(self, name:str):
+        for scope in self.scopes[::-1]:
+            var_info = scope.get_var(name)
+            if var_info is not None:
+                return var_info
+        raise CompilerError(f"Unable to find variable {name}")
+    
+    def get_global_scope(self):
+        return self.scopes[0]
+
+class CompilerError(Exception):
+    def __init__(self, msg):
+        super().__init__(msg)
+        self.msg = msg
+        
+    def __str__(self):
+        return f"Compiler Error: {self.msg}"
+
+@dataclass
+class CodeGenContext:
+    """Context needed by various node when generating IR in the codegen pass"""
+    module:ir.Module
+    builder:ir.IRBuilder
+    scopes:Scopes
+    get_llvm_type: Callable[Any,ir.Type]
