@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from lexer import Lexer, LexemeType, Lexeme, LexemeStream
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
-from utils import Position, TypingError
+from utils import Position, TypingError, CodeGenContext
+from llvmlite import ir
 
 @dataclass
 class Typ:
@@ -97,16 +98,25 @@ class PStatement:
     node_type: NodeType
     position: Position
 
+    def generate_llvm(self, context:CodeGenContext) -> None:
+        raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
+
 @dataclass
 class PExpression(PStatement):
     """Base class for all expression nodes - nodes that produce a value"""
     def __post_init__(self):
         self.expr_type:Optional[Typ] = None  # Will be set during typing pass
 
+    def generate_llvm(self, context:CodeGenContext) -> ir.Value:
+        raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
+
 @dataclass
 class PNoop(PExpression):
     def __init__(self, lexeme:Lexeme):
         super().__init__(NodeType.EMPTY, lexeme.pos)
+    
+    def generate_llvm(self, context: CodeGenContext) -> ir.Value:
+        return ir.Constant(ir.IntType(1), True)
 
 @dataclass
 class PProgram(PStatement):
@@ -191,6 +201,10 @@ class PBlock(PStatement):
     def __init__(self, statements: List[PStatement], lexeme: Lexeme):
         super().__init__(NodeType.BLOCK, lexeme.pos)
         self.statements = statements
+    
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        for stmt in self.statements:
+            stmt.generate_llvm(context)
 
 @dataclass
 class PVariableDeclaration(PStatement):
@@ -305,6 +319,13 @@ class PReturnStatement(PStatement):
     def __init__(self, value: Optional[PExpression], lexeme: Lexeme):
         super().__init__(NodeType.RETURN_STATEMENT, lexeme.pos)
         self.value = value or PVoid(lexeme)
+        
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        if isinstance(self.value, PVoid):
+            context.builder.ret_void()
+        else:
+            context.builder.ret(
+                self.value.generate_llvm(context))
     
     @staticmethod
     def implicit_return(position:Position):
