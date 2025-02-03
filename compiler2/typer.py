@@ -877,6 +877,13 @@ class Typer:
         common = self.get_common_type(left_type, right_type)
         if common is None:
             raise TypingError(f"Type {left_type} and {right_type} are not compatible")
+        # force cast if not same type
+        if left_type != common:
+            binop.left = PCast(PType(common.name, binop.left.position), binop.left)
+            binop.left.expr_type = common
+        if right_type != common:
+            binop.right = PCast(PType(common.name, binop.right.position), binop.right)
+            binop.right.expr_type = common
         if binop.operation.name.startswith('BOOL_'):
             #comparators and boolean operators return bool
             binop.expr_type = self.known_types['bool']
