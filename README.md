@@ -1,8 +1,8 @@
 # P# Programming Language
 
-## **NOTE:** On Hold
+## **NOTE:**
 
-This project is currently on hold. Some features are available and you can run P# code in *Interpreted* mode on the `interpreter` branch with the -i flag (Extremly slow, used for testing at the moment).
+**This project is currently being rewritten**. Some features are available and you can run P# code in *Interpreted* mode on the `interpreter` branch with the -i flag. It is extremely slow and is actively being rewritten on this branch
 
 ![P# Logo](assets/img/psharp_logo.png)
 
@@ -24,11 +24,11 @@ P# is a programming language designed for developers who want the best of both w
 
 ## Introduction
 
-P# is the brainchild of a software developer who understand the nuances of both Python and C#. It combines the readability and ease of use of Python with C#'s performance and type system. This unique blend allows developers to write code that is both elegant and efficient, whether they're working on complex applications or quick scripting tasks.
+P# is the brainchild of a software developer who understand the nuances of both Python and C#. It combines the readability and ease of use of Python with C#'s performance and type system. This unique blend allows developers to write code that is both elegant and efficient, whether they're working on complex applications or quick scripting tasks. The goal is to build a language for embedded devices and bare metal without having to think about memory management. The GC will have a small performance overhead compared to rust or C.
 
 **Note** that many features and some syntax quirks may change over time as this is still in early development.
 
-Notably the parser will be reworked from a Yacc parser to a custom parser to handle syntaxis sugar and reduction prioritization more robustly.
+Notably the parser is being reworked from a Yacc parser to a custom parser to handle syntax sugar and reduction prioritization more robustly.
 
 ## Key Features
 
@@ -52,7 +52,7 @@ P# stands out as a scripting-friendly language by eliminating the need for a mai
 
 ## IMPORTANT NOTE
 
-At the moment the compiler is currently only functional until the Typing tree (`-C T` flag). Development is underway to convert the typing tree to a control graph then translating it to LLVM-IR where it will be compiled down to machine code using clang.
+At the moment the compiler is currently only functional until the Typing tree (`-C T` flag). Development is underway to convert the typing tree to a control graph then translating it to LLVM-IR where it will be compiled down to machine code using a backend.
 
 ## Quick Start
 
@@ -80,7 +80,7 @@ python ./compiler/main.py -o output_executable your_program_source.psc
 
 ## Language Syntax
 
-P#'s syntax draws inspiration from C# to provide a familiar environment for developers. Here's a quick example of variable declaration, function definition and function call:
+P#'s syntax draws inspiration from C#, Python (and Rust types) to provide a familiar environment for developers. Here's a quick example of variable declaration, function definition and function call:
 
 ```rust
 // Variable declaration

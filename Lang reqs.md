@@ -14,8 +14,8 @@ Note that many features are not yet implemented and may never be implemented. Cu
   - [ ]Special keywords:
     - [ ] `A in B`: A is contained in object B, can be overridden in B class description depending on implementation
     - [ ] `A is B`: A and B are pointers to the same object (Not the same as == which does an equality check). Cannot be overridden
-    - [x] `A and B / A or B / not A`: Boolean operator with short circuiting
-  - [x] All objects must have an explicit `ToString` method defined
+    - [ ] `A and B / A or B / not A`: Boolean operator with short circuiting
+  - [ ] All objects must have an explicit `ToString` method defined
   - [x] Can have code directly run without a *main* function
   - [ ] Some sort of `if __name__ == "__main__"` region  or definitions with preprocessor directives (`#module/#end` or `#main/#end`)
   - [ ] Optional (default) parameters for functions and constructors
@@ -24,7 +24,7 @@ Note that many features are not yet implemented and may never be implemented. Cu
   - [ ] Boolean type with it's own operators (`+` is equivalent to OR, `*` equivalent to AND)
   - [x] Brackets used for scope definition
   - [x] static typing
-  - [ ] Setting a variable value returns the set value : `x = (y *= 2)` sets both x and y to the same value
+  - [x] Setting a variable value returns the set value : `x = (y *= 2)` sets both x and y to the same value
   - [ ] bounds checking on arrays
   - [ ] foreach
   - [ ] function overloading
@@ -89,7 +89,6 @@ Comments will keep the standard C format: `//` for single line comments and `/* 
 
 For now :
 
-- Classes cannot contain methods except ToString. Classes can be made as data classes/structs
 - No inheritance
 - No overloading (includes constructors)
 - No default values (optional parameters) in function definitions
@@ -101,6 +100,6 @@ For now :
 - Classes should be *PascalCase*
 - Public functions/methods and fields should be *PascalCase*
 - Private functions/methods and fields should be *camelCase*
-- Local scope variables should be *snake_case* (this includes lambda functions used in a local scope)
+- Local scope variables should be *snake_case*
 
 *Indentation*: should be a single tab or 4 spaces. Compiler/interpreter ignores blank space.
