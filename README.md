@@ -4,7 +4,7 @@
 
 **This project is currently being rewritten**. Some features are available and you can run P# code in *Interpreted* mode on the `interpreter` branch with the -i flag. It is extremely slow and is actively being rewritten on this branch
 
-![P# Logo](assets/img/psharp_logo.png)
+<img src="assets/img/psharp_logo.png" alt="P# Logo" width="128"/>
 
 P# is a programming language designed for developers who want the best of both worlds: the simplicity and expressiveness of Python, combined with the power and performance of C#. With a focus on static typing, efficient memory management, and seamless integration with C libraries, P# opens up new possibilities for building high-performance applications and scripting tasks.
 
