@@ -119,6 +119,7 @@ class ScopeVars:
 class Scopes:
     def __init__(self):
         self.scopes:List[ScopeVars] = []
+        self.tmp_func_stack = []
 
     def enter_scope(self):
         self.scopes.append(ScopeVars())
@@ -131,6 +132,15 @@ class Scopes:
         
     def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
         self.declare_func(name, return_type, function_ptr)
+        
+    def enter_func_scope(self):
+        self.tmp_func_stack.append(self.scopes[1:].copy())
+        self.scopes = [self.scopes[0]]
+        self.enter_scope()
+        
+    def leave_func_scope(self):
+        self.leave_scope()
+        self.scopes = [self.scopes[0], *self.tmp_func_stack.pop()]
 
     def get_var(self, name:str):
         for scope in self.scopes[::-1]:
@@ -156,4 +166,5 @@ class CodeGenContext:
     module:ir.Module
     builder:ir.IRBuilder
     scopes:Scopes
-    get_llvm_type: Callable[Any,ir.Type]
+    """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
+    get_llvm_type: Callable[['Typ'],ir.Type]
