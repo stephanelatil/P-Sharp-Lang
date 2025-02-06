@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, List, Dict, Callable, Any
+from typing import Optional, List, Dict, Callable, Union
 from llvmlite import ir
 
 class Position:
@@ -91,7 +91,7 @@ TYPE_INFO: Dict[str, TypeInfo] = {
 class VarInfo:
     name:str
     type_:ir.Type
-    alloca:Optional[ir.AllocaInstr]=None
+    alloca:Optional[ir.NamedValue]=None
     func_ptr:Optional[ir.Function]=None
     
     @property
@@ -107,7 +107,7 @@ class ScopeVars:
             raise CompilerError(f"Variable already exists!")
         self.scope_vars["name"] = VarInfo(name, return_type, func_ptr=function_ptr)
         
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.AllocaInstr):
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
         if name in self.scope_vars:
             raise CompilerError(f"Variable already exists!")
         self.scope_vars["name"] = VarInfo(name, type_, alloca=alloca)
@@ -127,7 +127,7 @@ class Scopes:
     def leave_scope(self):
         self.scopes.pop()
 
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.AllocaInstr):
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
         self.scopes[-1].declare_var(name, type_, alloca)
         
     def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
