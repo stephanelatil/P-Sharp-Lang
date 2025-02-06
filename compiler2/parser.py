@@ -152,13 +152,20 @@ class PFunction(PStatement):
         self.body = body
 
 @dataclass    
-class PMethod(PFunction): 
+class PMethod(PFunction):
+    _class_type:Optional[Typ]=None
     is_builtin:bool=False
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
                  body: 'PBlock', lexeme: Lexeme, is_builtin:bool = False):
         super().__init__(name, return_type, parameters, body, lexeme)
         self.is_builtin = is_builtin
+    
+    @property
+    def class_type(self):
+        if self._class_type is None:
+            raise TypingError(f"Function has not been typed yet")
+        return self._class_type
 
 @dataclass
 class PClass(PStatement):

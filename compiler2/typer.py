@@ -794,6 +794,9 @@ class Typer:
             raise TypingError("Cannot define a function inside another function")
         if not isinstance(function, PMethod):
             self.all_functions.append(function)
+        else: #method not function
+            assert self._in_class is not None #if method: ensure we're in a function!
+            function._class_type = self._type_ptype(self._in_class)
         
         self.expected_return_type = self._type_ptype(function.return_type)
         function._return_typ_typed = self.expected_return_type
