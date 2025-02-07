@@ -1,10 +1,11 @@
 from typer import Typer, ArchProperties, Typ, TypeClass, TypingError
 from parser import (PClass,PFunction,PProgram,
                     PStatement, PVariableDeclaration)
-from typing import TextIO, List, Dict
-from utils import CodeGenContext, Scopes
+from typing import TextIO, List, Dict, Optional, Union
+from utils import CodeGenContext, Scopes, CompilerError, CompilerWarning
 from llvmlite import ir
 import ctypes
+from warnings import warn
 from llvmlite.binding import (initialize, initialize_native_target, 
                               initialize_native_asmprinter, PipelineTuningOptions,
                               PassBuilder, Target)
@@ -41,14 +42,12 @@ class CodeGen:
                                                    max_int_size=64,
                                                    max_float_size=64))
         self.module = ir.Module(name=filename+".o")
-        self.builder: ir.IRBuilder = ir.IRBuilder()
         target = Target.from_default_triple().create_target_machine(
             codemodel='jitdefault',
             jit=False,
         )
         self.optimizer_pass = PassBuilder(target, PipelineTuningOptions(speed_opt, size_opt)
                                           ).getModulePassManager()
-        self.current_function = None
         self.named_values = Scopes()
 
     def get_llvm_type(self, type_: Typ) -> ir.Type:
@@ -90,41 +89,58 @@ class CodeGen:
     def compile_file_to_ir(self, warnings:bool=False):        
         self.ast = self.typer.type_program(warnings)
         
-        context = CodeGenContext(module=self.module, builder=self.builder,
-                                 scopes=self.named_values, get_llvm_type=self.get_llvm_type)
+        context = CodeGenContext(module=self.module, scopes=self.named_values,
+                                 get_llvm_type=self.get_llvm_type)
         self._compile_program(self.ast, context)
-        return self.module
+        return context.module
 
     def _compile_program(self, program: PProgram, context:CodeGenContext):
         self.named_values.enter_scope() #for global vars
         main_stmts = []
+        main_func:Optional[PFunction] = None
         classes:List[PClass] = []
         for stmt in program.statements:
             if isinstance(stmt, PClass):
                 classes.append(stmt)
                 self.register_class_type(stmt, context)
             elif isinstance(stmt, PFunction):
+                if stmt.name == "main":
+                    if main_func is not None:
+                        raise CompilerError(f"Cannot have multiple 'main' functions in the program!")
+                    main_func = stmt
                 stmt.generate_llvm(context)
-            elif isinstance(stmt, PVariableDeclaration):
-                self._compile_declare_global_variable(stmt, context)
             else:
                 main_stmts.append(stmt)
-        # TODO: here use classes var to define class methods
-        
-        self._compile_implicit_main_function(main_stmts, context)
+
+        if main_func is not None and len(main_stmts) > 0:
+            warn(f"'main' function is defined at {main_func.position}\n instructions outside of functions will not be run!", CompilerWarning)
+        self._compile_entrypoint_function(main_stmts, main_func, context=context)
         context.scopes.leave_scope()
         #NB: here scopes should be empty
         
-    def _compile_implicit_main_function(self, statements:List[PStatement], context:CodeGenContext):
+    def _compile_type_global_value(self, type:ir.Type):
+        """Adds global value associated to a Type. Adds an address for a Type and adds the method table"""
+        pass
+
+    def _compile_entrypoint_function(self, statements:List[PStatement], main_func:Optional[PFunction], context:CodeGenContext):
+        """ Generates IR for the entrypoint
+            It first runs all freestanding statements then runs the inside of the main function if one is present"""
+        func_type = ir.FunctionType(self.type_map['i32'],[])
+
+        # Create function in module
+        func = ir.Function(self.module, func_type, name="main")
+        context.builder = ir.IRBuilder(func.append_basic_block('__implicit_main_entrypoint'))
         
-        #TODO make implicit __main function here
-        # add __main to module
         for stmt in statements:
-        # and compile inner
             if isinstance(stmt, PVariableDeclaration):
-                self._compile_define_global_variable(stmt, context)
+                self._compile_declare_global_variable(stmt, context)
             else:
                 stmt.generate_llvm(context)
+        if main_func is not None:
+            for stmt in main_func.body.statements:
+                stmt.generate_llvm(context)
+
+        context.builder.ret(ir.Constant(self.type_map['i32'], 0))
 
     def register_class_type(self, cls: PClass, context:CodeGenContext):
         """Register class type and methods"""
@@ -141,15 +157,13 @@ class CodeGen:
     def _compile_declare_global_variable(self, var_decl: PVariableDeclaration, context:CodeGenContext):
         """Declare variable and associate ptr address"""
         var_type = self.get_llvm_type(var_decl.typer_pass_var_type)
-        alloca = self.builder.alloca(var_type, name=var_decl.name)
+        # alloca = self.builder.alloca(var_type, name=var_decl.name)
+        alloca = ir.GlobalVariable(context.module, var_type, var_decl.name)
         self.named_values.declare_var(var_decl.name, context.get_llvm_type(var_decl.typer_pass_var_type), alloca)
-
-    def _compile_define_global_variable(self, var_decl: PVariableDeclaration, context:CodeGenContext):
-        """Assign value (explicit or default) to variable"""
-        global_var = self.named_values.get_var(var_decl.name)
+        # Assign value (explicit or default) to variable
         if var_decl.initial_value is None:
             #no value defined: get default value for type
             init_value = var_decl.typer_pass_var_type.default_llvm_value
         else:
             init_value = var_decl.initial_value.generate_llvm(context)
-        self.builder.store(init_value, global_var.alloca)
+        context.builder.store(init_value, alloca)
