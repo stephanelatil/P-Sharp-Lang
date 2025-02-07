@@ -208,7 +208,7 @@ class TestTypeInfoHandling(TestCase):
             ("i8", TypeClass.INTEGER, 8, True),
             ("u8", TypeClass.INTEGER, 8, False),
             ("f32", TypeClass.FLOAT, 32, True),
-            ("bool", TypeClass.BOOLEAN, 8, False),
+            ("bool", TypeClass.BOOLEAN, 1, False),
             ("char", TypeClass.INTEGER, 8, False),
             ("string", TypeClass.STRING, 0, True),
             ("void", TypeClass.VOID, 0, True)

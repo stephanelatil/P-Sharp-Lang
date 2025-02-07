@@ -1053,7 +1053,7 @@ class TestParserFunctionDefinitions(TestParserBase):
         """Test parsing of various function call patterns."""
         test_cases = [
             # No arguments
-            "main();",
+            "getZero();",
             # Single argument
             "print(42);",
             # Multiple arguments
