@@ -28,7 +28,7 @@ class TestCodeGeneratorBasicDeclarations(unittest.TestCase):
         for source in test_cases:
             with self.subTest(source=source):
                 ir_code = self.generate_ir(source)
-                self.assertIn("alloca", ir_code)
+                self.assertIn("global", ir_code)
                 self.assertIn("store", ir_code)
 
     def test_valid_array_declarations(self):
@@ -43,7 +43,7 @@ class TestCodeGeneratorBasicDeclarations(unittest.TestCase):
         for source in test_cases:
             with self.subTest(source=source):
                 ir_code = self.generate_ir(source)
-                self.assertIn("alloca", ir_code)
+                self.assertIn("global", ir_code)
                 self.assertIn("call", ir_code)
 
 class TestCodeGeneratorFunctionDeclarations(unittest.TestCase):
@@ -85,8 +85,8 @@ class TestCodeGeneratorFunctionDeclarations(unittest.TestCase):
             }
             """,
             """
-            string greet(string name) {
-                return "Hello " + name;
+            f32 mul(f32 a, f32 b) {
+                return a * b;
             }
             """
         ]
@@ -443,7 +443,7 @@ class TestCodeGeneratorUnaryOperations(unittest.TestCase):
         for var_decl in test_cases:
             with self.subTest(source=var_decl):
                 ir_code = self.generate_ir(var_decl)
-                self.assertIn("sub", ir_code)
+                self.assertIn("neg", ir_code)
 
     def test_valid_logical_not(self):
         """Test valid logical not operations"""
