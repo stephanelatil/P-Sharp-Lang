@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, List, Dict, Callable, Union
+from typing import Optional, List, Dict, Callable, Tuple
 from llvmlite import ir
 
 class Position:
@@ -110,7 +110,7 @@ class ScopeVars:
     def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
         if name in self.scope_vars:
             raise CompilerError(f"Variable already exists!")
-        self.scope_vars["name"] = VarInfo(name, type_, alloca=alloca)
+        self.scope_vars[name] = VarInfo(name, type_, alloca=alloca)
         
     def get_var(self, name:str) -> Optional[VarInfo]:
         return self.scope_vars.get(name, None)
@@ -164,7 +164,9 @@ class CompilerError(Exception):
 class CodeGenContext:
     """Context needed by various node when generating IR in the codegen pass"""
     module:ir.Module
-    builder:ir.IRBuilder
     scopes:Scopes
     """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
     get_llvm_type: Callable[['Typ'],ir.Type]
+    """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
+    loopinfo:List[Tuple[ir.Block, ir.Block]]=field(default_factory=list)
+    builder:ir.IRBuilder = ir.IRBuilder()
