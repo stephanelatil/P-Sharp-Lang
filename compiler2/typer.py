@@ -819,6 +819,8 @@ class Typer:
         if params is not None:
             for param in params:
                 self._type_variable_declaration(param)
+                #Set is_assigned to true of all function params (they are always assigned)
+                self._scope_manager.lookup(param.name, param).is_assigned = True
         #first pass for defined methods
         for statement in block.statements:
             if isinstance(statement, PFunction):
