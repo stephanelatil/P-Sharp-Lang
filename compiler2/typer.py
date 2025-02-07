@@ -491,6 +491,26 @@ class Typer:
             else:
                 size += typeinfo.bit_width
 
+    def _ptype_from_typ(self, typ:Typ, pos:Optional[Position]=None) -> PType|PArrayType:
+        if pos is None:
+            pos = Position.default
+        if not typ.is_array:
+            return PType(typ.name, pos)
+        #typ is array
+        #gets the base type name then loops over to create a PArrayType of the correct dimension
+        base_name = typ.name.replace('[]','')
+        ptyp = PType(base_name, pos)
+        while len(base_name) < len(typ.name):
+            base_name += '[]'
+            ptyp = PArrayType(ptyp, pos)
+        return ptyp
+                
+    def _make_implicit_cast_explicit(self, expression:PExpression, cast_to:Typ) -> PExpression:
+        ptype_target = self._ptype_from_typ(cast_to, expression.position)
+        cast = PCast(ptype_target, expression)
+        self._type_cast(cast) #reuse typing for propagate workings
+        return cast
+
     def get_type_info(self, type_: Typ) -> TypeInfo:
         """Get TypeInfo for a given type, handling array types"""
 
@@ -873,6 +893,9 @@ class Typer:
         
         if not self.check_types_match(ident_type, expression_type):
             raise TypingConversionError(expression_type, ident_type, assignment)
+        if ident_type != expression_type:
+            #implicit cast
+            assignment.value = self._make_implicit_cast_explicit(assignment.value, ident_type)
         return ident_type
 
     def _type_binary_operation(self, binop: PBinaryOperation) -> Typ:
@@ -884,11 +907,9 @@ class Typer:
             raise TypingError(f"Type {left_type} and {right_type} are not compatible")
         # force cast if not same type
         if left_type != common:
-            binop.left = PCast(PType(common.name, binop.left.position), binop.left)
-            binop.left.expr_type = common
+            binop.left = self._make_implicit_cast_explicit(binop.left, common)
         if right_type != common:
-            binop.right = PCast(PType(common.name, binop.right.position), binop.right)
-            binop.right.expr_type = common
+            binop.right = self._make_implicit_cast_explicit(binop.right, common)
         if binop.operation.name.startswith('BOOL_'):
             #comparators and boolean operators return bool
             binop.expr_type = self.known_types['bool']
@@ -967,7 +988,7 @@ class Typer:
             raise TypingError(f"The function expects {len(func_call.arguments)} arguments but got {len(symbol.parameters)}"+\
                               f"at location {func_call.position}")
         
-        for expected_param, actual in zip(symbol.parameters, func_call.arguments):
+        for i, (expected_param, actual) in enumerate(zip(symbol.parameters, func_call.arguments)):
             expected_type = self._type_ptype(expected_param.var_type)
             actual_type = self._type_expression(actual)
             if not self.check_types_match(expected_type, actual_type):
