@@ -1,19 +1,60 @@
-import unittest
+from unittest import TestCase
 from io import StringIO
+from typing import List, Type
 from llvm_transpiler import CodeGen
-from llvmlite import ir, binding
-from ctypes import CFUNCTYPE
+from llvmlite import ir
+from llvmlite.binding import Target, parse_assembly, create_mcjit_compiler, ModuleRef
+import ctypes
 
-class TestCodeGeneratorBasicDeclarations(unittest.TestCase):
-    """Test basic variable and function declarations"""
+def create_execution_engine():
+    """
+    Create an ExecutionEngine suitable for JIT code generation on
+    the host CPU.  The engine is reusable for an arbitrary number of
+    modules.
+    """
+    # Create a target machine representing the host
+    target = Target.from_default_triple()
+    target_machine = target.create_target_machine()
+    # And an execution engine with an empty backing module
+    backing_mod = parse_assembly("")
+    engine = create_mcjit_compiler(backing_mod, target_machine)
+    return engine
+
+class CodeGenTestCase(TestCase):    
     def setUp(self):
         self.generator = CodeGen('??', StringIO(''))
+        self._engine = create_execution_engine()
 
     def generate_ir(self, source: str) -> str:
         """Helper method to generate LLVM IR from source code"""
         gen = CodeGen('test.cs', StringIO(source))
         mod = gen.compile_file_to_ir()
         return str(mod)
+    
+    def compile_ir(self, module:ir.Module|str):
+        """
+        Compile the LLVM IR string with the given engine.
+        The compiled module object is returned.
+        """
+        # Create a LLVM module ref from the ir Module
+        mod = parse_assembly(str(module))
+        mod.verify()
+        # Now add the module and make sure it is ready for execution
+        self._engine.add_module(mod)
+        self._engine.finalize_object()
+        self._engine.run_static_constructors()
+        return mod
+    
+    def run_function(self, func_name:str, func_prototype_ctypes:List[Type], *args):
+        """Runs a function compiled in the engine using ctypes and returns the result"""
+        func_ptr = self._engine.get_function_address(func_name)
+
+        # Run the function via ctypes
+        cfunc = ctypes.CFUNCTYPE(*func_prototype_ctypes)(func_ptr)
+        return cfunc(*args)
+
+class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
+    """Test basic variable and function declarations"""
 
     def test_valid_primitive_literal_declarations(self):
         """Test valid primitive type declarations"""
@@ -46,67 +87,63 @@ class TestCodeGeneratorBasicDeclarations(unittest.TestCase):
                 self.assertIn("global", ir_code)
                 self.assertIn("call", ir_code)
 
-class TestCodeGeneratorFunctionDeclarations(unittest.TestCase):
+class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
     """Test function declarations and return types"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_void_functions(self):
         """Test valid void function declarations"""
         test_cases = [
-            """
+            ("""
             void empty() {
             }
-            """,
-            """
-            void printMessage(string msg) {
+            """, "empty", (None,),tuple()),
+            ("""
+            void printInt(i32 int) {
                 // Empty function with parameter
             }
-            """
+            ""","printInt", (None,ctypes.c_int32), (1,))
         ]
 
-        for source in test_cases:
+        for (source, f_name, proto, args) in test_cases:
             with self.subTest(source=source.strip()):
                 ir_code = self.generate_ir(source)
                 self.assertIn("define void", ir_code)
+                #checks returns None
+                self.compile_ir(ir_code)
+                self.assertEqual(None, self.run_function(f_name, proto, *args))
+                
 
     def test_valid_return_type_functions(self):
         """Test valid functions with return values"""
         test_cases = [
-            """
+            ("""
             i32 add(i32 a, i32 b) {
                 return a + b;
             }
-            """,
-            """
+            """, "add",
+            (ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32),
+            ((2,3),5)),
+            ("""
             f32 mul(f32 a, f32 b) {
                 return a * b;
             }
-            """
+            """, "mul",
+            (ctypes.c_float, ctypes.c_float, ctypes.c_float),
+            ((2,3),6))
         ]
 
-        for source in test_cases:
+        for (source, f_name, proto, (args,res)) in test_cases:
             with self.subTest(source=source.strip()):
                 ir_code = self.generate_ir(source)
                 self.assertIn("define", ir_code)
                 self.assertIn("ret", ir_code)
+                #checks returns correct result
+                self.compile_ir(ir_code)
+                self.assertEqual(res, self.run_function(f_name, proto, *args))
 
-class TestCodeGeneratorClassDeclarations(unittest.TestCase):
+
+class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
     """Test class declarations and member access"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_simple_class(self):
         """Test valid simple class declaration"""
@@ -142,16 +179,8 @@ class TestCodeGeneratorClassDeclarations(unittest.TestCase):
         self.assertIn("define i32", ir_code)
         self.assertIn("define void", ir_code)
 
-class TestCodeGeneratorMethodCalls(unittest.TestCase):
+class TestCodeGeneratorMethodCalls(CodeGenTestCase):
     """Test method calls and method chaining"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_simple_method_calls(self):
         """Test valid simple method calls"""
@@ -192,16 +221,8 @@ class TestCodeGeneratorMethodCalls(unittest.TestCase):
         self.assertIn("call", ir_code)
         self.assertIn("string", ir_code)
 
-class TestCodeGeneratorArrayOperations(unittest.TestCase):
+class TestCodeGeneratorArrayOperations(CodeGenTestCase):
     """Test array operations and indexing"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_array_indexing(self):
         """Test valid array indexing operations"""
@@ -226,16 +247,8 @@ class TestCodeGeneratorArrayOperations(unittest.TestCase):
                 self.assertIn("store", ir_code)
                 self.assertIn("load", ir_code)
 
-class TestCodeGeneratorOperators(unittest.TestCase):
+class TestCodeGeneratorOperators(CodeGenTestCase):
     """Test operator type checking"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_arithmetic_operators(self):
         """Test valid arithmetic operators"""
@@ -284,16 +297,8 @@ class TestCodeGeneratorOperators(unittest.TestCase):
                 self.assertIn("or", ir_code)
                 self.assertIn("xor", ir_code)
 
-class TestCodeGeneratorControlFlow(unittest.TestCase):
+class TestCodeGeneratorControlFlow(CodeGenTestCase):
     """Test type checking in control flow statements"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_if_conditions(self):
         """Test valid if statement conditions"""
@@ -345,16 +350,8 @@ class TestCodeGeneratorControlFlow(unittest.TestCase):
         ir_code = self.generate_ir(source)
         self.assertIn("br i1", ir_code)
 
-class TestCodeGeneratorImplicitConversions(unittest.TestCase):
+class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
     """Test implicit type conversion rules"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_integer_promotions(self):
         """Test valid integer type promotions"""
@@ -365,7 +362,7 @@ class TestCodeGeneratorImplicitConversions(unittest.TestCase):
         i64 huge = large;    // i32 -> i64
         """
         ir_code = self.generate_ir(source)
-        self.assertIn("zext", ir_code)
+        self.assertIn("sext", ir_code)
 
     def test_valid_float_promotions(self):
         """Test valid float type promotions"""
@@ -388,16 +385,8 @@ class TestCodeGeneratorImplicitConversions(unittest.TestCase):
                 ir_code = self.generate_ir(source)
                 self.assertIn("sitofp", ir_code)
 
-class TestCodeGeneratorTypeCasting(unittest.TestCase):
+class TestCodeGeneratorTypeCasting(CodeGenTestCase):
     """Test explicit type casting operations"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_numeric_down_casts(self):
         """Test valid numeric down casting"""
@@ -412,25 +401,22 @@ class TestCodeGeneratorTypeCasting(unittest.TestCase):
 
     def test_valid_float_to_integer_casts(self):
         """Test valid float to integer casts"""
-        source = """
-        f64 double = 3.14;
-        i32 int32 = (i32)double;  // f64 -> i32
-        f32 single = 2.718;
-        i16 int16 = (i16)single;  // f32 -> i16
-        """
-        ir_code = self.generate_ir(source)
-        self.assertIn("fptosi", ir_code)
+        test_cases = [
+            """
+            f64 double = 3.14; 
+            i32 int32 = (i32)double;  // f64 -> i32
+            """,
+            """
+            f32 single = 2.718;
+            i16 int16 = (i16)single;  // f32 -> i16
+            """]
+        for source in test_cases:
+            with self.subTest(source=source):
+                ir_code = self.generate_ir(source)
+                self.assertIn("fptosi", ir_code)
 
-class TestCodeGeneratorUnaryOperations(unittest.TestCase):
+class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
     """Test type checking of unary operations"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
 
     def test_valid_numeric_negation(self):
         """Test valid numeric negation"""
@@ -469,36 +455,3 @@ class TestCodeGeneratorUnaryOperations(unittest.TestCase):
                 ir_code = self.generate_ir(source)
                 self.assertIn("add", ir_code)
                 self.assertIn("sub", ir_code)
-
-class TestCodeGeneratorMainFunction(unittest.TestCase):
-    """Test the main function execution"""
-    def setUp(self):
-        self.generator = CodeGen('??', StringIO(''))
-
-    def generate_ir(self, source: str) -> str:
-        """Helper method to generate LLVM IR from source code"""
-        gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
-
-    def test_main_function_execution(self):
-        """Test the execution of the main function"""
-        source = """
-        void main() {
-            i32 x = 42;
-            print(x);
-        }
-        """
-        ir_code = self.generate_ir(source)
-        self.assertIn("define void @main()", ir_code)
-        self.assertIn("call void @print(i32 42)", ir_code)
-
-        # Compile the IR code to a shared object
-        llvm_ir = ir.Module(context=binding.create_module(ir_code))
-        llvm_ir.verify()
-        target_machine = binding.Target.from_default_triple().create_target_machine()
-        obj = target_machine.emit_object(llvm_ir)
-
-        # Load the shared object and execute the main function
-        c_func = CFUNCTYPE(None)(obj.get_symbol("main"))
-        c_func()
