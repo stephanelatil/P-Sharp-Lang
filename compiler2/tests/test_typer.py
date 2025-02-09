@@ -3,7 +3,7 @@ from io import StringIO
 from typing import List, Optional, Type, Union
 from lexer import Lexer, Position, Lexeme
 from parser import (Parser, PProgram, PType, PArrayType, PVariableDeclaration,
-                    PExpression, PMethodCall, PClassProperty, PClass,
+                    PExpression, PMethodCall, PClassField, PClass,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
                     PWhileStatement, PForStatement)
 from operations import BinaryOperation
@@ -472,9 +472,9 @@ class TestTyperClassDeclarations(TestCase):
         self.assertFalse(typ.is_array)
         self.assertTrue(typ.is_reference_type)
         self.assertEqual(len(typ.methods), 1)
-        self.assertEqual(len(typ.properties), 2)
-        self.assertEqual(typ.properties[0].var_type.type_string, "i32")
-        self.assertEqual(typ.properties[1].var_type.type_string, "i32")
+        self.assertEqual(len(typ.fields), 2)
+        self.assertEqual(typ.fields[0].var_type.type_string, "i32")
+        self.assertEqual(typ.fields[1].var_type.type_string, "i32")
         
 
     def test_valid_class_with_methods(self):
@@ -498,7 +498,7 @@ class TestTyperClassDeclarations(TestCase):
         class_decl = prog.statements[0]
         self.assertIsInstance(class_decl, PClass)
         assert isinstance(class_decl, PClass)
-        self.assertEqual(len(class_decl.properties), 2)
+        self.assertEqual(len(class_decl.fields), 2)
         self.assertEqual(len(class_decl.methods), 2+1) #+ the default ToString method
         self.assertIn(class_decl.name, self.typer.known_types)
 

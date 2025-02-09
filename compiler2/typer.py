@@ -4,7 +4,7 @@ from io import StringIO
 from lexer import Lexeme, Lexer
 from utils import TypeClass, TypeInfo, TYPE_INFO, CompilerWarning, Position, TypingError
 from operations import BinaryOperation, UnaryOperation
-from parser import (Parser, PFunction, PClassProperty, PProgram, PType,
+from parser import (Parser, PFunction, PClassField, PProgram, PType,
                    PIdentifier, PArrayIndexing, PArrayInstantiation,
                    PBlock, PArrayType, PAssertStatement, PAssignment,
                    PBinaryOperation, PBreakStatement, PCast, PClass,
@@ -30,9 +30,9 @@ class ArchProperties:
 
         return True #8 bit or lower values are supported and pointers too
 
-def create_property(name: str, type_str: str) -> PClassProperty:
+def create_property(name: str, type_str: str) -> PClassField:
     """Helper function to create a class property"""
-    return PClassProperty(
+    return PClassField(
         name=name,
         type=PType(type_str, Lexeme.default),
         is_public=True,
@@ -59,7 +59,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "i8", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "i16": Typ(
@@ -68,7 +68,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "i16", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "i32": Typ(
@@ -77,7 +77,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "i32", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "i64": Typ(
@@ -86,7 +86,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "i64", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "u8": Typ(
@@ -95,7 +95,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "u8", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "u16": Typ(
@@ -104,7 +104,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "u16", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "u32": Typ(
@@ -113,7 +113,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "u32", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "u64": Typ(
@@ -122,7 +122,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "u64", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "f16": Typ(
@@ -134,7 +134,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("Floor", "f16", []),
             create_method("Ceiling", "f16", [])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "f32": Typ(
@@ -146,7 +146,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("Floor", "f32", []),
             create_method("Ceiling", "f32", [])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
     "f64": Typ(
@@ -158,7 +158,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("Floor", "f64", []),
             create_method("Ceiling", "f64", [])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
 
@@ -178,7 +178,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("StartsWith", "bool", [("string", "value")]),
             create_method("EndsWith", "bool", [("string", "value")])
         ],
-        properties=[
+        fields=[
             create_property("Length", "i32")
         ]
     ),
@@ -190,7 +190,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToString", "string", []),
             create_method("Parse", "bool", [("string", "s")])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
 
@@ -205,7 +205,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("ToUpper", "char", []),
             create_method("ToLower", "char", [])
         ],
-        properties=[],
+        fields=[],
         is_reference_type=False
     ),
 
@@ -225,7 +225,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("LastIndexOf", "i32", [("any", "value")]),
             create_method("Reverse", "void", [])
         ],
-        properties=[
+        fields=[
             create_property("Length", "i32"),
         ]
     ),
@@ -364,7 +364,7 @@ class Typer:
         
         self.all_symbols: List[Symbol] = []  # Track all symbols
         self.all_functions: List[PFunction] = []  # Track all functions
-        self.all_class_properties: List[PClassProperty] = []  # Track class properties
+        self.all_class_properties: List[PClassField] = []  # Track class properties
         self.all_class_methods: List[PFunction] = []  # Track class methods
 
         self._node_function_map = {
@@ -401,7 +401,7 @@ class Typer:
 
             # Class related
             PClass: self._type_class,
-            PClassProperty: self._type_class_property,
+            PClassField: self._type_class_property,
             PDotAttribute: self._type_dot_attribute,
             PObjectInstantiation: self._type_object_instantiation,
 
@@ -433,7 +433,7 @@ class Typer:
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
             if isinstance(statement, PClass):
-                self.known_types[statement.name] = Typ(statement.name, statement.methods, statement.properties)
+                self.known_types[statement.name] = Typ(statement.name, statement.methods, statement.fields)
             elif isinstance(statement, PFunction):
                 self._scope_manager.define_function(statement)
             continue
@@ -483,7 +483,7 @@ class Typer:
 
     def get_typ_size(self, type_:Typ):
         size = 0
-        for prop in type_.properties:
+        for prop in type_.fields:
             prop_typ = self._type_ptype(prop.var_type)
             typeinfo = self.get_type_info(prop_typ)
             if typeinfo.type_class in (TypeClass.ARRAY, TypeClass.CLASS, TypeClass.STRING):
@@ -748,7 +748,7 @@ class Typer:
                                           PForStatement, PReturnStatement,
                                           PBreakStatement, PContinueStatement,
                                           PAssertStatement, PVariableDeclaration,
-                                          PClassProperty, PDotAttribute,
+                                          PClassField, PDotAttribute,
                                           PObjectInstantiation, PCast, PType,
                                           PArrayType, PBlock, PFunction, PThis)):
             raise TypingError(f"Cannot type the {type(statement)} element at location {statement.position}")
@@ -783,7 +783,7 @@ class Typer:
 
     def _type_class(self, class_def: PClass) -> None:
         """Type checks a class definition and returns its type"""
-        for prop in class_def.properties:
+        for prop in class_def.fields:
             self._type_class_property(prop)
         
         # self._scope_manager.enter_scope()
@@ -873,7 +873,7 @@ class Typer:
     def _type_discard(self, discard:PDiscard) -> None:
         self._type_expression(discard.expression)
 
-    def _type_class_property(self, prop:PClassProperty) -> None:
+    def _type_class_property(self, prop:PClassField) -> None:
         """Type checks a variable declaration"""
         var_type = self._type_ptype(prop.var_type)
         prop.typer_pass_var_type = var_type
@@ -1141,7 +1141,7 @@ class Typer:
         tmp_assignment = self.is_assignment
         self.is_assignment = False
         left_type = self._type_expression(dot_attr.left)
-        for prop in left_type.properties:
+        for prop in left_type.fields:
             if prop.name == dot_attr.right.name:
                 if dot_attr.right.expr_type is None:
                     dot_attr.right.expr_type = self._type_ptype(prop.var_type)

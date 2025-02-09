@@ -4,7 +4,7 @@ from parser import (Parser, ParserError, NodeType, PProgram, PFunction, PBlock,
                    PVariableDeclaration, PAssignment, PBinaryOperation,
                    PUnaryOperation, PIfStatement, PWhileStatement, PForStatement,
                    PReturnStatement, PFunctionCall, PIdentifier, PLiteral,
-                   PCast, PClassProperty, PMethodCall, PBreakStatement,
+                   PCast, PClassField, PMethodCall, PBreakStatement,
                    PContinueStatement, PAssertStatement, PTernaryOperation,
                    PClass, PDotAttribute, PExpression, PArrayIndexing,
                    PArrayInstantiation, PObjectInstantiation,
@@ -1193,11 +1193,11 @@ class TestParserClassDefinitions(TestParserBase):
             assert isinstance(class_def, PClass)
 
             #test properties
-            self.assertEqual(len(class_def.properties), 2)
+            self.assertEqual(len(class_def.fields), 2)
             for i,(typ, name) in enumerate([('i32[]', 'elements'), ("i32","size")]):
-                self.assertIsInstance(class_def.properties[i], PClassProperty)
-                self.assertEqual(typ, str(class_def.properties[i].var_type))
-                self.assertEqual(name, class_def.properties[i].name)
+                self.assertIsInstance(class_def.fields[i], PClassField)
+                self.assertEqual(typ, str(class_def.fields[i].var_type))
+                self.assertEqual(name, class_def.fields[i].name)
 
             #test methods
             self.assertEqual(len(class_def.methods), 3)

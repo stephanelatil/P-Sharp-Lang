@@ -8,10 +8,10 @@ from llvmlite import ir
 
 @dataclass
 class Typ:
-    """Represents a type in the P# language with its methods and properties"""
+    """Represents a type in the P# language with its methods and fields"""
     name:str
     methods: List['PMethod']
-    properties: List['PClassProperty']
+    fields: List['PClassField']
     is_reference_type:bool = True
     is_array:bool = False
     
@@ -27,7 +27,7 @@ class Typ:
                                       Lexeme.default, is_builtin=True))
 
     def copy_with(self, name, is_array):
-        return Typ(name, self.methods, self.properties, is_array=is_array)
+        return Typ(name, self.methods, self.fields, is_array=is_array)
     
     def __str__(self):
         return self.name
@@ -171,19 +171,19 @@ class PMethod(PFunction):
 class PClass(PStatement):
     """Class definition node"""
     name: str
-    properties: List['PClassProperty']
+    fields: List['PClassField']
     methods: List[PMethod]
 
-    def __init__(self, name: str, properties: List['PClassProperty'],
+    def __init__(self, name: str, fields: List['PClassField'],
                  methods: List[PMethod], lexeme: Lexeme):
         super().__init__(NodeType.CLASS, lexeme.pos)
         self.name = name
-        self.properties = properties
+        self.fields = fields
         self.methods = methods
 
 @dataclass
-class PClassProperty(PStatement):
-    """Class property definition node"""
+class PClassField(PStatement):
+    """Class field definition node"""
     name: str
     var_type: 'PType'
     typer_pass_var_type: Optional[Typ]
@@ -918,7 +918,7 @@ class Parser:
         if is_lvalue and not (self.current_lexeme is Lexeme.default):
             if self._match(LexemeType.OPERATOR_BINARY_ASSIGN):
                 if not isinstance(left, (PDotAttribute, PIdentifier, PArrayIndexing)):
-                    raise ParserError("Cannot assign to anything else than a variable or property",
+                    raise ParserError("Cannot assign to anything else than a variable or field",
                                       self.current_lexeme)
                 self._expect(LexemeType.OPERATOR_BINARY_ASSIGN)
                 assign_lexeme = self.current_lexeme
@@ -1047,14 +1047,14 @@ class Parser:
         raise ParserError("Invalid literal", lexeme)
 
     def _parse_identifier_or_call_or_array_indexing(self) -> Union[PThis, PIdentifier, PFunctionCall, PMethodCall, PDotAttribute, PArrayIndexing]:
-        """Parse an identifier and any subsequent property accesses, method calls, or function calls.
+        """Parse an identifier and any subsequent field accesses, method calls, or function calls.
 
         This method handles the following patterns:
         - Simple identifier: myVar
         - Function call: myFunction()
-        - Property access: myObject.property
+        - Property access: myObject.field
         - Method call: myObject.method()
-        - Chained access: myObject.property.subProperty.method()
+        - Chained access: myObject.field.subField.method()
 
         Returns:
             Union[PExpression, PIdentifier, PFunctionCall, PMethodCall, PDotAttribute]: The parsed expression
@@ -1073,7 +1073,7 @@ class Parser:
                 expr = self._parse_function_arguments(expr)
 
         while True:
-            # Check for property access or method call
+            # Check for field access or method call
             if self._match(LexemeType.OPERATOR_DOT):
                 expr = self._parse_member_access(expr)
 
@@ -1114,7 +1114,7 @@ class Parser:
         return PFunctionCall(function, arguments, open_paren_lexeme)
 
     def _parse_member_access(self, left: PExpression) -> Union[PMethodCall, PDotAttribute]:
-        """Parse a member access expression (either property access or method call).
+        """Parse a member access expression (either field access or method call).
 
         Args:
             left (PExpression): The expression before the dot operator
@@ -1136,7 +1136,7 @@ class Parser:
         if self._match(LexemeType.PUNCTUATION_OPENPAREN):
             return self._parse_method_call(left, member_identifier.name)
 
-        # Otherwise it's a property access
+        # Otherwise it's a field access
         return PDotAttribute(left, member_identifier)
 
     def _parse_method_call(self, object_expr: PExpression, method_name: str) -> PMethodCall:
@@ -1291,7 +1291,7 @@ class Parser:
         name = self._expect(LexemeType.IDENTIFIER).value
 
         self._expect(LexemeType.PUNCTUATION_OPENBRACE)
-        properties: List[PClassProperty] = []
+        fields: List[PClassField] = []
         methods: List[PMethod] = []
 
         while not self._match(LexemeType.PUNCTUATION_CLOSEBRACE):
@@ -1322,13 +1322,19 @@ class Parser:
                         self._expect(LexemeType.OPERATOR_BINARY_ASSIGN)
                         default_value = self._parse_expression(is_lvalue=False)
                     self._expect(LexemeType.PUNCTUATION_SEMICOLON)
-                    properties.append(PClassProperty(member_name, type_name, is_public,
+                    fields.append(PClassField(member_name, type_name, is_public,
                                                      type_lexeme, default_value=default_value))
             else:
                 raise ParserError("Expected class member definition", self.current_lexeme)
 
         self._expect(LexemeType.PUNCTUATION_CLOSEBRACE)
-        return PClass(name, properties, methods, class_lexeme)
+        #sort fields to place all pointers (reference types) at the begining of the struct
+        #it ise useful for the GC to tarverse the object's fields that are reference types
+        fields.sort(key= lambda p:
+                    int(p.var_type.type_string in ['bool', 'char', 'i8', 'u8', 'i16', 'u16', 'f16', 
+                                                    'i32', 'u32', 'f32', 'i64', 'u64', 'f64'])
+            )
+        return PClass(name, fields, methods, class_lexeme)
 
     def _parse_ternary_operation(self, condition) -> PTernaryOperation:
         """Parse a ternary operation (condition ? true_value : false_value)"""
