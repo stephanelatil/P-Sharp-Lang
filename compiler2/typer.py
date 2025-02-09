@@ -866,6 +866,9 @@ class Typer:
         expr_type = self._type_expression(var_decl.initial_value)
         if not self.check_types_match(var_type, expr_type):
             raise TypingConversionError(var_type, expr_type, var_decl)
+        if expr_type != var_type:
+            var_decl.initial_value = self._make_implicit_cast_explicit(
+                                            var_decl.initial_value, var_type)
 
     def _type_discard(self, discard:PDiscard) -> None:
         self._type_expression(discard.expression)
