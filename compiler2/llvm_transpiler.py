@@ -42,7 +42,7 @@ class CodeGen:
                                                    max_int_size=64,
                                                    max_float_size=64))
         self.module = ir.Module(name=filename+".o")
-        target = Target.from_default_triple().create_target_machine(
+        self.target = Target.from_default_triple().create_target_machine(
             codemodel='jitdefault',
             jit=False,
         )
@@ -70,7 +70,7 @@ class CodeGen:
             return array_struct
         elif type_info.type_class == TypeClass.CLASS:
             field_types = []
-            for prop in type_.properties:
+            for prop in type_.fields:
                 prop_typ = self.typer._type_ptype(prop.var_type)
                 field_types.append(self.get_llvm_type(prop_typ))
             class_struct = ir.LiteralStructType(field_types)
@@ -89,7 +89,8 @@ class CodeGen:
     def compile_file_to_ir(self, warnings:bool=False):        
         self.ast = self.typer.type_program(warnings)
         
-        context = CodeGenContext(module=self.module, scopes=self.named_values,
+        context = CodeGenContext(target_data=self.target.target_data,
+                                 module=self.module, scopes=self.named_values,
                                  get_llvm_type=self.get_llvm_type)
         self._compile_program(self.ast, context)
         return context.module
@@ -148,7 +149,7 @@ class CodeGen:
             return
         class_typ:Typ = self.typer.known_types[cls.name]
         properties:List[Typ] = []
-        for prop in class_typ.properties:
+        for prop in class_typ.fields:
             if prop.typer_pass_var_type is None:
                 raise TypingError(f"Property {prop.name} of type {cls.name} is not typed!")
             properties.append(prop.typer_pass_var_type)

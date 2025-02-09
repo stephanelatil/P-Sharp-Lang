@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional, List, Dict, Callable, Tuple
-from llvmlite import ir
+from llvmlite import ir, binding
 
 class Position:
     default:'Position'
@@ -165,6 +165,7 @@ class CodeGenContext:
     """Context needed by various node when generating IR in the codegen pass"""
     module:ir.Module
     scopes:Scopes
+    target_data:binding.TargetData
     """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
     get_llvm_type: Callable[['Typ'],ir.Type]
     """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
