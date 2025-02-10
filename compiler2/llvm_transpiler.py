@@ -11,6 +11,11 @@ from llvmlite.binding import (initialize, initialize_native_target,
                               PassBuilder, Target)
 
 class CodeGen:
+    _array_struct = ir.LiteralStructType([
+                ir.IntType(64),  # length field
+                ir.PointerType()  # pointer to array contents
+            ])
+    
     def __init__(self, filename:str, file:TextIO, speed_opt:int=0, size_opt:int=0) -> None:
         #required for code generation (no cross-compile yet, needs initialize_all* for that)
         initialize()
@@ -46,7 +51,7 @@ class CodeGen:
             codemodel='jitdefault',
             jit=False,
         )
-        self.optimizer_pass = PassBuilder(target, PipelineTuningOptions(speed_opt, size_opt)
+        self.optimizer_pass = PassBuilder(self.target, PipelineTuningOptions(speed_opt, size_opt)
                                           ).getModulePassManager()
         self.named_values = Scopes()
 
@@ -57,17 +62,9 @@ class CodeGen:
         type_info = self.typer.get_type_info(type_)
         
         if type_info.type_class == TypeClass.ARRAY:
-            element_type_name = type_.name[:-2]
-            element_typ = self.typer.known_types.get(element_type_name)
-            if not element_typ:
-                raise ValueError(f"Element type {element_type_name} not found")
-            element_llvm_type = self.get_llvm_type(element_typ)
-            array_struct = ir.LiteralStructType([
-                ir.IntType(32),  # length field
-                ir.PointerType(element_llvm_type)  # data pointer
-            ])
-            self.type_map[type_.name] = array_struct
-            return array_struct
+            #return a generic array struct (contains an int and a pointer to the array)
+            self.type_map[type_.name] = self._array_struct
+            return self._array_struct
         elif type_info.type_class == TypeClass.CLASS:
             field_types = []
             for prop in type_.fields:
