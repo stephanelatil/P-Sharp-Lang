@@ -1,85 +1,91 @@
-#ifndef PS_GC__GC_H
-#define PS_GC__GC_H
-
+#include <stdio.h>
 #include <stdlib.h>
-#include "structures.h"
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <pthread.h>
 
-/**
- * @brief Runs the garbage collector and frees unreachable items
- *
- * @param stack The stack of reachable variables
- * @param set The set of all heap allocated objects
- */
-void PS_GC__garbage_collect(PS_GC__scopeRootVarsStack *stack, PS_GC__hashset *set);
+// Forward declarations
+typedef struct __PS_TypeInfo __PS_TypeInfo;
+typedef struct __PS_ObjectHeader __PS_ObjectHeader;
 
-/**
- * @brief Marks a GC object and all it's children (objects in fields) as reachable
- *
- * @param obj The object to mark
- */
-void PS_GC__mark(PS_GC__object *obj);
+// Type registry for storing all program types
+typedef struct {
+    __PS_TypeInfo** types;
+    size_t capacity;
+    size_t count;
+} __PS_TypeRegistry;
 
-/**
- * @brief Unmarks all GC objects in the hashset to prepare for future marking
- *
- * @param set The hashset containing GC objects
- */
-void PS_GC__unmark_all(PS_GC__hashset *set);
+// Type information structure
+// All pointers in objects must be at the start of the object's data
+struct __PS_TypeInfo {
+    size_t id;                  // Unique type ID
+    size_t size;               // Total size of object's data (excluding header)
+    size_t num_pointers;       // Number of pointer fields (all at start of data)
+    const char* type_name;     // Name of type (for debugging)
+};
 
-/**
- * @brief Sweeps and frees unmarked GC objects in the hashset
- *
- * @param set The hashset containing GC objects
- */
-void PS_GC__sweep(PS_GC__hashset *set);
+// Memory block header
+struct __PS_ObjectHeader {
+    size_t size;              // Total size including header
+    bool marked;              // Mark bit for GC
+    __PS_TypeInfo* type;      // Pointer to type information
+    __PS_ObjectHeader* prev_object; //Pointer to the previous allocated object
+    __PS_ObjectHeader* next_object; //Pointer to the next allocated object
+};
 
-/**
- * @brief Collects and frees a specific GC object
- *
- * @param obj The object to collect
- */
-void PS_GC__collect_object(PS_GC__hashset *set, PS_GC__object *obj);
+// Root set tracking
+#define MAX_ROOTS 10000
 
-/**
- * @brief Edits the object pointed to by a variable after an assignment
- *
- * @param stack The stack of reachable variables
- * @param ptr The pointer to the new item assigned to the variable
- * @param depth The depth of the variable in the stack
- * @param index The index of the variable in the root variable list
- */
-void PS_GC__assign_var(PS_GC__scopeRootVarsStack *stack, PS_GC__hashset *set,
-                       void *ptr, int depth, int index);
+typedef struct {
+    void** address;           // Address of the root pointer
+    __PS_TypeInfo* type;     // Type of the pointed-to object
+    const char* name;        // Variable name (for debugging)
+} __PS_Root;
 
-/**
- * @brief Executed on function enter and adds its local object variables to the
- * root vars stack
- *
- * @param stack The stack of reachable variables
- * @param vars The list of object variables of the scope
- */
-inline void PS_GC__enter_function(PS_GC__scopeRootVarsStack *stack,
-                                  PS_GC__rootVarList *vars)
-{
-  PS_GC__stack_push(stack, vars);
-}
+typedef struct {
+    //TODO should convert to stack-array!
+    __PS_Root roots[MAX_ROOTS];
+    size_t root_count;
+    pthread_mutex_t lock;    // For thread safety
+} __PS_RootSet;
 
-/**
- * @brief Exits a function scope and removes its variables from the stack
- *
- * @param stack The stack of reachable variables
- */
-inline void PS_GC__exit_function(PS_GC__scopeRootVarsStack *stack)
-{
-  PS_GC__stack_pop(stack);
-}
+// Initialize the type registry
+void __PS_InitTypeRegistry(size_t initial_capacity);
 
-/**
- * @brief Registers a new object created on the heap, adds it to the hashset and returns the item
- *
- * @param set The hashset to insert the item in
- * @param ptr The pointer to the object on the heap
- */
-PS_GC__object *PC_GC__new_obj(PS_GC__hashset *set, void *ptr);
+// Register a new type
+// Called during program initialization for each type in the program
+size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name);
 
-#endif /* PS_GC__GC_H */
+// Get type info by ID
+__PS_TypeInfo* __PS_GetTypeInfo(size_t type_id);
+
+// Initialize the heap
+void __PS_InitializeHeap(size_t size);
+
+// Initialize root tracking
+void __PS_InitRootTracking(void);
+
+// Register a root variable
+void __PS_RegisterRoot(void** address, __PS_TypeInfo* type, const char* name);
+
+// Unregister a root variable
+void __PS_UnregisterRoot(void** address);
+
+// Allocate memory
+void* __PS_Alloc(size_t type_id);
+
+// Mark an object and recursively mark all objects it references
+static void __PS_MarkObject(void* obj);
+
+// Sweep phase of garbage collection
+static void __PS_Sweep(void);
+
+// Main garbage collection function
+void __PS_CollectGarbage(void);
+
+// Cleanup everything
+void __PS_Cleanup(void);
+
+// Debug function to print heap statistics
+void __PS_PrintHeapStats(void);

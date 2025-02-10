@@ -1,2 +1,0 @@
-clang -S -emit-llvm -O3 structures.c gc.c -Wno-declaration-after-statement -Weverything
-llvm-link -S *.ll

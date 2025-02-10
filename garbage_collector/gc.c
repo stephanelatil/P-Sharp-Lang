@@ -1,107 +1,247 @@
-#include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
 #include <stdint.h>
-#include "structures.h"
+#include <pthread.h>
 #include "gc.h"
 
-void PS_GC__mark(struct PS_GC__object *obj)
-{
-    if (obj && obj->marked == 0) // only mark and continue not marked to avoid loops
-    {
-        obj->marked = 1;
-        for (size_t i = 0; i < obj->number_of_children; i++)
-            PS_GC__mark(obj->children[i]);
-    }
+/// Global type registry
+static __PS_TypeRegistry __PS_type_registry = {0}; //initialize to 0
+
+/// The function used to allocate memory on the heap
+const static void* (*__PS_calloc)(size_t) = calloc;
+const static void (*__PS_free)(void*) = free;
+
+// Root set tracking
+// TODO: make dynamically scalable to adjust in case of deep recursive functions that use lots of vars
+#define MAX_ROOTS 20000
+
+// Global variables
+static size_t __PS_total_heap_size = 0;
+static size_t __PS_min_block_size = sizeof(__PS_ObjectHeader);
+static __PS_RootSet __PS_root_set = {0}; //initialize to 0
+static __PS_ObjectHeader* __PS_first_obj_header = NULL; //TODO add mutex for this element aswell?
+
+// Initialize the type registry
+void __PS_InitTypeRegistry(size_t initial_capacity) {
+    __PS_type_registry.types = malloc(sizeof(__PS_TypeInfo*) * initial_capacity);
+    __PS_type_registry.capacity = initial_capacity;
+    __PS_type_registry.count = 0;
 }
 
-void PS_GC__unmark_all(PS_GC__hashset *set)
-{
-    for (size_t i = 0; i < set->size; i++)
-    {
-        struct PS_GC__hashset_bucket *bucket = set->buckets[i];
-        while (bucket != NULL)
-        {
-            bucket->object->marked = 0;
-            bucket = bucket->next;
+// Register a new type
+// Called during program initialization for each type in the program
+size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name) {
+    // Expand registry if needed
+    if (__PS_type_registry.count >= __PS_type_registry.capacity) {
+        //this should not happen as the number of types should known at compile/link time
+        // add a small smount of memory just in case
+        size_t new_capacity = __PS_type_registry.capacity + 100;
+        __PS_TypeInfo** new_types = realloc(__PS_type_registry.types, 
+                                          sizeof(__PS_TypeInfo*) * new_capacity);
+        if (!new_types) {
+            fprintf(stderr, "Failed to expand type registry\n");
+            exit(1);
+        }
+        __PS_type_registry.types = new_types;
+        __PS_type_registry.capacity = new_capacity;
+    }
+
+    // Create new type info
+    __PS_TypeInfo* type = malloc(sizeof(__PS_TypeInfo));
+    type->id = __PS_type_registry.count;
+    type->size = size;
+    type->num_pointers = num_pointers;
+    type->type_name = type_name;
+
+    // Add to registry
+    __PS_type_registry.types[__PS_type_registry.count] = type;
+    return __PS_type_registry.count++;
+}
+
+// Get type info by ID
+__PS_TypeInfo* __PS_GetTypeInfo(size_t type_id) {
+    if (type_id >= __PS_type_registry.count) return NULL;
+    return __PS_type_registry.types[type_id];
+}
+
+// Should be run at startup to initialize the struct and mutex
+void __PS_InitRootTracking(void) {
+    __PS_root_set.root_count = 0;
+    pthread_mutex_init(&__PS_root_set.lock, NULL);
+}
+
+// Register a root variable (reference types only!)
+// TODO: Ignore variables that host temporary items that can in the future be handled by static memory management.
+// Done when entering a scope and registering all reference type variables
+void __PS_RegisterRoot(void** address, __PS_TypeInfo* type, const char* name) {
+    pthread_mutex_lock(&__PS_root_set.lock);
+    if (__PS_root_set.root_count < MAX_ROOTS) {
+        __PS_root_set.roots[__PS_root_set.root_count].address = address;
+        __PS_root_set.roots[__PS_root_set.root_count].type = type;
+        __PS_root_set.roots[__PS_root_set.root_count].name = name;
+        __PS_root_set.root_count++;
+    }
+    else{
+        fprintf(stderr, "Maximum number of variables defined supported by the language");
+        exit(1);
+    }
+    pthread_mutex_unlock(&__PS_root_set.lock);
+}
+
+// Unregister a root variable
+// TODO: Root should be a stack so we just need to unregister N variables
+void __PS_UnregisterRoot(void** address) {
+    pthread_mutex_lock(&__PS_root_set.lock);
+    for (long i = __PS_root_set.root_count-1; i > 0; --i) {
+        if (__PS_root_set.roots[i].address == address) {
+            // Move last root to this position to fill the gap
+            // Possible issue if we're removing the last variable?
+            __PS_root_set.roots[i] = __PS_root_set.roots[__PS_root_set.root_count - 1];
+            __PS_root_set.root_count--;
+            break;
         }
     }
+    pthread_mutex_unlock(&__PS_root_set.lock);
 }
 
-void PS_GC__sweep(PS_GC__hashset *set)
-{
-    for (size_t i = 0; i < set->size; i++) // for every bucket
-    {
-        struct PS_GC__hashset_bucket *bucket = set->buckets[i];
-        struct PS_GC__hashset_bucket *prev_bucket = NULL;
-        while (bucket != NULL)
-        {
-            if (bucket->object->marked == 0) // Unreachable object
-            {
-                if (prev_bucket) // not null (bucket is not the first item in
-                                 // linked list)
-                {
-                    prev_bucket->next = bucket->next;
-                    PS_GC__collect_object(set, bucket->object);
-                    PS_GC__delete_hashset_bucket(bucket);
-                }
-                else // first item in linked list handled slightly differently
-                {
-                    set->buckets[i] = bucket->next;
-                    PS_GC__collect_object(set, bucket->object);
-                    PS_GC__delete_hashset_bucket(bucket);
-                }
+// Allocate memory
+// This is the method that should be used when allocating memory for an object
+void* __PS_Alloc(size_t type_id) {
+    __PS_TypeInfo* type = __PS_GetTypeInfo(type_id);
+    if (!type) {
+        fprintf(stderr, "Invalid type ID: %zu\n", type_id);
+        return NULL;
+    }
+
+    // Calculate total size needed including header
+    size_t aligned_size = (sizeof(__PS_ObjectHeader) + type->size + 7) & ~7;
+
+    __PS_ObjectHeader* allocated_mem = (__PS_ObjectHeader*) __PS_calloc(aligned_size);
+    allocated_mem->size = aligned_size;
+    // allocated_mem->marked = 0; // useless bc already zeroed mem
+    allocated_mem->type = type;
+
+    // return pointer to data in mem after the header
+    void* data = (void*)((char*)allocated_mem + sizeof(__PS_ObjectHeader));
+
+    //add object to obj double linked list
+    if (__PS_first_obj_header){
+        //first obj is not null
+        __PS_first_obj_header->prev_object = allocated_mem;
+        allocated_mem->next_object = __PS_first_obj_header;
+    }
+    __PS_first_obj_header = allocated_mem;
+
+    return data;
+}
+
+// Mark an object and recursively mark all objects it references
+static void __PS_MarkObject(void* obj) {
+    if (!obj) return;
+
+    __PS_ObjectHeader* header = (__PS_ObjectHeader*)((char*)obj - sizeof(__PS_ObjectHeader));
+    if (header->marked) return;
+
+    header->marked = true;
+
+    // If this object has pointer fields, traverse them
+    if (header->type && header->type->num_pointers > 0) {
+        // All pointers are at the start of the object data
+        void** ptr_fields = (void**)obj;
+        for (size_t i = 0; i < header->type->num_pointers; i++) {
+            if (ptr_fields[i]) {
+                __PS_MarkObject(ptr_fields[i]);
             }
-            else
-            {
-                prev_bucket = bucket;
-            }
-            bucket = bucket->next;
         }
     }
 }
 
-void PS_GC__collect_object(PS_GC__hashset *set, PS_GC__object *obj)
-{
-    PS_GC__removeItem(set, obj);
-    free(obj->ptr);
-    PS_GC__delete_object(obj);
-}
-
-void PS_GC__assign_var(PS_GC__scopeRootVarsStack *stack, PS_GC__hashset *set,
-                       void *ptr, int depth, int index)
-{
-    PS_GC__scopeRootVarsStackItem *item = stack->last;
-    while (depth > 0)
-    {
-        item = item->prev;
-        --depth;
-    }
-    item->vars->obj[index] = PS_GC__getItem(set, ptr);
-}
-
-PS_GC__object *PC_GC__new_obj(PS_GC__hashset *set, void *ptr)
-{
-    PS_GC__object *obj = PS_GC__create_obj(ptr);
-    PS_GC__insertItem(set, obj);
-    return obj;
-}
-void PS_GC__garbage_collect(PS_GC__scopeRootVarsStack *stack,
-                            PS_GC__hashset *set)
-{
-    // mark all reachable from stack
-    int depth = 0;
-    PS_GC__scopeRootVarsStackItem *stack_item = stack->last;
-    while (stack_item != NULL)
-    {
-        for (size_t i = 0; i < stack_item->vars->number_of_vars; ++i)
-        {
-            PS_GC__mark(stack_item->vars->obj[i]);
+// Sweep phase of garbage collection
+static void __PS_Sweep(void) {
+    __PS_ObjectHeader* current = __PS_first_obj_header;
+    __PS_ObjectHeader* first_non_freed_obj = NULL;
+    __PS_ObjectHeader* next = NULL;
+    
+    // TODO: OPTIM; split into 2 loops to avoid checking many times uselessly if first_non_freed_obj is null
+    // First loop where it is null (then break)
+    // second loop where it isn't
+    while (current){
+        next = current->next_object;
+        if (!current->marked){
+            // free objects if they're not marked
+            __PS_free(current);
         }
-        stack_item = stack_item->prev;
-        depth++;
+        else{
+            //reset linked list start to the first non-GCed object
+            if (!first_non_freed_obj)
+                first_non_freed_obj = current;
+        }
     }
-    // sweep
-    PS_GC__sweep(set);
-    // unmark all items
-    PS_GC__unmark_all(set);
+    // replace list start
+    __PS_first_obj_header = first_non_freed_obj;
+}
+
+// Main garbage collection function
+void __PS_CollectGarbage(void) {
+    // Reset marks
+    __PS_ObjectHeader* current = __PS_first_obj_header;
+    while (current) {
+        current->marked = false;
+        current = current->next_object;
+    }
+
+    // Mark from roots
+    pthread_mutex_lock(&__PS_root_set.lock);
+    for (size_t i = 0; i < __PS_root_set.root_count; i++) {
+        void* obj = *__PS_root_set.roots[i].address;
+        if (obj) {
+            __PS_MarkObject(obj);
+        }
+    }
+    pthread_mutex_unlock(&__PS_root_set.lock);
+
+    // Sweep phase
+    __PS_Sweep();
+}
+
+// Cleanup everything on program exit
+void __PS_Cleanup(void) {
+    // Free all remaining objects
+    __PS_ObjectHeader* next = NULL;
+    __PS_ObjectHeader* obj = __PS_first_obj_header;
+    while (obj){
+        next = obj->next_object;
+        __PS_free(obj);
+    }
+
+    // Free type registry
+    for (size_t i = 0; i < __PS_type_registry.count; i++) {
+        free(__PS_type_registry.types[i]);
+    }
+    free(__PS_type_registry.types);
+    __PS_type_registry.types = NULL;
+    __PS_type_registry.capacity = 0;
+    __PS_type_registry.count = 0;
+
+    // Cleanup root tracking
+    pthread_mutex_destroy(&__PS_root_set.lock);
+}
+
+// Debug function to print heap statistics
+void __PS_PrintHeapStats(void) {
+    size_t total_objects = 0;
+    size_t total_mem = 0;
+    __PS_ObjectHeader* current = __PS_first_obj_header;
+
+    while (current){
+        ++total_objects;
+        total_mem += current->size;
+    }
+
+    printf("\nHeap Statistics:\n");
+    printf("Number of Objects allocated: %zu\n", total_objects);
+    printf("Number of roots (variables): %zu\n", __PS_root_set.root_count);
+    printf("Number of registered types: %zu\n", __PS_type_registry.count);
 }
