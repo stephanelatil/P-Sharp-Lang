@@ -12,8 +12,8 @@ from llvmlite.binding import (initialize, initialize_native_target,
 
 class CodeGen:
     _array_struct = ir.LiteralStructType([
-                ir.IntType(64),  # length field
-                ir.PointerType()  # pointer to array contents
+                ir.PointerType(),  # pointer to array contents
+                ir.IntType(64)  # length field
             ])
     
     def __init__(self, filename:str, file:TextIO, speed_opt:int=0, size_opt:int=0) -> None:
