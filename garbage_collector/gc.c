@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <pthread.h>
@@ -10,18 +9,12 @@
 static __PS_TypeRegistry __PS_type_registry = {0}; //initialize to 0
 
 /// The function used to allocate memory on the heap
-const static void* (*__PS_calloc)(size_t) = calloc;
-const static void (*__PS_free)(void*) = free;
-
-// Root set tracking
-// TODO: make dynamically scalable to adjust in case of deep recursive functions that use lots of vars
-#define MAX_ROOTS 20000
+static void* (*__PS_calloc)(size_t, size_t) = calloc;
+static void (*__PS_free)(void*) = free;
 
 // Global variables
-static size_t __PS_total_heap_size = 0;
-static size_t __PS_min_block_size = sizeof(__PS_ObjectHeader);
 static __PS_RootSet __PS_root_set = {0}; //initialize to 0
-static __PS_ObjectHeader* __PS_first_obj_header = NULL; //TODO add mutex for this element aswell?
+static __PS_ObjectHeader* __PS_first_obj_header = NULL; //TODO add mutex for this element as well?
 
 // Initialize the type registry
 void __PS_InitTypeRegistry(size_t initial_capacity) {
@@ -108,7 +101,7 @@ void __PS_UnregisterRoot(void** address) {
 
 // Allocate memory
 // This is the method that should be used when allocating memory for an object
-void* __PS_Alloc(size_t type_id) {
+void* __PS_AllocateObject(size_t type_id) {
     __PS_TypeInfo* type = __PS_GetTypeInfo(type_id);
     if (!type) {
         fprintf(stderr, "Invalid type ID: %zu\n", type_id);
@@ -118,7 +111,7 @@ void* __PS_Alloc(size_t type_id) {
     // Calculate total size needed including header
     size_t aligned_size = (sizeof(__PS_ObjectHeader) + type->size + 7) & ~7;
 
-    __PS_ObjectHeader* allocated_mem = (__PS_ObjectHeader*) __PS_calloc(aligned_size);
+    __PS_ObjectHeader* allocated_mem = (__PS_ObjectHeader*) __PS_calloc(aligned_size, sizeof(uint8_t));
     allocated_mem->size = aligned_size;
     // allocated_mem->marked = 0; // useless bc already zeroed mem
     allocated_mem->type = type;
@@ -129,7 +122,6 @@ void* __PS_Alloc(size_t type_id) {
     //add object to obj double linked list
     if (__PS_first_obj_header){
         //first obj is not null
-        __PS_first_obj_header->prev_object = allocated_mem;
         allocated_mem->next_object = __PS_first_obj_header;
     }
     __PS_first_obj_header = allocated_mem;
@@ -164,7 +156,7 @@ static void __PS_Sweep(void) {
     __PS_ObjectHeader* first_non_freed_obj = NULL;
     __PS_ObjectHeader* next = NULL;
     
-    // TODO: OPTIM; split into 2 loops to avoid checking many times uselessly if first_non_freed_obj is null
+    // TODO: OPTIMISATION; split into 2 loops to avoid checking many times uselessly if first_non_freed_obj is null
     // First loop where it is null (then break)
     // second loop where it isn't
     while (current){
@@ -178,6 +170,7 @@ static void __PS_Sweep(void) {
             if (!first_non_freed_obj)
                 first_non_freed_obj = current;
         }
+        current = next;
     }
     // replace list start
     __PS_first_obj_header = first_non_freed_obj;
@@ -212,8 +205,10 @@ void __PS_Cleanup(void) {
     __PS_ObjectHeader* next = NULL;
     __PS_ObjectHeader* obj = __PS_first_obj_header;
     while (obj){
+        // Use next var to avoid use after free (even if right after)
         next = obj->next_object;
         __PS_free(obj);
+        obj = next;
     }
 
     // Free type registry
@@ -242,6 +237,7 @@ void __PS_PrintHeapStats(void) {
 
     printf("\nHeap Statistics:\n");
     printf("Number of Objects allocated: %zu\n", total_objects);
+    printf("Total memory allocated (bytes): %zu\n", total_mem);
     printf("Number of roots (variables): %zu\n", __PS_root_set.root_count);
     printf("Number of registered types: %zu\n", __PS_type_registry.count);
 }
