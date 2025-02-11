@@ -9,7 +9,7 @@
 static __PS_TypeRegistry __PS_type_registry = {0}; //initialize to 0
 
 /// The function used to allocate memory on the heap
-static void* (*__PS_calloc)(size_t, size_t) = calloc;
+static void* (*__PS_malloc)(size_t) = malloc;
 static void (*__PS_free)(void*) = free;
 
 // Global variables
@@ -111,7 +111,9 @@ void* __PS_AllocateObject(size_t type_id) {
     // Calculate total size needed including header
     size_t aligned_size = (sizeof(__PS_ObjectHeader) + type->size + 7) & ~7;
 
-    __PS_ObjectHeader* allocated_mem = (__PS_ObjectHeader*) __PS_calloc(aligned_size, sizeof(uint8_t));
+    __PS_ObjectHeader* allocated_mem = (__PS_ObjectHeader*) __PS_malloc(aligned_size);
+    //Zero out memory
+    memset(allocated_mem, 0, aligned_size);
     allocated_mem->size = aligned_size;
     // allocated_mem->marked = 0; // useless bc already zeroed mem
     allocated_mem->type = type;
