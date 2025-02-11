@@ -28,9 +28,9 @@ struct __PS_TypeInfo {
 // Memory block header
 struct __PS_ObjectHeader {
     size_t size;              // Total size including header
-    bool marked;              // Mark bit for GC
     __PS_TypeInfo* type;      // Pointer to type information
     __PS_ObjectHeader* next_object; //Pointer to the next allocated object
+    bool marked;              // Mark bit for GC
 };
 
 // Root set tracking
@@ -75,13 +75,6 @@ void __PS_UnregisterRoot(void** address);
 // Allocate memory
 // This is the method that should be used when allocating memory for an object
 void* __PS_AllocateObject(size_t type_id);
-
-// Mark an object and recursively mark all objects it references
-static void __PS_MarkObject(void* obj);
-
-// Sweep phase of garbage collection
-// Frees inaccessible objects
-static void __PS_Sweep(void);
 
 // Main garbage collection function
 void __PS_CollectGarbage(void);

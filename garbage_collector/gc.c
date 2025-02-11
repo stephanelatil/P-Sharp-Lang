@@ -87,7 +87,7 @@ void __PS_RegisterRoot(void** address, __PS_TypeInfo* type, const char* name) {
 // TODO: Root should be a stack so we just need to unregister N variables
 void __PS_UnregisterRoot(void** address) {
     pthread_mutex_lock(&__PS_root_set.lock);
-    for (long i = __PS_root_set.root_count-1; i > 0; --i) {
+    for (long i = __PS_root_set.root_count-1; i >= 0; --i) {
         if (__PS_root_set.roots[i].address == address) {
             // Move last root to this position to fill the gap
             // Possible issue if we're removing the last variable?
@@ -121,11 +121,8 @@ void* __PS_AllocateObject(size_t type_id) {
     // return pointer to data in mem after the header
     void* data = (void*)((char*)allocated_mem + sizeof(__PS_ObjectHeader));
 
-    //add object to obj double linked list
-    if (__PS_first_obj_header){
-        //first obj is not null
-        allocated_mem->next_object = __PS_first_obj_header;
-    }
+    //add object to linked list onf all allocated objects 
+    allocated_mem->next_object = __PS_first_obj_header;
     __PS_first_obj_header = allocated_mem;
 
     return data;
@@ -156,6 +153,7 @@ static void __PS_MarkObject(void* obj) {
 static void __PS_Sweep(void) {
     __PS_ObjectHeader* current = __PS_first_obj_header;
     __PS_ObjectHeader* first_non_freed_obj = NULL;
+    __PS_ObjectHeader* prev_not_freed_obj = NULL;
     __PS_ObjectHeader* next = NULL;
     
     // TODO: OPTIMISATION; split into 2 loops to avoid checking many times uselessly if first_non_freed_obj is null
@@ -171,9 +169,17 @@ static void __PS_Sweep(void) {
             //reset linked list start to the first non-GCed object
             if (!first_non_freed_obj)
                 first_non_freed_obj = current;
+            //remove freed items from linked list: only keep non-freed items
+            // this keeps the linked list in the same order
+            if (prev_not_freed_obj)
+                prev_not_freed_obj->next_object = current;
+            prev_not_freed_obj = current;
         }
         current = next;
     }
+    // ensure last element doesn't have a free'ed item at the end of the linked list
+    if (prev_not_freed_obj)
+        prev_not_freed_obj->next_object = NULL;
     // replace list start
     __PS_first_obj_header = first_non_freed_obj;
 }
@@ -235,6 +241,7 @@ void __PS_PrintHeapStats(void) {
     while (current){
         ++total_objects;
         total_mem += current->size;
+        current = current->next_object;
     }
 
     printf("\nHeap Statistics:\n");
