@@ -80,6 +80,7 @@ static void test_type_registry(void) {
 
 static void test_basic_allocation(void) {
     printf("Testing basic allocation...\n");
+    __PS_EnterScope(1);
     
     // Allocate simple object
     TestSimpleObject* simple = __PS_AllocateObject(simple_type_id);
@@ -99,7 +100,7 @@ static void test_basic_allocation(void) {
     assert(simple->data == 42);
     
     // Cleanup
-    __PS_UnregisterRoot(var_mem_location);
+    __PS_LeaveScope();
     __PS_CollectGarbage(); //and collect garbage
 
     assert (!header->marked); //ensure it was not! marked and thus GC-ed
@@ -109,6 +110,7 @@ static void test_basic_allocation(void) {
 
 static void test_linked_list(void) {
     printf("Testing linked list allocation...\n");
+    __PS_EnterScope(1);
     
     // Create a linked list
     TestObjectWithPointer* head = NULL;
@@ -149,7 +151,7 @@ static void test_linked_list(void) {
     }
     
     // Cleanup
-    __PS_UnregisterRoot(head_var_mem_location);
+    __PS_LeaveScope();
     // Trigger GC
     __PS_CollectGarbage();
     
@@ -166,6 +168,7 @@ static void test_linked_list(void) {
 
 static void test_cyclic_references(void) {
     printf("Testing cyclic references...\n");
+    __PS_EnterScope(1);
     
     // Create a cycle of three objects
     TestObjectWithPointer* obj1 = __PS_AllocateObject(pointer_type_id);
@@ -199,7 +202,7 @@ static void test_cyclic_references(void) {
     assert (_get_header(obj3)->marked);
     
     // Cleanup
-    __PS_UnregisterRoot(obj1_var_mem_location);
+    __PS_LeaveScope();
     __PS_CollectGarbage();
 
     //ensure it was not marked and thus GC-ed
@@ -212,6 +215,7 @@ static void test_cyclic_references(void) {
 
 static void test_complex_object_tree(void) {
     printf("Testing complex object tree...\n");
+    __PS_EnterScope(1);
     
     // Create a binary tree-like structure
     TestComplexObject* root = __PS_AllocateObject(complex_type_id);
@@ -254,51 +258,15 @@ static void test_complex_object_tree(void) {
     assert (_get_header(root->left->simple)->marked);
     
     // Cleanup
-    __PS_UnregisterRoot(root_var_mem_location);
+    __PS_LeaveScope();
     __PS_CollectGarbage();
     
     printf("Complex object tree tests passed\n");
 }
 
-static void test_objects_pointed_to_by_multiple_roots(void){
-    printf("Testing objects pointed to by multiple roots...\n");
-
-    // Create objects
-    TestComplexObject* root = __PS_AllocateObject(complex_type_id);
-    root->left = __PS_AllocateObject(complex_type_id);
-    root->right = __PS_AllocateObject(complex_type_id);
-    
-    void** root_var_mem_location = (void**)&root;
-    void** left_var_mem_location = (void**)&root->left;
-
-    // Register roots
-    __PS_RegisterRoot(left_var_mem_location, __PS_GetTypeInfo(complex_type_id), "left");
-    __PS_RegisterRoot(root_var_mem_location, __PS_GetTypeInfo(complex_type_id), "root");
-
-    // Check no GC when all items reachable
-    __PS_CollectGarbage();
-    assert (_get_header(root)->marked);
-    assert (_get_header(root->left)->marked);
-    assert (_get_header(root->right)->marked);
-
-    //Unregister root (make root var "out of scope")
-    __PS_UnregisterRoot(root_var_mem_location);
-
-    // Check GC is correct: only "left" should be reachable
-    __PS_CollectGarbage();
-    assert (_get_header(root->left)->marked);
-
-    //there should not be marked (and thus GC-ed)
-    assert (! _get_header(root)->marked);
-    assert (! _get_header(root->right)->marked);
-
-    //cleanup
-    __PS_UnregisterRoot(left_var_mem_location);
-    __PS_CollectGarbage();
-}
-
 static void test_unreachable_objects(void) {
     printf("Testing unreachable object collection...\n");
+    __PS_EnterScope(1);
     
     // Create objects
     TestComplexObject* root = __PS_AllocateObject(complex_type_id);
@@ -329,10 +297,212 @@ static void test_unreachable_objects(void) {
     __PS_PrintHeapStats();
     
     // Cleanup
-    __PS_UnregisterRoot(root_var_mem_location);
+    __PS_LeaveScope();
     __PS_CollectGarbage();
     
     printf("Unreachable object collection tests passed\n");
+}
+
+static void test_objects_pointed_to_by_multiple_roots(void){
+    printf("Testing objects pointed to by multiple roots...\n");
+    __PS_EnterScope(1);
+
+    // Create objects
+    TestComplexObject* root = __PS_AllocateObject(complex_type_id);
+    root->left = __PS_AllocateObject(complex_type_id);
+    root->right = __PS_AllocateObject(complex_type_id);
+    
+    void** root_var_mem_location = (void**)&root;
+    void** left_var_mem_location = (void**)&root->left;
+
+    // Register roots
+    __PS_RegisterRoot(left_var_mem_location, __PS_GetTypeInfo(complex_type_id), "left");
+    
+    __PS_EnterScope(1);
+    __PS_RegisterRoot(root_var_mem_location, __PS_GetTypeInfo(complex_type_id), "root");
+
+    // Check no GC when all items reachable
+    __PS_CollectGarbage();
+    assert (_get_header(root)->marked);
+    assert (_get_header(root->left)->marked);
+    assert (_get_header(root->right)->marked);
+
+    //Unregister root (make root var "out of scope")
+    __PS_LeaveScope();
+
+    // Check GC is correct: only "left" should be reachable
+    __PS_CollectGarbage();
+    assert (_get_header(root->left)->marked);
+
+    //there should not be marked (and thus GC-ed)
+    assert (! _get_header(root)->marked);
+    assert (! _get_header(root->right)->marked);
+
+    //cleanup
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+}
+
+// Test scope management
+static void test_basic_scope_management(void) {
+    printf("Testing basic scope management...\n");
+    
+    // Test basic scope enter/leave
+    __PS_EnterScope(1);
+    TestSimpleObject* obj = __PS_AllocateObject(simple_type_id);
+    obj->data = 42;
+    void** obj_loc = (void**)&obj;
+    __PS_RegisterRoot(obj_loc, __PS_GetTypeInfo(simple_type_id), "obj");
+    
+    // Verify object is in scope
+    __PS_CollectGarbage();
+    assert(_get_header(obj)->marked);
+    
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+    // Object should be collected after scope exit
+    assert(!_get_header(obj)->marked);
+    
+    printf("Basic scope management tests passed\n");
+}
+
+static void test_nested_scopes(void) {
+    printf("Testing nested scopes...\n");
+    
+    // Create outer scope with object
+    __PS_EnterScope(1);
+    TestSimpleObject* outer_obj = __PS_AllocateObject(simple_type_id);
+    outer_obj->data = 1;
+    void** outer_loc = (void**)&outer_obj;
+    __PS_RegisterRoot(outer_loc, __PS_GetTypeInfo(simple_type_id), "outer_obj");
+    
+    // Create inner scope with different object
+    __PS_EnterScope(1);
+    TestSimpleObject* inner_obj = __PS_AllocateObject(simple_type_id);
+    inner_obj->data = 2;
+    void** inner_loc = (void**)&inner_obj;
+    __PS_RegisterRoot(inner_loc, __PS_GetTypeInfo(simple_type_id), "inner_obj");
+    
+    // Verify both objects survive GC
+    __PS_CollectGarbage();
+    assert(_get_header(outer_obj)->marked);
+    assert(_get_header(inner_obj)->marked);
+    
+    // Leave inner scope
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+    
+    // Inner object should be collected, outer survives
+    assert(!_get_header(inner_obj)->marked);
+    assert(_get_header(outer_obj)->marked);
+    
+    // Leave outer scope
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+    
+    // Both objects should be collected
+    assert(!_get_header(outer_obj)->marked);
+    
+    printf("Nested scopes tests passed\n");
+}
+
+static void test_scope_capacity(void) {
+    printf("Testing scope capacity handling...\n");
+    
+    // Test scope with exact capacity
+    __PS_EnterScope(2);
+    TestSimpleObject* obj1 = __PS_AllocateObject(simple_type_id);
+    TestSimpleObject* obj2 = __PS_AllocateObject(simple_type_id);
+    void** obj1_loc = (void**)&obj1;
+    void** obj2_loc = (void**)&obj2;
+    
+    // These should succeed
+    __PS_RegisterRoot(obj1_loc, __PS_GetTypeInfo(simple_type_id), "obj1");
+    __PS_RegisterRoot(obj2_loc, __PS_GetTypeInfo(simple_type_id), "obj2");
+    
+    // Verify objects are tracked
+    __PS_CollectGarbage();
+    assert(_get_header(obj1)->marked);
+    assert(_get_header(obj2)->marked);
+    
+    __PS_LeaveScope();
+    // Cleanup
+    __PS_CollectGarbage();
+    
+    printf("Scope capacity tests passed\n");
+}
+
+static void test_scope_interactions(void) {
+    printf("Testing scope interactions...\n");
+    
+    // Create outer scope with shared object
+    __PS_EnterScope(1);
+    TestComplexObject* shared = __PS_AllocateObject(complex_type_id);
+    shared->data = 42;
+    void** shared_loc = (void**)&shared;
+    __PS_RegisterRoot(shared_loc, __PS_GetTypeInfo(complex_type_id), "shared");
+    
+    // Create inner scope that references shared object
+    __PS_EnterScope(1);
+    TestComplexObject* inner = __PS_AllocateObject(complex_type_id);
+    inner->left = shared;  // Reference to outer scope object
+    void** inner_loc = (void**)&inner;
+    __PS_RegisterRoot(inner_loc, __PS_GetTypeInfo(complex_type_id), "inner");
+    
+    // Verify all objects survive
+    __PS_CollectGarbage();
+    assert(_get_header(shared)->marked);
+    assert(_get_header(inner)->marked);
+    
+    // Leave inner scope
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+    
+    // Inner object should be collected, shared survives
+    assert(!_get_header(inner)->marked);
+    assert(_get_header(shared)->marked);
+    
+    // Leave outer scope
+    __PS_LeaveScope();
+    
+    printf("Scope interactions tests passed\n");
+}
+
+static void test_scope_edge_cases(void) {
+    printf("Testing scope edge cases...\n");
+    
+    // Test entering scope with zero capacity
+    __PS_EnterScope(0);
+    __PS_LeaveScope();
+    
+    // Test multiple nested scopes
+    for (int i = 0; i < 10; i++) {
+        __PS_EnterScope(1);
+        TestSimpleObject* obj = __PS_AllocateObject(simple_type_id);
+        void** obj_loc = (void**)&obj;
+        __PS_RegisterRoot(obj_loc, __PS_GetTypeInfo(simple_type_id), "obj");
+    }
+    
+    // Leave all scopes
+    for (int i = 0; i < 10; i++) {
+        __PS_LeaveScope();
+    }
+    
+    // Test scope with multiple references to same object
+    __PS_EnterScope(2);
+    TestComplexObject* obj = __PS_AllocateObject(complex_type_id);
+    void** obj_loc1 = (void**)&obj;
+    void** obj_loc2 = (void**)&obj;
+    
+    __PS_RegisterRoot(obj_loc1, __PS_GetTypeInfo(complex_type_id), "obj1");
+    __PS_RegisterRoot(obj_loc2, __PS_GetTypeInfo(complex_type_id), "obj2");
+    
+    __PS_CollectGarbage();
+    assert(_get_header(obj)->marked);
+    
+    __PS_LeaveScope();
+    
+    printf("Scope edge cases tests passed\n");
 }
 
 // Main test runner
@@ -349,6 +519,12 @@ int main(void) {
     test_complex_object_tree();
     test_unreachable_objects();
     test_objects_pointed_to_by_multiple_roots();
+
+    test_basic_scope_management();
+    test_nested_scopes();
+    test_scope_capacity();
+    test_scope_interactions();
+    test_scope_edge_cases();
     
     // Cleanup
     __PS_Cleanup();
