@@ -5,6 +5,8 @@
 #include <pthread.h>
 #include "gc.h"
 
+#define GC_After_N_Allocs 20
+
 /// Global type registry
 static __PS_TypeRegistry __PS_type_registry = {0}; //initialize to 0
 
@@ -13,8 +15,117 @@ static void* (*__PS_malloc)(size_t) = malloc;
 static void (*__PS_free)(void*) = free;
 
 // Global variables
-static __PS_RootSet __PS_root_set = {0}; //initialize to 0
 static __PS_ObjectHeader* __PS_first_obj_header = NULL; //TODO add mutex for this element as well?
+static __PS_ScopeStack __PS_scope_stack = {0}; //the stack of roots
+static uint32_t __PS_partial_alloc_count = 0;
+
+/// @brief Initializes the ScopeStack to handle root variables on the stack
+/// @param max_scope_depth The max scope depth before hitting the GC stack overflow limit (independent from the actual stack size)
+void __PS_InitScopeStack(size_t max_scope_depth) {
+    __PS_scope_stack.scopes = malloc(sizeof(__PS_Scope) * max_scope_depth);
+    __PS_scope_stack.capacity = max_scope_depth;
+    __PS_scope_stack.count = 0;
+}
+
+
+/// @brief Decides whether to run the garbage collector now or not, depending on some heuristic data obtained from the global scope vars
+/// @return true (1) if the heuristic decides to run the GC now else false (0)
+bool __PS_Collect_Garbage_Now_Heuristic(void){
+    return __PS_partial_alloc_count >= GC_After_N_Allocs;
+}
+
+/// @brief Tells the GC we're entering a new scope that will contain $num_roots variables
+/// @param num_roots The number of variables defined in this scope
+void __PS_EnterScope(size_t num_roots) {
+    if (__PS_scope_stack.count >= __PS_scope_stack.capacity) {
+        fprintf(stderr, "Maximum scope nesting depth exceeded\n");
+        exit(1);
+    }
+
+    // Add new scope to stack
+    __PS_Scope* new_scope = &__PS_scope_stack.scopes[__PS_scope_stack.count++];
+    new_scope->roots = (__PS_Root*) malloc(sizeof(__PS_Root) * num_roots);
+    new_scope->num_roots = 0;
+    new_scope->capacity = num_roots;
+}
+
+/// @brief Tells the GC we're leaving the current scope. It will destroy the current scope and associated roots. The GC will be run if it deems relevant.
+void __PS_LeaveScope(void) {
+    if (__PS_scope_stack.count == 0) {
+        fprintf(stderr, "No active scope to leave: program has terminated\n");
+        exit(1);
+    }
+
+    // Get the current scope
+    __PS_Scope* current_scope = &__PS_scope_stack.scopes[__PS_scope_stack.count - 1];
+
+    // Remove the last scope
+    pthread_mutex_lock(&__PS_scope_stack.lock);
+    free(current_scope->roots);
+    pthread_mutex_unlock(&__PS_scope_stack.lock);
+
+    // Remove scope from stack
+    __PS_scope_stack.count--;
+
+    //Collect garbage if necessary
+    if (__PS_Collect_Garbage_Now_Heuristic())
+        __PS_CollectGarbage();
+}
+
+/// @brief Frees all remaining scopes and prepares for program termination
+void __PS_CleanupScopeStack(void) {
+    __PS_Scope* current_scope = NULL;
+    pthread_mutex_lock(&__PS_scope_stack.lock);
+    
+    while (__PS_scope_stack.count > 0){
+        // Get the current scope
+        current_scope= &__PS_scope_stack.scopes[__PS_scope_stack.count - 1];
+        // Remove the scope
+        free(current_scope->roots);
+        __PS_scope_stack.count--;
+    }
+    pthread_mutex_unlock(&__PS_scope_stack.lock);
+
+    free(__PS_scope_stack.scopes);
+    __PS_scope_stack.scopes = NULL;
+    __PS_scope_stack.capacity = 0;
+    __PS_scope_stack.count = 0;
+}
+
+// // TODO: Ignore variables that host temporary items that can in the future be handled by static memory management.
+/// @brief Register a root variable (reference types only!). Done when entering a scope and registering all reference type variables
+/// @param address The address of the variable location in memory (ptr to the variable's memory location)
+/// @param type The Type of the variable
+/// @param name The variable's name in the current scope
+void __PS_RegisterRoot(void** address, __PS_TypeInfo* type, const char* name) {
+    pthread_mutex_lock(&__PS_scope_stack.lock);
+    
+    // Ensure we have an active scope
+    if (__PS_scope_stack.count == 0) {
+        fprintf(stderr, "Cannot register root outside of a scope\n");
+        pthread_mutex_unlock(&__PS_scope_stack.lock);
+        exit(1);
+    }
+
+    // Get current scope
+    __PS_Scope* current_scope = &__PS_scope_stack.scopes[__PS_scope_stack.count - 1];
+    
+    // Check if we've exceeded the number of roots allowed in this scope
+    if (current_scope->num_roots >= current_scope->capacity) {
+        fprintf(stderr, "Exceeded maximum number of roots for current scope\n");
+        pthread_mutex_unlock(&__PS_scope_stack.lock);
+        exit(1);
+    }
+
+    // Register the root
+    __PS_Root* root = &(current_scope->roots[current_scope->num_roots]);
+    root->address = address;
+    root->type = type;
+    root->name = name;
+    current_scope->num_roots++;
+
+    pthread_mutex_unlock(&__PS_scope_stack.lock);
+}
 
 // Initialize the type registry
 void __PS_InitTypeRegistry(size_t initial_capacity) {
@@ -61,42 +172,8 @@ __PS_TypeInfo* __PS_GetTypeInfo(size_t type_id) {
 
 // Should be run at startup to initialize the struct and mutex
 void __PS_InitRootTracking(void) {
-    __PS_root_set.root_count = 0;
-    pthread_mutex_init(&__PS_root_set.lock, NULL);
-}
-
-// Register a root variable (reference types only!)
-// TODO: Ignore variables that host temporary items that can in the future be handled by static memory management.
-// Done when entering a scope and registering all reference type variables
-void __PS_RegisterRoot(void** address, __PS_TypeInfo* type, const char* name) {
-    pthread_mutex_lock(&__PS_root_set.lock);
-    if (__PS_root_set.root_count < MAX_ROOTS) {
-        __PS_root_set.roots[__PS_root_set.root_count].address = address;
-        __PS_root_set.roots[__PS_root_set.root_count].type = type;
-        __PS_root_set.roots[__PS_root_set.root_count].name = name;
-        __PS_root_set.root_count++;
-    }
-    else{
-        fprintf(stderr, "Maximum number of variables defined supported by the language");
-        exit(1);
-    }
-    pthread_mutex_unlock(&__PS_root_set.lock);
-}
-
-// Unregister a root variable
-// TODO: Root should be a stack so we just need to unregister N variables
-void __PS_UnregisterRoot(void** address) {
-    pthread_mutex_lock(&__PS_root_set.lock);
-    for (long i = __PS_root_set.root_count-1; i >= 0; --i) {
-        if (__PS_root_set.roots[i].address == address) {
-            // Move last root to this position to fill the gap
-            // Possible issue if we're removing the last variable?
-            __PS_root_set.roots[i] = __PS_root_set.roots[__PS_root_set.root_count - 1];
-            __PS_root_set.root_count--;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&__PS_root_set.lock);
+    __PS_InitScopeStack(1000); //maxdepth of 1000
+    pthread_mutex_init(&__PS_scope_stack.lock, NULL);
 }
 
 // Allocate memory
@@ -125,6 +202,8 @@ void* __PS_AllocateObject(size_t type_id) {
     allocated_mem->next_object = __PS_first_obj_header;
     __PS_first_obj_header = allocated_mem;
 
+    //used as heuristic to count when to GC
+    __PS_partial_alloc_count++;
     return data;
 }
 
@@ -202,6 +281,8 @@ static void __PS_Sweep(void) {
 
 // Main garbage collection function
 void __PS_CollectGarbage(void) {
+    //reset partial count
+    __PS_partial_alloc_count = 0;
     // Reset marks
     __PS_ObjectHeader* current = __PS_first_obj_header;
     while (current) {
@@ -210,14 +291,17 @@ void __PS_CollectGarbage(void) {
     }
 
     // Mark from roots
-    pthread_mutex_lock(&__PS_root_set.lock);
-    for (size_t i = 0; i < __PS_root_set.root_count; i++) {
-        void* obj = *__PS_root_set.roots[i].address;
-        if (obj) {
+    pthread_mutex_lock(&__PS_scope_stack.lock);
+    //TODO find way to traverse stack efficiently
+    for (size_t scope_num = 0; scope_num < __PS_scope_stack.count; ++scope_num){
+        __PS_Scope* scope = &__PS_scope_stack.scopes[scope_num];
+        for (size_t root_num = 0; root_num < scope->num_roots; ++root_num){
+            void* obj = *scope->roots[root_num].address;
             __PS_MarkObject(obj);
         }
     }
-    pthread_mutex_unlock(&__PS_root_set.lock);
+    
+    pthread_mutex_unlock(&__PS_scope_stack.lock);
 
     // Sweep phase
     __PS_Sweep();
@@ -225,6 +309,7 @@ void __PS_CollectGarbage(void) {
 
 // Cleanup everything on program exit
 void __PS_Cleanup(void) {
+    __PS_CleanupScopeStack();
     // Free all remaining objects
     __PS_ObjectHeader* next = NULL;
     __PS_ObjectHeader* obj = __PS_first_obj_header;
@@ -245,13 +330,14 @@ void __PS_Cleanup(void) {
     __PS_type_registry.count = 0;
 
     // Cleanup root tracking
-    pthread_mutex_destroy(&__PS_root_set.lock);
+    pthread_mutex_destroy(&__PS_scope_stack.lock);
 }
 
 // Debug function to print heap statistics
 void __PS_PrintHeapStats(void) {
     size_t total_objects = 0;
     size_t total_mem = 0;
+    size_t root_count = 0;
     __PS_ObjectHeader* current = __PS_first_obj_header;
 
     while (current){
@@ -259,10 +345,13 @@ void __PS_PrintHeapStats(void) {
         total_mem += current->size;
         current = current->next_object;
     }
+    //traverse root set to count vars
+    for (size_t i = 0; i < __PS_scope_stack.count; ++i)
+        root_count += (&__PS_scope_stack.scopes[i])->num_roots;
 
     printf("\nHeap Statistics:\n");
     printf("Number of Objects allocated: %zu\n", total_objects);
     printf("Total memory allocated (bytes): %zu\n", total_mem);
-    printf("Number of roots (variables): %zu\n", __PS_root_set.root_count);
+    printf("Number of roots (variables): %zu\n", root_count);
     printf("Number of registered types: %zu\n", __PS_type_registry.count);
 }

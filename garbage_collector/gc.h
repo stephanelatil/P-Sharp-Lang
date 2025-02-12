@@ -43,12 +43,33 @@ typedef struct {
     const char* name;        // Variable name (for debugging)
 } __PS_Root;
 
+// Structure to represent a scope's root variables
 typedef struct {
-    //TODO should convert to stack-array!
-    __PS_Root roots[MAX_ROOTS];
-    size_t root_count;
+    // size_t root_start_index;  // Index in the global root array where this scope's roots begin
+    size_t capacity;
+    size_t num_roots;         // Number of roots in this scope
+    __PS_Root* roots;         // The roots array of the current scope
+} __PS_Scope;
+
+// Stack to track active scopes
+typedef struct {
+    __PS_Scope* scopes;       // Array of scopes
+    size_t capacity;          // Maximum number of nested scopes supported
+    size_t count;             // Current number of active scopes
     pthread_mutex_t lock;    // For thread safety
-} __PS_RootSet;
+} __PS_ScopeStack;
+
+// Initialize the scope stack
+void __PS_InitScopeStack(size_t max_scopes);
+
+// Enter a new scope that will contain the specified number of roots
+void __PS_EnterScope(size_t num_roots);
+
+// Leave the current scope and unregister all its roots
+void __PS_LeaveScope(void);
+
+// Cleanup the scope stack
+void __PS_CleanupScopeStack(void);
 
 // Initialize the type registry
 void __PS_InitTypeRegistry(size_t initial_capacity);
