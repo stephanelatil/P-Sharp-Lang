@@ -156,9 +156,8 @@ static void __PS_Sweep(void) {
     __PS_ObjectHeader* prev_not_freed_obj = NULL;
     __PS_ObjectHeader* next = NULL;
     
-    // TODO: OPTIMISATION; split into 2 loops to avoid checking many times uselessly if first_non_freed_obj is null
+    // OPTIMISATION; split into 2 loops to avoid checking many times uselessly if first_non_freed_obj is null
     // First loop where it is null (then break)
-    // second loop where it isn't
     while (current){
         next = current->next_object;
         if (!current->marked){
@@ -166,17 +165,34 @@ static void __PS_Sweep(void) {
             __PS_free(current);
         }
         else{
-            //reset linked list start to the first non-GCed object
-            if (!first_non_freed_obj)
-                first_non_freed_obj = current;
+            break;
+        }
+        current = next;
+    }
+
+    //Setup non-freed
+    //reset linked list start to the first non-GCed object
+    first_non_freed_obj = current;
+    prev_not_freed_obj = current;
+    current = next;
+
+    // second loop where first_non_freed_obj isn't NULL
+    while (current){
+        next = current->next_object;
+        if (!current->marked){
+            // free objects if they're not marked
+            __PS_free(current);
+        }
+        else{
             //remove freed items from linked list: only keep non-freed items
             // this keeps the linked list in the same order
-            if (prev_not_freed_obj)
-                prev_not_freed_obj->next_object = current;
+            prev_not_freed_obj->next_object = current;
             prev_not_freed_obj = current;
         }
         current = next;
     }
+
+
     // ensure last element doesn't have a free'ed item at the end of the linked list
     if (prev_not_freed_obj)
         prev_not_freed_obj->next_object = NULL;
