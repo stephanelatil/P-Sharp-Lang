@@ -87,7 +87,7 @@ void __PS_InitRootTracking(void);
 // Register a root variable (reference types only!)
 // TODO: Ignore variables that host temporary items that can in the future be handled by static memory management.
 // Done when entering a scope and registering all reference type variables
-void __PS_RegisterRoot(void** address, __PS_TypeInfo* type, const char* name);
+void __PS_RegisterRoot(void** address, size_t type_id, const char* name);
 
 // Unregister a root variable
 // TODO: Root should be a stack so we just need to unregister N variables

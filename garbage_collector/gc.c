@@ -95,9 +95,16 @@ void __PS_CleanupScopeStack(void) {
 // // TODO: Ignore variables that host temporary items that can in the future be handled by static memory management.
 /// @brief Register a root variable (reference types only!). Done when entering a scope and registering all reference type variables
 /// @param address The address of the variable location in memory (ptr to the variable's memory location)
-/// @param type The Type of the variable
+/// @param type_id The TypeInfo id of the variable
 /// @param name The variable's name in the current scope
-void __PS_RegisterRoot(void** address, __PS_TypeInfo* type, const char* name) {
+void __PS_RegisterRoot(void** address, size_t type_id, const char* name) {
+    __PS_TypeInfo* type = __PS_GetTypeInfo(type_id);
+    if (!type)
+    {
+        fprintf(stderr, "Unable to find type with id: %zu\nThe program will now exit", type_id);
+        exit(1);
+    }
+
     pthread_mutex_lock(&__PS_scope_stack.lock);
     
     // Ensure we have an active scope

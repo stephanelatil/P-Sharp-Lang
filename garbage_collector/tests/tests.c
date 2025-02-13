@@ -88,7 +88,7 @@ static void test_basic_allocation(void) {
     simple->data = 42;
     void** var_mem_location = (void**)&simple;
     // Register as root and verify
-    __PS_RegisterRoot(var_mem_location, __PS_GetTypeInfo(simple_type_id), "simple");
+    __PS_RegisterRoot(var_mem_location, simple_type_id, "simple");
     
     // Trigger GC
     __PS_CollectGarbage();
@@ -135,7 +135,7 @@ static void test_linked_list(void) {
     void** head_var_mem_location = (void**)&head;
 
     // Register only the head as root
-    __PS_RegisterRoot(head_var_mem_location, __PS_GetTypeInfo(pointer_type_id), "head");
+    __PS_RegisterRoot(head_var_mem_location, pointer_type_id, "head");
     
     // Trigger GC
     __PS_CollectGarbage();
@@ -186,7 +186,7 @@ static void test_cyclic_references(void) {
     void** obj1_var_mem_location = (void**) &obj1;
 
     // Register only obj1 as root
-    __PS_RegisterRoot(obj1_var_mem_location, __PS_GetTypeInfo(pointer_type_id), "obj1");
+    __PS_RegisterRoot(obj1_var_mem_location, pointer_type_id, "obj1");
     
     // Trigger GC
     __PS_CollectGarbage();
@@ -236,7 +236,7 @@ static void test_complex_object_tree(void) {
     void** root_var_mem_location = (void**) &root;
 
     // Register only the root
-    __PS_RegisterRoot(root_var_mem_location, __PS_GetTypeInfo(complex_type_id), "root");
+    __PS_RegisterRoot(root_var_mem_location, complex_type_id, "root");
     
     // Trigger GC
     __PS_CollectGarbage();
@@ -277,7 +277,7 @@ static void test_unreachable_objects(void) {
     void** root_var_mem_location = (void**)&root;
 
     // Register root
-    __PS_RegisterRoot(root_var_mem_location, __PS_GetTypeInfo(complex_type_id), "root");
+    __PS_RegisterRoot(root_var_mem_location, complex_type_id, "root");
     
     // Create unreachable objects
     TestComplexObject* unreachable = __PS_AllocateObject(complex_type_id);
@@ -316,10 +316,10 @@ static void test_objects_pointed_to_by_multiple_roots(void){
     void** left_var_mem_location = (void**)&root->left;
 
     // Register roots
-    __PS_RegisterRoot(left_var_mem_location, __PS_GetTypeInfo(complex_type_id), "left");
+    __PS_RegisterRoot(left_var_mem_location, complex_type_id, "left");
     
     __PS_EnterScope(1);
-    __PS_RegisterRoot(root_var_mem_location, __PS_GetTypeInfo(complex_type_id), "root");
+    __PS_RegisterRoot(root_var_mem_location, complex_type_id, "root");
 
     // Check no GC when all items reachable
     __PS_CollectGarbage();
@@ -352,7 +352,7 @@ static void test_basic_scope_management(void) {
     TestSimpleObject* obj = __PS_AllocateObject(simple_type_id);
     obj->data = 42;
     void** obj_loc = (void**)&obj;
-    __PS_RegisterRoot(obj_loc, __PS_GetTypeInfo(simple_type_id), "obj");
+    __PS_RegisterRoot(obj_loc, simple_type_id, "obj");
     
     // Verify object is in scope
     __PS_CollectGarbage();
@@ -374,14 +374,14 @@ static void test_nested_scopes(void) {
     TestSimpleObject* outer_obj = __PS_AllocateObject(simple_type_id);
     outer_obj->data = 1;
     void** outer_loc = (void**)&outer_obj;
-    __PS_RegisterRoot(outer_loc, __PS_GetTypeInfo(simple_type_id), "outer_obj");
+    __PS_RegisterRoot(outer_loc, simple_type_id, "outer_obj");
     
     // Create inner scope with different object
     __PS_EnterScope(1);
     TestSimpleObject* inner_obj = __PS_AllocateObject(simple_type_id);
     inner_obj->data = 2;
     void** inner_loc = (void**)&inner_obj;
-    __PS_RegisterRoot(inner_loc, __PS_GetTypeInfo(simple_type_id), "inner_obj");
+    __PS_RegisterRoot(inner_loc, simple_type_id, "inner_obj");
     
     // Verify both objects survive GC
     __PS_CollectGarbage();
@@ -417,8 +417,8 @@ static void test_scope_capacity(void) {
     void** obj2_loc = (void**)&obj2;
     
     // These should succeed
-    __PS_RegisterRoot(obj1_loc, __PS_GetTypeInfo(simple_type_id), "obj1");
-    __PS_RegisterRoot(obj2_loc, __PS_GetTypeInfo(simple_type_id), "obj2");
+    __PS_RegisterRoot(obj1_loc, simple_type_id, "obj1");
+    __PS_RegisterRoot(obj2_loc, simple_type_id, "obj2");
     
     // Verify objects are tracked
     __PS_CollectGarbage();
@@ -440,14 +440,14 @@ static void test_scope_interactions(void) {
     TestComplexObject* shared = __PS_AllocateObject(complex_type_id);
     shared->data = 42;
     void** shared_loc = (void**)&shared;
-    __PS_RegisterRoot(shared_loc, __PS_GetTypeInfo(complex_type_id), "shared");
+    __PS_RegisterRoot(shared_loc, complex_type_id, "shared");
     
     // Create inner scope that references shared object
     __PS_EnterScope(1);
     TestComplexObject* inner = __PS_AllocateObject(complex_type_id);
     inner->left = shared;  // Reference to outer scope object
     void** inner_loc = (void**)&inner;
-    __PS_RegisterRoot(inner_loc, __PS_GetTypeInfo(complex_type_id), "inner");
+    __PS_RegisterRoot(inner_loc, complex_type_id, "inner");
     
     // Verify all objects survive
     __PS_CollectGarbage();
@@ -480,7 +480,7 @@ static void test_scope_edge_cases(void) {
         __PS_EnterScope(1);
         TestSimpleObject* obj = __PS_AllocateObject(simple_type_id);
         void** obj_loc = (void**)&obj;
-        __PS_RegisterRoot(obj_loc, __PS_GetTypeInfo(simple_type_id), "obj");
+        __PS_RegisterRoot(obj_loc, simple_type_id, "obj");
     }
     
     // Leave all scopes
@@ -494,8 +494,8 @@ static void test_scope_edge_cases(void) {
     void** obj_loc1 = (void**)&obj;
     void** obj_loc2 = (void**)&obj;
     
-    __PS_RegisterRoot(obj_loc1, __PS_GetTypeInfo(complex_type_id), "obj1");
-    __PS_RegisterRoot(obj_loc2, __PS_GetTypeInfo(complex_type_id), "obj2");
+    __PS_RegisterRoot(obj_loc1, complex_type_id, "obj1");
+    __PS_RegisterRoot(obj_loc2, complex_type_id, "obj2");
     
     __PS_CollectGarbage();
     assert(_get_header(obj)->marked);
