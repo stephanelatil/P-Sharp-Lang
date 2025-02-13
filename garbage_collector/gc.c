@@ -22,7 +22,7 @@ static uint32_t __PS_partial_alloc_count = 0;
 /// @brief Initializes the ScopeStack to handle root variables on the stack
 /// @param max_scope_depth The max scope depth before hitting the GC stack overflow limit (independent from the actual stack size)
 void __PS_InitScopeStack(size_t max_scope_depth) {
-    __PS_scope_stack.scopes = malloc(sizeof(__PS_Scope) * max_scope_depth);
+    __PS_scope_stack.scopes = __PS_malloc(sizeof(__PS_Scope) * max_scope_depth);
     __PS_scope_stack.capacity = max_scope_depth;
     __PS_scope_stack.count = 0;
 }
@@ -44,7 +44,7 @@ void __PS_EnterScope(size_t num_roots) {
 
     // Add new scope to stack
     __PS_Scope* new_scope = &__PS_scope_stack.scopes[__PS_scope_stack.count++];
-    new_scope->roots = (__PS_Root*) malloc(sizeof(__PS_Root) * num_roots);
+    new_scope->roots = (__PS_Root*) __PS_malloc(sizeof(__PS_Root) * num_roots);
     new_scope->num_roots = 0;
     new_scope->capacity = num_roots;
 }
@@ -61,7 +61,7 @@ void __PS_LeaveScope(void) {
 
     // Remove the last scope
     pthread_mutex_lock(&__PS_scope_stack.lock);
-    free(current_scope->roots);
+    __PS_free(current_scope->roots);
     pthread_mutex_unlock(&__PS_scope_stack.lock);
 
     // Remove scope from stack
@@ -81,12 +81,12 @@ void __PS_CleanupScopeStack(void) {
         // Get the current scope
         current_scope= &__PS_scope_stack.scopes[__PS_scope_stack.count - 1];
         // Remove the scope
-        free(current_scope->roots);
+        __PS_free(current_scope->roots);
         __PS_scope_stack.count--;
     }
     pthread_mutex_unlock(&__PS_scope_stack.lock);
 
-    free(__PS_scope_stack.scopes);
+    __PS_free(__PS_scope_stack.scopes);
     __PS_scope_stack.scopes = NULL;
     __PS_scope_stack.capacity = 0;
     __PS_scope_stack.count = 0;
@@ -136,7 +136,7 @@ void __PS_RegisterRoot(void** address, size_t type_id, const char* name) {
 
 // Initialize the type registry
 void __PS_InitTypeRegistry(size_t initial_capacity) {
-    __PS_type_registry.types = malloc(sizeof(__PS_TypeInfo*) * initial_capacity);
+    __PS_type_registry.types = __PS_malloc(sizeof(__PS_TypeInfo*) * initial_capacity);
     __PS_type_registry.capacity = initial_capacity;
     __PS_type_registry.count = 0;
 }
@@ -160,7 +160,7 @@ size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name
     }
 
     // Create new type info
-    __PS_TypeInfo* type = malloc(sizeof(__PS_TypeInfo));
+    __PS_TypeInfo* type = __PS_malloc(sizeof(__PS_TypeInfo));
     type->id = __PS_type_registry.count;
     type->size = size;
     type->num_pointers = num_pointers;
@@ -329,9 +329,9 @@ void __PS_Cleanup(void) {
 
     // Free type registry
     for (size_t i = 0; i < __PS_type_registry.count; i++) {
-        free(__PS_type_registry.types[i]);
+        __PS_free(__PS_type_registry.types[i]);
     }
-    free(__PS_type_registry.types);
+    __PS_free(__PS_type_registry.types);
     __PS_type_registry.types = NULL;
     __PS_type_registry.capacity = 0;
     __PS_type_registry.count = 0;
