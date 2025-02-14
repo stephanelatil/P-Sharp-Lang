@@ -30,7 +30,7 @@ void __PS_InitScopeStack(size_t max_scope_depth) {
 
 /// @brief Decides whether to run the garbage collector now or not, depending on some heuristic data obtained from the global scope vars
 /// @return true (1) if the heuristic decides to run the GC now else false (0)
-bool __PS_Collect_Garbage_Now_Heuristic(void){
+inline bool __PS_Collect_Garbage_Now_Heuristic(void){
     return __PS_partial_alloc_count >= GC_After_N_Allocs;
 }
 
