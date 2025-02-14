@@ -1,4 +1,4 @@
-COMPILER=clang
+COMPILER=clang-15
 
 GC_OBJ=gc.o
 TESTS_OBJ=tests.o
