@@ -115,7 +115,6 @@ class ScopeVars:
     def get_var(self, name:str) -> Optional[VarInfo]:
         return self.scope_vars.get(name, None)
 
-
 class Scopes:
     def __init__(self):
         self.scopes:List[ScopeVars] = []
@@ -169,5 +168,8 @@ class CodeGenContext:
     """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
     get_llvm_type: Callable[['Typ'],ir.Type]
     """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
-    loopinfo:List[Tuple[ir.Block, ir.Block]]=field(default_factory=list)
+    loopinfo:List[Tuple[ir.Block, ir.Block]] = field(default_factory=list)
     builder:ir.IRBuilder = ir.IRBuilder()
+    global_exit_block:Optional[ir.Block]=None
+    type_ids:Dict[str, int] = field(default_factory=dict)
+    builtin_functions:Dict[str, Tuple[ir.FunctionType, ir.Function]] = field(default_factory=dict)
