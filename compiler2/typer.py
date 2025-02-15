@@ -227,7 +227,9 @@ _builtin_types: Dict[str, Typ] = {
         ],
         fields=[
             create_property("Length", "i32"),
-        ]
+        ],
+        is_reference_type=True,
+        is_array=True
     ),
     'void': Typ('void', [],[]),
     '__null': Typ('null', [], [], True)
@@ -297,11 +299,22 @@ class SymbolNotFoundError(Exception):
 class ScopeManager:
     """Manages the hierarchy of scopes during type checking"""
     current_scope: Scope = field(default_factory=Scope)
+    _function_scope_stack:List = field(default_factory=list)
+    
+    def enter_function_scope(self):
+        self._function_scope_stack.append(self.current_scope)
+        global_scope = self.current_scope
+        while global_scope.parent is not None:
+            global_scope = global_scope.parent
+        self.current_scope = Scope(parent=global_scope)
 
     def enter_scope(self) -> None:
         """Enter a new scope"""
         new_scope = Scope(parent=self.current_scope)
         self.current_scope = new_scope
+        
+    def exit_function_scope(self):
+        self.current_scope = self._function_scope_stack.pop()
 
     def exit_scope(self) -> None:
         """Exit the current scope"""
@@ -480,16 +493,6 @@ class Typer:
                     f"Method '{method.name}' is declared but never called",
                     method.position
                 ))
-
-    def get_typ_size(self, type_:Typ):
-        size = 0
-        for prop in type_.fields:
-            prop_typ = self._type_ptype(prop.var_type)
-            typeinfo = self.get_type_info(prop_typ)
-            if typeinfo.type_class in (TypeClass.ARRAY, TypeClass.CLASS, TypeClass.STRING):
-                size += self.archProperties.pointer_size
-            else:
-                size += typeinfo.bit_width
 
     def _ptype_from_typ(self, typ:Typ, pos:Optional[Position]=None) -> PType|PArrayType:
         if pos is None:
@@ -818,6 +821,7 @@ class Typer:
             assert self._in_class is not None #if method: ensure we're in a function!
             function._class_type = self._type_ptype(self._in_class)
         
+        self._scope_manager.enter_function_scope()
         self.expected_return_type = self._type_ptype(function.return_type)
         function._return_typ_typed = self.expected_return_type
         self._type_block(function.body, function.parameters)
@@ -832,6 +836,7 @@ class Typer:
                     PReturnStatement.implicit_return(
                         function.body.statements[-1].position))
         self.expected_return_type = None
+        self._scope_manager.exit_function_scope()
 
     def _type_block(self, block: PBlock, params:Optional[List[PVariableDeclaration]]=None) -> None:
         """Type checks a block of statements, optionally verifying return type"""
@@ -876,7 +881,7 @@ class Typer:
     def _type_class_property(self, prop:PClassField) -> None:
         """Type checks a variable declaration"""
         var_type = self._type_ptype(prop.var_type)
-        prop.typer_pass_var_type = var_type
+        prop._typer_pass_var_type = var_type
         self.all_class_properties.append(prop)
 
         if prop.default_value is None:
@@ -1118,6 +1123,9 @@ class Typer:
         index = self._type_expression(array_index.index)
         if self.get_type_info(index).type_class != TypeClass.INTEGER:
             raise TypingError(f"The index must be an integer type not '{index}'")
+        #implicit convert array index to u64
+        array_index.index = PCast(PType('u64', array_index.index.position), array_index.index)
+        array_index.index.expr_type = self.known_types['u64']
         
         array_index.expr_type = array_elem_type
         return array_elem_type
@@ -1133,6 +1141,7 @@ class Typer:
         array_size_type = self._type_expression(array_init.size)
         if self.get_type_info(array_size_type).type_class != TypeClass.INTEGER:
             raise TypingError(f"Expected an array size of type Integer but got '{array_size_type}'")
+        array_init._element_type_typ = self._type_ptype(array_init.element_type)
         return array_init.expr_type
         
 
