@@ -20,7 +20,7 @@ typedef struct {
 // All pointers in objects must be at the start of the object's data
 struct __PS_TypeInfo {
     size_t id;                 // Unique type ID
-    size_t size;               // Total size of object's data (excluding header)
+    size_t size;               // Total size of object's data (excluding header) in bytes
     size_t num_pointers;       // Number of pointer fields (all at start of data)
     const char* type_name;     // Name of type (for debugging)
 };
@@ -96,6 +96,16 @@ void __PS_UnregisterRoot(void** address);
 // Allocate memory
 // This is the method that should be used when allocating memory for an object
 void* __PS_AllocateObject(size_t type_id);
+
+/// @brief Allocate contiguous memory for an array of value types
+/// @param size The size in bytes to allocate (includes size (size_t) of the array)
+/// @return The pointer to the array_struct
+void* __PS_AllocateValueArray(size_t size);
+
+/// @brief Allocate contiguous memory for an array of reference types
+/// @param size The size in bytes to allocate (includes size (size_t) of the array)
+/// @return The pointer to the array_struct
+void* __PS_AllocateRefArray(size_t size);
 
 // Main garbage collection function
 void __PS_CollectGarbage(void);

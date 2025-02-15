@@ -5,6 +5,9 @@
 #include <pthread.h>
 #include "gc.h"
 
+#define REFERENCE_ARRAY_TYPE_ID 0
+#define VALUE_ARRAY_TYPE_ID 1
+
 #define GC_After_N_Allocs 20
 
 /// Global type registry
@@ -136,9 +139,22 @@ void __PS_RegisterRoot(void** address, size_t type_id, const char* name) {
 
 // Initialize the type registry
 void __PS_InitTypeRegistry(size_t initial_capacity) {
+    initial_capacity += 2;
     __PS_type_registry.types = __PS_malloc(sizeof(__PS_TypeInfo*) * initial_capacity);
+    // First one is set to be continuous memory for arrays!
+    __PS_TypeInfo* contiguous_mem = __PS_type_registry.types;
+    contiguous_mem->type_name = "__array_of_ref_types";
+    contiguous_mem->id=REFERENCE_ARRAY_TYPE_ID;
+    contiguous_mem->num_pointers=0;
+    contiguous_mem->size=0;
+    __PS_TypeInfo* contiguous_mem = &(__PS_type_registry.types[1]);
+    contiguous_mem->type_name = "___array_of_value_types";
+    contiguous_mem->id=VALUE_ARRAY_TYPE_ID;
+    contiguous_mem->num_pointers=0;
+    contiguous_mem->size=0;
+
     __PS_type_registry.capacity = initial_capacity;
-    __PS_type_registry.count = 0;
+    __PS_type_registry.count = 2;
 }
 
 // Register a new type
@@ -171,6 +187,36 @@ size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name
     return __PS_type_registry.count++;
 }
 
+void* __PS_AllocateArray(size_t size, size_t type_id){
+    // Calculate total size needed including header
+    size_t aligned_size = (sizeof(__PS_ObjectHeader) + size + sizeof(void*)) & ~(sizeof(void*)-1);
+
+    __PS_ObjectHeader* allocated_mem = (__PS_ObjectHeader*) __PS_malloc(aligned_size);
+    //Zero out memory
+    memset(allocated_mem, 0, aligned_size);
+    allocated_mem->size = aligned_size;
+    allocated_mem->type = __PS_type_registry.types[type_id];
+
+    // return pointer to data in mem after the header
+    void* data = (void*)((char*)allocated_mem + sizeof(__PS_ObjectHeader));
+
+    //add object to linked list onf all allocated objects 
+    allocated_mem->next_object = __PS_first_obj_header;
+    __PS_first_obj_header = allocated_mem;
+
+    //used as heuristic to count when to GC
+    __PS_partial_alloc_count++;
+    return data;
+}
+
+inline void* __PS_AllocateValueArray(size_t size){
+    return __PS_AllocateArray(size, VALUE_ARRAY_TYPE_ID);
+}
+
+inline void* __PS_AllocateRefArray(size_t size){
+    return __PS_AllocateArray(size, REFERENCE_ARRAY_TYPE_ID);
+}
+
 // Get type info by ID
 __PS_TypeInfo* __PS_GetTypeInfo(size_t type_id) {
     if (type_id >= __PS_type_registry.count) return NULL;
@@ -193,7 +239,7 @@ void* __PS_AllocateObject(size_t type_id) {
     }
 
     // Calculate total size needed including header
-    size_t aligned_size = (sizeof(__PS_ObjectHeader) + type->size + 7) & ~7;
+    size_t aligned_size = (sizeof(__PS_ObjectHeader) + type->size + sizeof(void*)) & ~(sizeof(void*)-1);
 
     __PS_ObjectHeader* allocated_mem = (__PS_ObjectHeader*) __PS_malloc(aligned_size);
     //Zero out memory
@@ -222,9 +268,16 @@ static void __PS_MarkObject(void* obj) {
     if (header->marked) return;
 
     header->marked = true;
+    if (!header->type)
+        return;
+    
+    if (header->type->id == REFERENCE_ARRAY_TYPE_ID){
+        for (size_t i = 0; i < header->size; i += 8)
+            __PS_MarkObject(obj+i);//mark object in array
+    }
 
     // If this object has pointer fields, traverse them
-    if (header->type && header->type->num_pointers > 0) {
+    else if (header->type->num_pointers > 0) {
         // All pointers are at the start of the object data
         void** ptr_fields = (void**)obj;
         for (size_t i = 0; i < header->type->num_pointers; i++) {
