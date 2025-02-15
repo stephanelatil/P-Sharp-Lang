@@ -1326,8 +1326,8 @@ class TestParserClassDefinitions(TestParserBase):
     def test_array_initialization_variable_size(self):
         """Test array initialization with variable size expression"""
         code = """
-        int size = 10;
-        int[] arr = new int[size];
+        i32 size = 10;
+        i64[] arr = new i64[size];
         """
         ast = self.parse_source(code)
         
@@ -1337,6 +1337,9 @@ class TestParserClassDefinitions(TestParserBase):
         self.assertIsInstance(arr_decl.initial_value, PArrayInstantiation)
         assert isinstance(arr_decl.initial_value, PArrayInstantiation)
         size_expr = arr_decl.initial_value.size
+        self.assertIsInstance(size_expr, PCast)
+        assert isinstance(size_expr, PCast)
+        size_expr = size_expr.expression
         self.assertIsInstance(size_expr, PIdentifier)
         assert isinstance(size_expr, PIdentifier)
         self.assertEqual(size_expr.name, "size")
@@ -1344,9 +1347,9 @@ class TestParserClassDefinitions(TestParserBase):
     def test_array_indexing_simple(self):
         """Test basic array indexing operations"""
         code = """
-        int[] arr = new int[5];
+        i32[] arr = new i32[5];
         arr[0] = 42;
-        int value = arr[1];
+        i32 value = arr[1];
         """
         ast = self.parse_source(code)
         
@@ -1372,7 +1375,7 @@ class TestParserClassDefinitions(TestParserBase):
 
     def test_array_indexing_nested(self):
         """Test nested array indexing operations"""
-        code = "int[][] matrix = new int[3][];"
+        code = "i32[][] matrix = new i32[3][];"
         ast = self.parse_source(code)
         
         var_decl = ast.statements[0]
@@ -1384,12 +1387,12 @@ class TestParserClassDefinitions(TestParserBase):
         assert isinstance(var_decl.var_type.element_type, PArrayType)
         self.assertIsInstance(var_decl.var_type.element_type.element_type, PType)
         assert isinstance(var_decl.var_type.element_type.element_type, PType)
-        self.assertEqual(var_decl.var_type.element_type.element_type.type_string, "int")
+        self.assertEqual(var_decl.var_type.element_type.element_type.type_string, "i32")
 
     def test_array_indexing_expressions(self):
         """Test array indexing with complex expressions"""
         code = """
-        int[] arr = new int[10];
+        i32[] arr = new i32[10];
         arr[2 + 3] = arr[1 * 2];
         """
         ast = self.parse_source(code)
@@ -1411,7 +1414,7 @@ class TestParserClassDefinitions(TestParserBase):
     def test_array_type_single_dimension(self):
         """Test single dimension array type declarations"""
         code = """
-        int[] numbers;
+        i32[] numbers;
         string[] words;
         MyClass[] objects;
         """
@@ -1432,7 +1435,7 @@ class TestParserClassDefinitions(TestParserBase):
         
         for dim in dimensions:
             with self.subTest(dimensions=dim):
-                type_decl = "int" + "[]" * dim
+                type_decl = "i32" + "[]" * dim
                 code = f"{type_decl} arr;"
                 ast = self.parse_source(code)
                 
@@ -1449,15 +1452,15 @@ class TestParserClassDefinitions(TestParserBase):
                 
                 self.assertIsInstance(current_type, PType)
                 assert isinstance(current_type, PType)
-                self.assertEqual(current_type.type_string, "int")
+                self.assertEqual(current_type.type_string, "i32")
 
     def test_array_type_mixed_declarations(self):
         """Test array declarations with mixed types and initializations"""
         code = """
-        int[] nums1;
-        int[] nums2 = new int[5];
-        int[][] matrix1;
-        int[][] matrix2 = new int[3][];
+        i32[] nums1;
+        i32[] nums2 = new i32[5];
+        i32[][] matrix1;
+        i32[][] matrix2 = new i32[3][];
         """
         ast = self.parse_source(code)
         
