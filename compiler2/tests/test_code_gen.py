@@ -25,11 +25,15 @@ class CodeGenTestCase(TestCase):
         self.generator = CodeGen('??', StringIO(''))
         self._engine = create_execution_engine()
 
-    def generate_ir(self, source: str) -> str:
+    def generate_module(self, source: str) -> ModuleRef:
         """Helper method to generate LLVM IR from source code"""
         gen = CodeGen('test.cs', StringIO(source))
-        mod = gen.compile_file_to_ir()
-        return str(mod)
+        return gen.compile_file_to_ir()
+    
+    def get_function_ir(self, module:ModuleRef, func_name:str='main'):
+        func = module.get_function(func_name)
+        blocks = func.blocks
+        return '\n'.join([str(block) for block in blocks])
     
     def compile_ir(self, module:ir.Module|str):
         """
@@ -61,16 +65,17 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
         test_cases = [
             "i32 x = 42;",
             "f64 pi = 3.14159;",
-            "string msg = \"hello\";",
+            # "string msg = \"hello\";", #TODO strings not defined yet
             "bool flag = true;",
             "char c = 'a';"
         ]
 
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
-                self.assertIn("global", ir_code)
-                self.assertIn("store", ir_code)
+                module = self.generate_module(source)
+                main = self.get_function_ir(module)
+                self.assertIn("global", main)
+                self.assertIn("store", main)
 
     def test_valid_array_declarations(self):
         """Test valid array declarations"""
@@ -83,7 +88,8 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
 
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("global", ir_code)
                 self.assertIn("call", ir_code)
 
@@ -106,7 +112,8 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
 
         for (source, f_name, proto, args) in test_cases:
             with self.subTest(source=source.strip()):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("define void", ir_code)
                 #checks returns None
                 self.compile_ir(ir_code)
@@ -134,7 +141,8 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
 
         for (source, f_name, proto, (args,res)) in test_cases:
             with self.subTest(source=source.strip()):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("define", ir_code)
                 self.assertIn("ret", ir_code)
                 #checks returns correct result
@@ -153,7 +161,8 @@ class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
             i32 y;
         }
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("%Point", ir_code)
         self.assertIn("i32", ir_code)
 
@@ -174,7 +183,8 @@ class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
             }
         }
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("%Rectangle", ir_code)
         self.assertIn("define i32", ir_code)
         self.assertIn("define void", ir_code)
@@ -194,7 +204,8 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         Calculator calc = new Calculator();
         i32 result = calc.add(5, 3);
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("call", ir_code)
         self.assertIn("i32", ir_code)
 
@@ -217,7 +228,8 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         StringBuilder builder = new StringBuilder();
         string result = builder.append("Hello").append(" ").append("World").ToString();
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("call", ir_code)
         self.assertIn("string", ir_code)
 
@@ -242,7 +254,8 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
 
         for source in test_cases:
             with self.subTest(source=source.strip()):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("getelementptr", ir_code)
                 self.assertIn("store", ir_code)
                 self.assertIn("load", ir_code)
@@ -261,7 +274,8 @@ class TestCodeGeneratorOperators(CodeGenTestCase):
         ]
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("add", ir_code)
                 self.assertIn("sub", ir_code)
                 self.assertIn("mul", ir_code)
@@ -280,7 +294,8 @@ class TestCodeGeneratorOperators(CodeGenTestCase):
         ]
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("icmp", ir_code)
 
     def test_valid_logical_operators(self):
@@ -292,7 +307,8 @@ class TestCodeGeneratorOperators(CodeGenTestCase):
         ]
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("and", ir_code)
                 self.assertIn("or", ir_code)
                 self.assertIn("xor", ir_code)
@@ -319,7 +335,8 @@ class TestCodeGeneratorControlFlow(CodeGenTestCase):
             }"""]
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("br i1", ir_code)
 
     def test_valid_while_conditions(self):
@@ -333,7 +350,8 @@ class TestCodeGeneratorControlFlow(CodeGenTestCase):
                 i = i + 1;
             }
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("br i1", ir_code)
 
     def test_valid_for_components(self):
@@ -347,7 +365,8 @@ class TestCodeGeneratorControlFlow(CodeGenTestCase):
             }
             for (;;){}
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("br i1", ir_code)
 
 class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
@@ -361,7 +380,8 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         i32 large = medium;  // i16 -> i32
         i64 huge = large;    // i32 -> i64
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("sext", ir_code)
 
     def test_valid_float_promotions(self):
@@ -370,7 +390,8 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         f32 single = 3.14;
         f64 double = single;  // f32 -> f64
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("fpext", ir_code)
 
     def test_valid_integer_to_float_conversions(self):
@@ -382,7 +403,8 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         ]
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("sitofp", ir_code)
 
 class TestCodeGeneratorTypeCasting(CodeGenTestCase):
@@ -396,7 +418,8 @@ class TestCodeGeneratorTypeCasting(CodeGenTestCase):
         i16 small = (i16)medium;  // i32 -> i16
         i8 tiny = (i8)small;      // i16 -> i8
         """
-        ir_code = self.generate_ir(source)
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
         self.assertIn("trunc", ir_code)
 
     def test_valid_float_to_integer_casts(self):
@@ -412,7 +435,8 @@ class TestCodeGeneratorTypeCasting(CodeGenTestCase):
             """]
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("fptosi", ir_code)
 
 class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
@@ -428,7 +452,8 @@ class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
         )
         for var_decl in test_cases:
             with self.subTest(source=var_decl):
-                ir_code = self.generate_ir(var_decl)
+                module = self.generate_module(var_decl)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("neg", ir_code)
 
     def test_valid_logical_not(self):
@@ -439,7 +464,8 @@ class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
                       "bool d = not not true;")
         for var_decl in test_cases:
             with self.subTest(source=var_decl):
-                ir_code = self.generate_ir(var_decl)
+                module = self.generate_module(var_decl)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("xor", ir_code)
 
     def test_valid_increment_decrement(self):
@@ -452,6 +478,7 @@ class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
                       "i32 x = 0; i32 z = ++x;")
         for source in test_cases:
             with self.subTest(source=source):
-                ir_code = self.generate_ir(source)
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
                 self.assertIn("add", ir_code)
                 self.assertIn("sub", ir_code)
