@@ -5,9 +5,6 @@
 #include <pthread.h>
 #include "gc.h"
 
-#define REFERENCE_ARRAY_TYPE_ID 0
-#define VALUE_ARRAY_TYPE_ID 1
-
 #define GC_After_N_Allocs 20
 
 /// Global type registry
@@ -33,7 +30,7 @@ void __PS_InitScopeStack(size_t max_scope_depth) {
 
 /// @brief Decides whether to run the garbage collector now or not, depending on some heuristic data obtained from the global scope vars
 /// @return true (1) if the heuristic decides to run the GC now else false (0)
-inline bool __PS_Collect_Garbage_Now_Heuristic(void){
+static inline bool __PS_Collect_Garbage_Now_Heuristic(void){
     return __PS_partial_alloc_count >= GC_After_N_Allocs;
 }
 
@@ -142,16 +139,18 @@ void __PS_InitTypeRegistry(size_t initial_capacity) {
     initial_capacity += 2;
     __PS_type_registry.types = __PS_malloc(sizeof(__PS_TypeInfo*) * initial_capacity);
     // First one is set to be continuous memory for arrays!
-    __PS_TypeInfo* contiguous_mem = __PS_type_registry.types;
-    contiguous_mem->type_name = "__array_of_ref_types";
-    contiguous_mem->id=REFERENCE_ARRAY_TYPE_ID;
-    contiguous_mem->num_pointers=0;
-    contiguous_mem->size=0;
-    __PS_TypeInfo* contiguous_mem = &(__PS_type_registry.types[1]);
-    contiguous_mem->type_name = "___array_of_value_types";
-    contiguous_mem->id=VALUE_ARRAY_TYPE_ID;
-    contiguous_mem->num_pointers=0;
-    contiguous_mem->size=0;
+    __PS_TypeInfo* ref_array_typeinfo = __PS_malloc(sizeof(__PS_TypeInfo));
+    __PS_type_registry.types[0] = ref_array_typeinfo;
+    ref_array_typeinfo->type_name = "__array_of_ref_types";
+    ref_array_typeinfo->id=REFERENCE_ARRAY_TYPE_ID;
+    ref_array_typeinfo->num_pointers=0;
+    ref_array_typeinfo->size=0;
+    __PS_TypeInfo* value_array_typeinfo = __PS_malloc(sizeof(__PS_TypeInfo));
+    __PS_type_registry.types[1] = value_array_typeinfo;
+    value_array_typeinfo->type_name = "___array_of_value_types";
+    value_array_typeinfo->id=VALUE_ARRAY_TYPE_ID;
+    value_array_typeinfo->num_pointers=0;
+    value_array_typeinfo->size=0;
 
     __PS_type_registry.capacity = initial_capacity;
     __PS_type_registry.count = 2;
@@ -272,12 +271,15 @@ static void __PS_MarkObject(void* obj) {
         return;
     
     if (header->type->id == REFERENCE_ARRAY_TYPE_ID){
-        for (size_t i = 0; i < header->size; i += 8)
-            __PS_MarkObject(obj+i);//mark object in array
+        void** array_elements = (void**)(obj+sizeof(size_t)); //skip first element which is the size of the array
+        size_t num_elements = *((size_t*) obj);
+        for (size_t i = 0; i < num_elements; ++i)
+            __PS_MarkObject(array_elements[i]);//mark object in array
+        return;
     }
 
     // If this object has pointer fields, traverse them
-    else if (header->type->num_pointers > 0) {
+    if (header->type->num_pointers > 0) {
         // All pointers are at the start of the object data
         void** ptr_fields = (void**)obj;
         for (size_t i = 0; i < header->type->num_pointers; i++) {
@@ -356,7 +358,7 @@ void __PS_CollectGarbage(void) {
     for (size_t scope_num = 0; scope_num < __PS_scope_stack.count; ++scope_num){
         __PS_Scope* scope = &__PS_scope_stack.scopes[scope_num];
         for (size_t root_num = 0; root_num < scope->num_roots; ++root_num){
-            void* obj = *scope->roots[root_num].address;
+            void* obj = *(scope->roots[root_num].address);
             __PS_MarkObject(obj);
         }
     }

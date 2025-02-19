@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include <pthread.h>
 
+
+#define REFERENCE_ARRAY_TYPE_ID 0
+#define VALUE_ARRAY_TYPE_ID 1
+
 // Forward declarations
 typedef struct __PS_TypeInfo __PS_TypeInfo;
 typedef struct __PS_ObjectHeader __PS_ObjectHeader;
@@ -88,10 +92,6 @@ void __PS_InitRootTracking(void);
 // TODO: Ignore variables that host temporary items that can in the future be handled by static memory management.
 // Done when entering a scope and registering all reference type variables
 void __PS_RegisterRoot(void** address, size_t type_id, const char* name);
-
-// Unregister a root variable
-// TODO: Root should be a stack so we just need to unregister N variables
-void __PS_UnregisterRoot(void** address);
 
 // Allocate memory
 // This is the method that should be used when allocating memory for an object
