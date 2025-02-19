@@ -2,6 +2,13 @@
 bin/*
 # ignore object files
 *.o
+#ignore shared lib
+*.so
+
+#ignore llvm ir
+*.bc
+*.ll
+
 # ignore compiled executables
 *.exe
 
