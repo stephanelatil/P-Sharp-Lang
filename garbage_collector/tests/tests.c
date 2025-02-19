@@ -59,9 +59,10 @@ static void test_type_registry(void) {
     
     // Test type registration
     // Make sure they are allocated properly
-    assert(simple_type_id == 0);
-    assert(pointer_type_id == 1);
-    assert(complex_type_id == 2);
+    // Ids 0 and 1 are already allocated to array types
+    assert(simple_type_id == 2);
+    assert(pointer_type_id == 3);
+    assert(complex_type_id == 4);
     
     // Test type info retrieval
     __PS_TypeInfo* simple_info = __PS_GetTypeInfo(simple_type_id);
@@ -501,8 +502,164 @@ static void test_scope_edge_cases(void) {
     assert(_get_header(obj)->marked);
     
     __PS_LeaveScope();
+    __PS_CollectGarbage();
     
     printf("Scope edge cases tests passed\n");
+}
+
+static void test_value_array_allocation(void) {
+    printf("Testing value array allocation...\n");
+    __PS_EnterScope(1);
+    
+    // Allocate array for primitive types (integers)
+    size_t array_size = sizeof(size_t) + (10 * sizeof(int)); // size header + 10 integers
+    size_t* value_array_obj = __PS_AllocateValueArray(array_size);
+    assert(value_array_obj != NULL);
+
+    
+    // Store the array size at the start
+    *value_array_obj = 10;
+
+    int* value_array = (int*)(((void*)value_array_obj) + sizeof(size_t));
+    
+    // Fill array with values
+    for (int i = 0; i < 10; i++) {
+        value_array[i] = i * 100;
+    }
+    
+    void** array_loc = (void**)&value_array_obj;
+    __PS_RegisterRoot(array_loc, VALUE_ARRAY_TYPE_ID, "value_array");
+    
+    // Trigger GC
+    __PS_CollectGarbage();
+    
+    // Verify array survived and contains correct values
+    __PS_ObjectHeader* header = _get_header(value_array_obj);
+    //(__PS_ObjectHeader*)((char*)value_array_obj - sizeof(size_t) - sizeof(__PS_ObjectHeader));
+    assert(header->marked);
+    assert(header->type->id == VALUE_ARRAY_TYPE_ID);
+    
+    // Check values
+    for (int i = 0; i < 10; i++) {
+        assert(value_array[i] == i * 100);
+    }
+    
+    // Cleanup
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+    assert(!header->marked);
+    
+    printf("Value array allocation tests passed\n");
+}
+
+static void test_reference_array_allocation(void) {
+    printf("Testing reference array allocation...\n");
+    __PS_EnterScope(1);
+    
+    // Allocate array for object references
+    size_t array_size = sizeof(size_t) + (5 * sizeof(TestComplexObject*));
+    size_t* ref_array_obj = __PS_AllocateRefArray(array_size);
+    assert(ref_array_obj != NULL);
+    
+    // Store the array size at the start
+    *((size_t*)ref_array_obj) = 5;
+    // Get pointer to the array
+    TestComplexObject** ref_array = (TestComplexObject**)(((void*)ref_array_obj) + sizeof(size_t));
+    
+    // Fill array with complex objects
+    for (int i = 0; i < 5; i++) {
+        ref_array[i] = __PS_AllocateObject(complex_type_id);
+        ref_array[i]->data = i;
+        ref_array[i]->left = NULL;
+        ref_array[i]->right = NULL;
+        ref_array[i]->simple = __PS_AllocateObject(simple_type_id);
+        ref_array[i]->simple->data = i * 10;
+    }
+    
+    void** array_loc = (void**)&ref_array_obj;
+    __PS_RegisterRoot(array_loc, REFERENCE_ARRAY_TYPE_ID, "ref_array");
+    
+    // Trigger GC
+    __PS_CollectGarbage();
+    
+    // Verify array and all referenced objects survived
+    __PS_ObjectHeader* header = _get_header(ref_array_obj);
+    assert(header->marked);
+    assert(header->type->id == REFERENCE_ARRAY_TYPE_ID);
+    
+    // Check all referenced objects and their data
+    for (int i = 0; i < 5; i++) {
+        assert(ref_array[i] != NULL);
+        __PS_ObjectHeader* obj_header = _get_header(ref_array[i]);
+        assert(obj_header->marked);
+        assert(ref_array[i]->data == i);
+        
+        assert(ref_array[i]->simple != NULL);
+        __PS_ObjectHeader* simple_header = _get_header(ref_array[i]->simple);
+        assert(simple_header->marked);
+        assert(ref_array[i]->simple->data == i * 10);
+    }
+    
+    // Test that objects are still reachable through array
+    TestComplexObject* saved_ref = ref_array[2];
+    __PS_ObjectHeader* unlinked_header = _get_header(saved_ref);
+    ref_array[2] = NULL;
+    
+    __PS_CollectGarbage();
+    
+    // The unlinked object should now be collected
+    assert(!unlinked_header->marked);
+    
+    // Cleanup
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+    
+    // Verify everything is collected
+    assert(!header->marked);
+    for (int i = 0; i < 5; i++) {
+        if (ref_array[i] != NULL) {
+            __PS_ObjectHeader* obj_header = _get_header(ref_array[i]);
+            assert(!obj_header->marked);
+        }
+    }
+    
+    printf("Reference array allocation tests passed\n");
+}
+
+static void test_array_edge_cases(void) {
+    printf("Testing array allocation edge cases...\n");
+    __PS_EnterScope(2);
+    
+    // Test zero-sized arrays
+    size_t zero_size = sizeof(size_t);
+    int* empty_value_array = __PS_AllocateValueArray(zero_size);
+    TestComplexObject** empty_ref_array = __PS_AllocateRefArray(zero_size);
+    
+    void** empty_value_loc = (void**)&empty_value_array;
+    void** empty_ref_loc = (void**)&empty_ref_array;
+    
+    __PS_RegisterRoot(empty_value_loc, VALUE_ARRAY_TYPE_ID, "empty_value_array");
+    __PS_RegisterRoot(empty_ref_loc, REFERENCE_ARRAY_TYPE_ID, "empty_ref_array");
+    
+    // Store zero size
+    *((size_t*)empty_value_array) = 0;
+    *((size_t*)empty_ref_array) = 0;
+    
+    // Trigger GC
+    __PS_CollectGarbage();
+    
+    // Verify arrays survived
+    __PS_ObjectHeader* value_header = (__PS_ObjectHeader*)((char*)empty_value_array - sizeof(__PS_ObjectHeader));
+    __PS_ObjectHeader* ref_header = (__PS_ObjectHeader*)((char*)empty_ref_array - sizeof(__PS_ObjectHeader));
+    
+    assert(value_header->marked);
+    assert(ref_header->marked);
+    
+    // Cleanup
+    __PS_LeaveScope();
+    __PS_CollectGarbage();
+    
+    printf("Array edge cases tests passed\n");
 }
 
 // Main test runner
@@ -525,6 +682,11 @@ int main(void) {
     test_scope_capacity();
     test_scope_interactions();
     test_scope_edge_cases();
+
+    //arrays
+    test_value_array_allocation();
+    test_reference_array_allocation();
+    test_array_edge_cases();
     
     // Cleanup
     __PS_Cleanup();
