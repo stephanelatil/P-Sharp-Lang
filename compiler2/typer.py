@@ -179,7 +179,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("EndsWith", "bool", [("string", "value")])
         ],
         fields=[
-            create_property("Length", "i32")
+            create_property("Length", "u64")
         ]
     ),
 
@@ -226,7 +226,7 @@ _builtin_types: Dict[str, Typ] = {
             create_method("Reverse", "void", [])
         ],
         fields=[
-            create_property("Length", "i32"),
+            create_property("Length", "u64"),
         ],
         is_reference_type=True,
         is_array=True
