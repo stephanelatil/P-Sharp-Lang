@@ -208,12 +208,22 @@ void* __PS_AllocateArray(size_t size, size_t type_id){
     return data;
 }
 
-inline void* __PS_AllocateValueArray(size_t size){
-    return __PS_AllocateArray(size, VALUE_ARRAY_TYPE_ID);
+void* __PS_AllocateValueArray(size_t element_size, size_t num_elements){
+    // sizeof(size_t) = allocated for the length of the array
+    // element_size * num_elements = bytes to allocate for the array data
+    size_t size = sizeof(size_t) + element_size * num_elements;
+    size_t* arr_ptr = (size_t*) __PS_AllocateArray(size, VALUE_ARRAY_TYPE_ID);
+    arr_ptr[0] = num_elements;
+    return (void*)arr_ptr;
 }
 
-inline void* __PS_AllocateRefArray(size_t size){
-    return __PS_AllocateArray(size, REFERENCE_ARRAY_TYPE_ID);
+void* __PS_AllocateRefArray(size_t num_elements){
+    // sizeof(size_t) = allocated for the length of the array
+    // sizeof(void*) * num_elements = bytes to allocate for the array data, where each element is a pointer to an object (thus a void*)
+    size_t size = sizeof(size_t) + sizeof(void*) * num_elements;
+    size_t* arr_ptr = (size_t*) __PS_AllocateArray(size, REFERENCE_ARRAY_TYPE_ID);
+    arr_ptr[0] = num_elements;
+    return (void*)arr_ptr;
 }
 
 // Get type info by ID

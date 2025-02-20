@@ -100,12 +100,12 @@ void* __PS_AllocateObject(size_t type_id);
 /// @brief Allocate contiguous memory for an array of value types
 /// @param size The size in bytes to allocate (includes size (size_t) of the array)
 /// @return The pointer to the array_struct
-void* __PS_AllocateValueArray(size_t size);
+void* __PS_AllocateValueArray(size_t element_size, size_t num_elements);
 
 /// @brief Allocate contiguous memory for an array of reference types
 /// @param size The size in bytes to allocate (includes size (size_t) of the array)
 /// @return The pointer to the array_struct
-void* __PS_AllocateRefArray(size_t size);
+void* __PS_AllocateRefArray(size_t num_elements);
 
 // Main garbage collection function
 void __PS_CollectGarbage(void);
