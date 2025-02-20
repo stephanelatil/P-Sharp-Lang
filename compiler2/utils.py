@@ -172,4 +172,26 @@ class CodeGenContext:
     builder:ir.IRBuilder = ir.IRBuilder()
     global_exit_block:Optional[ir.Block]=None
     type_ids:Dict[str, int] = field(default_factory=dict)
-    builtin_functions:Dict[str, Tuple[ir.FunctionType, ir.Function]] = field(default_factory=dict)
+    builtin_functions:Dict[str, ir.Function] = field(default_factory=dict)
+    _global_strings:Dict[str, ir.GlobalValue] = field(default_factory=dict)
+    
+    def get_char_ptr_from_string(self, string:str):
+        """Adds a Global string with the given value (if none already exists) and returns a GEP pointer to the first character (char* c string style)
+
+        Args:
+            string (str): The python string to convert to a llvm c-style string
+
+        Returns:
+            GEPInstr: a GEP instruction pointer value to the c-string
+        """
+        if not string.endswith('\x00'):
+            string += '\x00'
+        if string not in self._global_strings:
+            string_bytes = string.encode('utf-8')
+            array_type = ir.ArrayType(ir.IntType(8), len(string_bytes))
+            c_str = ir.GlobalVariable(self.module, array_type, name=f".__str_{len(self._global_strings)}")
+            c_str.initializer = ir.Constant(array_type, bytearray(string_bytes))
+            c_str.global_constant = True
+            self._global_strings[string] = c_str
+        zero = ir.Constant(ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8), 0)
+        return self.builder.gep(c_str, [zero, zero], inbounds=True)
