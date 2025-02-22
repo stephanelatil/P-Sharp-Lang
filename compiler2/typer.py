@@ -527,7 +527,7 @@ class Typer:
     def is_numeric_type(self, type_: Typ) -> bool:
         """Check if type is numeric (integer or float)"""
         info = self.get_type_info(type_)
-        return info.type_class in (TypeClass.INTEGER, TypeClass.FLOAT)
+        return info.type_class in (TypeClass.INTEGER, TypeClass.FLOAT, TypeClass.BOOLEAN)
 
     def check_types_match(self, expected: Typ, actual: Typ) -> bool:
         """
@@ -560,6 +560,15 @@ class Typer:
         # Only handle numeric types
         if not (self.is_numeric_type(from_type) and self.is_numeric_type(to_type)):
             return False
+        
+        if from_type == to_info:
+            return True
+        
+        if to_info.type_class == TypeClass.BOOLEAN:
+            return False #cannot implicitly convert to bool
+        
+        if from_info.type_class == TypeClass.BOOLEAN:
+            return True
 
         # Convert to float is always allowed for numeric types
         if to_info.type_class == TypeClass.FLOAT:
