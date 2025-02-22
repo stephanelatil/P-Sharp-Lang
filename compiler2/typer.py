@@ -999,6 +999,8 @@ class Typer:
             actual_type = self._type_expression(actual)
             if not self.check_types_match(expected_type, actual_type):
                 raise TypingConversionError(actual_type, expected_type, actual)
+            if expected_type != actual_type:
+                func_call.arguments[i] = self._add_implicit_cast(actual, expected_type)
         
         func_call.expr_type = self._type_ptype(symbol.type)
         return func_call.expr_type
