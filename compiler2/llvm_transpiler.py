@@ -58,7 +58,6 @@ class CodeGen:
         )
         self.optimizer_pass = PassBuilder(self.target, PipelineTuningOptions(speed_opt, size_opt)
                                           ).getModulePassManager()
-        self.named_values = Scopes()
         
     def _init_builtin_functions_prototypes(self, context:CodeGenContext):
         """Adds builtin functions to the global scope"""
@@ -130,7 +129,8 @@ class CodeGen:
         
         context.builder.call(context.builtin_functions["__PS_Cleanup"],[])
         #exit with given return code
-        ret_val = self.named_values.get_var(context._RETURN_CODE_VAR_NAME).alloca
+        ret_val = context.scopes.get_var(context._RETURN_CODE_VAR_NAME).alloca
+        ret_val = context.builder.load(ret_val)
         context.builder.ret(ret_val)
 
     def get_llvm_type(self, type_: Typ) -> ir.Type:
@@ -167,7 +167,7 @@ class CodeGen:
         self.ast = self.typer.type_program(warnings)
         
         context = CodeGenContext(target_data=self.target.target_data,
-                                 module=self.module, scopes=self.named_values,
+                                 module=self.module, scopes=Scopes(),
                                  get_llvm_type=self.get_llvm_type)
         self._init_builtin_functions_prototypes(context)
         
@@ -186,7 +186,7 @@ class CodeGen:
         # it's fine for now
 
     def _compile_program(self, program: PProgram, context:CodeGenContext):
-        self.named_values.enter_scope() #for global vars
+        context.scopes.enter_scope() #for global vars
         main_stmts = []
         main_func:Optional[PFunction] = None
         classes:List[PClass] = []
@@ -199,7 +199,8 @@ class CodeGen:
                     if main_func is not None:
                         raise CompilerError(f"Cannot have multiple 'main' functions in the program!")
                     main_func = stmt
-                stmt.generate_llvm(context)
+                else:
+                    stmt.generate_llvm(context)
             else:
                 main_stmts.append(stmt)
 
@@ -249,7 +250,7 @@ class CodeGen:
         var_type = self.get_llvm_type(var_decl.typer_pass_var_type)
         # alloca = self.builder.alloca(var_type, name=var_decl.name)
         alloca = ir.GlobalVariable(context.module, var_type, var_decl.name)
-        self.named_values.declare_var(var_decl.name, context.get_llvm_type(var_decl.typer_pass_var_type), alloca)
+        context.scopes.declare_var(var_decl.name, context.get_llvm_type(var_decl.typer_pass_var_type), alloca)
         # Assign value (explicit or default) to variable
         if var_decl.initial_value is None:
             #no value defined: get default value for type
@@ -269,5 +270,5 @@ class CodeGen:
         """
         global_var = ir.GlobalVariable(context.module, ir.IntType(32),
                                        name=context._RETURN_CODE_VAR_NAME)
-        self.named_values.declare_var(context._RETURN_CODE_VAR_NAME, global_var.value_type, global_var)
+        context.scopes.declare_var(context._RETURN_CODE_VAR_NAME, global_var.value_type, global_var)
         context.builder.store(ir.Constant(global_var.value_type, default_value), global_var)
