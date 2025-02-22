@@ -174,6 +174,13 @@ class CodeGenContext:
     type_ids:Dict[str, int] = field(default_factory=dict)
     builtin_functions:Dict[str, ir.Function] = field(default_factory=dict)
     _global_strings:Dict[str, ir.GlobalValue] = field(default_factory=dict)
+    """Whether the builder is currently compiling code withing the main function.
+    This is used to replace 'return' instructions with setting the return value to the global return variable and branching to the main exit block"""
+    is_in_main_function:bool=False
+    
+    @property
+    def _RETURN_CODE_VAR_NAME(self):
+        return '__PS_ReturnCodeValue'
     
     def get_char_ptr_from_string(self, string:str):
         """Adds a Global string with the given value (if none already exists) and returns a GEP pointer to the first character (char* c string style)
@@ -188,9 +195,9 @@ class CodeGenContext:
             string += '\x00'
         if string not in self._global_strings:
             string_bytes = string.encode('utf-8')
-            array_type = ir.ArrayType(ir.IntType(8), len(string_bytes))
-            c_str = ir.GlobalVariable(self.module, array_type, name=f".__str_{len(self._global_strings)}")
-            c_str.initializer = ir.Constant(array_type, bytearray(string_bytes))
+            c_string_type = ir.ArrayType(ir.IntType(8), len(string_bytes))
+            c_str = ir.GlobalVariable(self.module, c_string_type, name=f".__str_{len(self._global_strings)}")
+            c_str.initializer = ir.Constant(c_string_type, bytearray(string_bytes))
             c_str.global_constant = True
             self._global_strings[string] = c_str
         zero = ir.Constant(ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8), 0)

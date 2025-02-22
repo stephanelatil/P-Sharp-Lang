@@ -125,13 +125,13 @@ class CodeGen:
         context.builder.call(context.builtin_functions["__PS_InitRootTracking"],[])
         self._register_types_to_gc(context)
         
-    def _cleanup_gc_on_exit(self, context:CodeGenContext):
+    def _cleanup_gc_and_exit(self, context:CodeGenContext):
         context.builder = ir.IRBuilder(context.global_exit_block)
-        #TODO call all GC cleanup functions
         
         context.builder.call(context.builtin_functions["__PS_Cleanup"],[])
-        #exit gracefully
-        context.builder.ret(ir.Constant(ir.IntType(32), 0))
+        #exit with given return code
+        ret_val = self.named_values.get_var(context._RETURN_CODE_VAR_NAME).alloca
+        context.builder.ret(ret_val)
 
     def get_llvm_type(self, type_: Typ) -> ir.Type:
         if type_.name in self.type_map:
@@ -217,6 +217,7 @@ class CodeGen:
         func = ir.Function(self.module, func_type, name="main")
         context.builder = ir.IRBuilder(func.append_basic_block('__implicit_main_entrypoint'))
         context.global_exit_block = func.append_basic_block('___main_exit_cleanup')
+        self._setup_return_code_global(context)
         self.__init_type_registry(context)
         self._initialize_gc_on_start(context)
         
@@ -226,11 +227,10 @@ class CodeGen:
             else:
                 stmt.generate_llvm(context)
         if main_func is not None:
-            
             for stmt in main_func.body.statements:
                 stmt.generate_llvm(context)
         context.builder.branch(context.global_exit_block)
-        self._cleanup_gc_on_exit(context)
+        self._cleanup_gc_and_exit(context)
 
     def register_class_type(self, cls: PClass, context:CodeGenContext):
         """Register class type and methods"""
@@ -257,3 +257,17 @@ class CodeGen:
         else:
             init_value = var_decl.initial_value.generate_llvm(context)
         context.builder.store(init_value, alloca)
+        
+    def _setup_return_code_global(self, context:CodeGenContext, default_value:int=0):
+        """Sets the default main return value to the given value
+        Here it's set to a variable value so that each "return" instruction from the main function
+        actually sets this value and jumps to the GC Cleanup
+
+        Args:
+            context (CodeGenContext): The CodeGenContext used for this module
+            default_value (int, optional): Th default return code of the program. Defaults to 0.
+        """
+        global_var = ir.GlobalVariable(context.module, ir.IntType(32),
+                                       name=context._RETURN_CODE_VAR_NAME)
+        self.named_values.declare_var(context._RETURN_CODE_VAR_NAME, global_var.value_type, global_var)
+        context.builder.store(ir.Constant(global_var.value_type, default_value), global_var)
