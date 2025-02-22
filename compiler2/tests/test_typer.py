@@ -47,7 +47,6 @@ class TestTypeConversions(TestCase):
         """Test detection of non-numeric types"""
 
         non_numeric_types = [
-            PType("bool", Position.default),
             PType("string", Position.default),
             PType("void", Position.default),
             PArrayType(PType("i32", Position.default), Position.default)
@@ -380,6 +379,64 @@ class TestTyperBasicDeclarations(TestCase):
             with self.subTest(source=source):
                 with self.assertRaises(expected_error):
                     self.parse_and_type(source)
+
+class TestTyperFunctionCall(TestCase):
+    """Test function declarations and return types"""
+    def setUp(self):
+        self.typer = Typer('test.ps', StringIO(''))
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer('test.ps', StringIO(source))
+        return self.typer.type_program()
+    
+    def test_simple_call(self):
+        test_cases = [
+        """ 
+        void f() {}
+        f();
+        """,
+        """ 
+        void f() {
+            return;
+        }
+        f();
+        """,
+        """ 
+        i32 f() {
+            return 1;
+        }
+        f();
+        """,
+        """ 
+        i32 max(i32 a, i32 b) {
+            return a > b ? a : b;
+        }
+        max (1,3);
+        """,
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                self.parse_and_type(source)
+    
+    def test_call_with_implicit_casting(self):
+        test_cases = [
+        """ 
+        i64 f() {
+            return true;
+        }
+        f();
+        """,
+        """ 
+        void f(f64 x1, i64 x2) {}
+        f(2,3);
+        """,
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                self.parse_and_type(source)
 
 class TestTyperFunctionDeclarations(TestCase):
     """Test function declarations and return types"""
@@ -751,7 +808,7 @@ class TestTyperOperators(TestCase):
         test_cases = [
             ("i32 x = \"string\" + 42;", TypingError),
 
-            ("bool x = 1 + true;", TypingError),
+            ("bool x = 1 + true;", TypingConversionError),
 
             ("string s = \"hello\" - \"world\";", TypingError)
         ]
