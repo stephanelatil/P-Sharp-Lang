@@ -15,21 +15,6 @@ from parser import (Parser, PFunction, PClassField, PProgram, PType,
                    PTernaryOperation, PThis,PVariableDeclaration, 
                    PWhileStatement, PDiscard, PVoid, Typ)
 
-@dataclass
-class ArchProperties:
-    pointer_size:int=64
-    max_int_size:int=64
-    max_float_size:int=64
-
-    def type_is_supported(self, type_info:TypeInfo) -> bool:
-        if type_info.type_class == TypeClass.INTEGER:
-            return type_info.bit_width <= self.max_int_size
-
-        elif type_info.type_class == TypeClass.FLOAT:
-            return type_info.bit_width <= self.max_float_size
-
-        return True #8 bit or lower values are supported and pointers too
-
 def create_property(name: str, type_str: str) -> PClassField:
     """Helper function to create a class property"""
     return PClassField(
@@ -364,8 +349,7 @@ class Typer:
     default:'Typer'
     
     """Handles type checking and returns a Typed AST"""
-    def __init__(self, filename:str, file:TextIO, archProps:Optional[ArchProperties]=None):
-        self.archProperties = archProps or ArchProperties()
+    def __init__(self, filename:str, file:TextIO):
         self.parser = Parser(Lexer(filename, file))
         self.known_types = _builtin_types.copy()
         self._in_class:Optional[PType] = None
@@ -561,7 +545,7 @@ class Typer:
         if not (self.is_numeric_type(from_type) and self.is_numeric_type(to_type)):
             return False
         
-        if from_type == to_info:
+        if from_type == to_type:
             return True
         
         if to_info.type_class == TypeClass.BOOLEAN:
@@ -638,28 +622,34 @@ class Typer:
                 if float_width <= 32:
                     return self.known_types["f32"]
                 return self.known_types["f64"]
+            
+        if info2.type_class == TypeClass.BOOLEAN:
+            # type1 is an int (bigger than bool so it's fine)
+            return type1
+        if info1.type_class == TypeClass.BOOLEAN:
+            # type2 is an int (bigger than bool so it's fine)
+            return type2
 
         # Both are integers
-        if not (info1.is_signed and info2.is_signed):
-            # If either is unsigned, use unsigned type with enough bits
-            max_width = max(info1.bit_width, info2.bit_width)
-            if max_width <= 8:
-                return self.known_types["u8"]
+        if info1.is_signed or info2.is_signed:
+            # If either is signed, use signed type with enough bits
+            max_width = max(info1.bit_width, info2.bit_width) \
+                            + info1.is_signed ^ info2.is_signed #if one is unsigned, common type must be of greater width
+            #only return i8 if both are. no explicit check needed
             if max_width <= 16:
-                return self.known_types["u16"]
+                return self.known_types["i16"]
             if max_width <= 32:
-                return self.known_types["u32"]
-            return self.known_types["u64"]
+                return self.known_types["i32"]
+            return self.known_types["i64"]
 
-        # Both signed - use widest type
+        # Both unsigned - use widest type
         max_width = max(info1.bit_width, info2.bit_width)
-        if max_width <= 8:
-            return self.known_types["i8"]
+        #only return u8 if both are. no explicit check needed
         if max_width <= 16:
-            return self.known_types["i16"]
+            return self.known_types["u16"]
         if max_width <= 32:
-            return self.known_types["i32"]
-        return self.known_types["i64"]
+            return self.known_types["u32"]
+        return self.known_types["u64"]
     
     def can_do_operation_on_type(self, operation: Union[BinaryOperation, UnaryOperation], type_: Typ) -> bool:
         """Check if the given operation can be performed on the given type."""
@@ -734,11 +724,6 @@ class Typer:
                 # Arrays can be compared for equality/inequality
                 if operation in (BinaryOperation.BOOL_EQ, BinaryOperation.BOOL_NEQ):
                     return True
-        
-        # Assignment and copy operations are handled separately in type checking
-        if isinstance(operation, BinaryOperation):
-            if operation in (BinaryOperation.ASSIGN, BinaryOperation.COPY):
-                return True
                 
         return False
 
@@ -810,8 +795,6 @@ class Typer:
         if not ptype.type_string in self.known_types:
                 raise UnknownTypeError(ptype)
         type_ = self.known_types[ptype.type_string]
-        if not self.archProperties.type_is_supported(type_info = self.get_type_info(type_)):
-            raise TypingError(f"Type {type_} is too large to be supported on this architecture")
         return type_
 
     def _type_function(self, function: PFunction|PMethod) -> None:

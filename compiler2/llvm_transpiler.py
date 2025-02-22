@@ -3,7 +3,7 @@
 import os
 os.environ['LLVMLITE_ENABLE_OPAQUE_POINTERS'] = "1"
 
-from typer import Typer, ArchProperties, Typ, TypeClass, TypingError
+from typer import Typer, Typ, TypeClass, TypingError
 from parser import (PClass,PFunction,PProgram,
                     PStatement, PVariableDeclaration)
 from typing import TextIO, List, Dict, Optional, Union, Tuple
@@ -46,11 +46,7 @@ class CodeGen:
         }
         arch_size = ctypes.sizeof(ctypes.c_void_p)*8
         # used for pointer size (useful for size calcs and the GC probably?)
-        self.typer = Typer(filename, file, ArchProperties(arch_size,
-                                                    # set max float & int size to 64bit
-                                                    # (llvm will take care if we're not on a 64 bit arch probably)
-                                                   max_int_size=64,
-                                                   max_float_size=64))
+        self.typer = Typer(filename, file)
         self.module = ir.Module(name=filename+".o")
         self.target = Target.from_default_triple().create_target_machine(
             codemodel='jitdefault',
