@@ -1,13 +1,11 @@
-from unittest import TestCase, main
+from unittest import TestCase
 from io import StringIO
-from typing import List, Optional, Type, Union
-from lexer import Lexer, Position, Lexeme
-from parser import (Parser, PProgram, PType, PArrayType, PVariableDeclaration,
-                    PExpression, PMethodCall, PClassField, PClass,
+from lexer import Position, Lexeme
+from parser import (PProgram, PType, PArrayType, PVariableDeclaration,
+                    PExpression, PMethodCall, PCast, PClass,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
                     PWhileStatement, PForStatement)
-from operations import BinaryOperation
-from typer import (Typer, TypeInfo, TypeClass, TYPE_INFO, Typ,
+from typer import (Typer, TypeClass, Typ,
                   UnknownTypeError, TypingError, TypingConversionError,
                   SymbolNotFoundError, SymbolRedefinitionError)
 
@@ -74,6 +72,12 @@ class TestTypeConversions(TestCase):
             ("u8", "i16", True),   # Fits with extra sign bit
             ("u16", "i32", True),
             ("u8", "i8", False),   # Need extra bit for sign
+            
+            #signed to unsigned
+            ("bool", "u8", True),
+            ("i8", "u16", False), #signed to unsigned needs explicit task
+            ("i16", "u64", False),
+            ("i32", "u64", False),
 
             # Float width conversions
             ("f16", "f32", True),
@@ -82,6 +86,8 @@ class TestTypeConversions(TestCase):
 
             # Integer to float conversions
             ("i8", "f16", True),   # Small integers to f16
+            ("i8", "f32", True),
+            ("i8", "f64", True),
             ("i16", "f32", True),  # Larger integers need bigger float
             ("i32", "f64", True),
             ("i64", "f64", True),
@@ -144,9 +150,16 @@ class TestTypeConversions(TestCase):
             ("i32", "i64", "i64"),
 
             # Unsigned/signed mixing
-            ("u8", "i8", "u8"),
-            ("u16", "i16", "u16"),
-            ("u32", "i32", "u32"),
+            ("u8", "i8", "i16"),
+            ("u16", "i16", "i32"),
+            ("u32", "i32", "i64"),
+            ("u64", "i32", "i64"),
+            
+            # Unsigned
+            ("u8", "u8", "u8"),
+            ("u8", "u16", "u16"),
+            ("u16", "u32", "u32"),
+            ("u64", "u32", "u64"),
 
             # Float mixing
             ("f16", "f32", "f32"),
@@ -154,9 +167,21 @@ class TestTypeConversions(TestCase):
 
             # Integer to float mixing
             ("i8", "f16", "f16"),    # Small int can use f16
+            ("i8", "f32", "f32"),
+            ("i8", "f64", "f64"),
             ("i16", "f32", "f32"),   # Larger ints need bigger floats
             ("i32", "f32", "f32"),
-            ("i64", "f64", "f64")
+            ("i64", "f64", "f64"),
+            
+            # Boolean and Integer mixing
+            ("bool", "i8", "i8"),
+            ("bool", "i16", "i16"),
+            ("bool", "i32", "i32"),
+            ("bool", "i64", "i64"),
+            ("bool", "u8", "u8"),
+            ("bool", "u16", "u16"),
+            ("bool", "u32", "u32"),
+            ("bool", "u64", "u64"),
         ]
 
         for type1, type2, expected in test_cases:
@@ -766,7 +791,9 @@ class TestTyperOperators(TestCase):
             "bool c = 5 <= 6;",
             "bool d = 7 >= 8;",
             "bool e = 9 == 10;",
-            "bool f = 11 != 12;"
+            "bool f = 11 != 12;",
+            'bool g = "abc" <= "def";'
+            'bool h = new i32[0] == new i32[0];'
         ]
         for source in test_cases:
             with self.subTest(source=source):
@@ -776,6 +803,7 @@ class TestTyperOperators(TestCase):
                 assert isinstance(var_decl, PVariableDeclaration)
                 self.assertIsNotNone(var_decl.initial_value)
                 assert var_decl.initial_value is not None
+                self.assertNotIsInstance(var_decl.initial_value, PCast)
                 self.assertEqual(var_decl.initial_value.expr_type, self.typer.known_types['bool'])
 
     def test_valid_logical_operators(self):
