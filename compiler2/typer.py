@@ -507,12 +507,6 @@ class Typer:
             base_name += '[]'
             ptyp = PArrayType(ptyp, pos)
         return ptyp
-                
-    def _make_implicit_cast_explicit(self, expression:PExpression, cast_to:Typ) -> PExpression:
-        ptype_target = self._ptype_from_typ(cast_to, expression.position)
-        cast = PCast(ptype_target, expression)
-        self._type_cast(cast) #reuse typing for propagate workings
-        return cast
 
     def get_type_info(self, type_: Typ) -> TypeInfo:
         """Get TypeInfo for a given type, handling array types"""
@@ -872,7 +866,7 @@ class Typer:
         if not self.check_types_match(var_type, expr_type):
             raise TypingConversionError(var_type, expr_type, var_decl)
         if expr_type != var_type:
-            var_decl.initial_value = self._make_implicit_cast_explicit(
+            var_decl.initial_value = self._add_implicit_cast(
                                             var_decl.initial_value, var_type)
 
     def _type_discard(self, discard:PDiscard) -> None:
@@ -903,7 +897,7 @@ class Typer:
             raise TypingConversionError(expression_type, ident_type, assignment)
         if ident_type != expression_type:
             #implicit cast
-            assignment.value = self._make_implicit_cast_explicit(assignment.value, ident_type)
+            assignment.value = self._add_implicit_cast(assignment.value, ident_type)
         return ident_type
 
     def _type_binary_operation(self, binop: PBinaryOperation) -> Typ:
@@ -915,9 +909,9 @@ class Typer:
             raise TypingError(f"Type {left_type} and {right_type} are not compatible")
         # force cast if not same type
         if left_type != common:
-            binop.left = self._make_implicit_cast_explicit(binop.left, common)
+            binop.left = self._add_implicit_cast(binop.left, common)
         if right_type != common:
-            binop.right = self._make_implicit_cast_explicit(binop.right, common)
+            binop.right = self._add_implicit_cast(binop.right, common)
         if binop.operation.name.startswith('BOOL_'):
             #comparators and boolean operators return bool
             binop.expr_type = self.known_types['bool']
@@ -979,7 +973,11 @@ class Typer:
         expression_type = self._type_expression(return_stmt.value)
         if not self.check_types_match(self.expected_return_type, expression_type):
             raise TypingConversionError(expression_type, self.expected_return_type, return_stmt)
-            
+        
+        if self.expected_return_type != return_stmt.value.expr_type:
+            return_stmt.value = self._add_implicit_cast(
+                                        return_stmt.value,
+                                        self.expected_return_type)
 
     def _type_function_call(self, func_call: PFunctionCall) -> Typ:
         """Type checks a function call and returns its return type"""
@@ -1123,9 +1121,11 @@ class Typer:
         index = self._type_expression(array_index.index)
         if self.get_type_info(index).type_class != TypeClass.INTEGER:
             raise TypingError(f"The index must be an integer type not '{index}'")
-        #implicit convert array index to u64
-        array_index.index = PCast(PType('u64', array_index.index.position), array_index.index)
-        array_index.index.expr_type = self.known_types['u64']
+        if array_index.expr_type != self.known_types['u64']:
+            #implicit convert array index to u64
+            array_index.index = self._add_implicit_cast(
+                array_index.index,
+                self.known_types['u64'])
         
         array_index.expr_type = array_elem_type
         return array_elem_type
@@ -1248,5 +1248,10 @@ class Typer:
                 return True
             
         return False
+    
+    def _add_implicit_cast(self, expression_to_cast:PExpression, target_type:Typ):
+        cast = PCast(PType(target_type.name, expression_to_cast.position), expression_to_cast)
+        cast.expr_type = target_type
+        return cast
 
 Typer.default = Typer('??', StringIO(''))
