@@ -1,22 +1,27 @@
+# Hacky way of enabling opaque pointers
+# later versions of llvmlite will make this mandatory
+import os
+os.environ['LLVMLITE_ENABLE_OPAQUE_POINTERS'] = "1"
+
 from typer import Typer, ArchProperties, Typ, TypeClass, TypingError
 from parser import (PClass,PFunction,PProgram,
                     PStatement, PVariableDeclaration)
-from typing import TextIO, List, Dict, Optional, Union
+from typing import TextIO, List, Dict, Optional, Union, Tuple
 from utils import CodeGenContext, Scopes, CompilerError, CompilerWarning
 from llvmlite import ir
 import ctypes
 from warnings import warn
 from llvmlite.binding import (initialize, initialize_native_target, 
                               initialize_native_asmprinter, PipelineTuningOptions,
-                              PassBuilder, Target)
+                              PassBuilder, Target, parse_assembly, parse_bitcode,
+                              ModuleRef)
+
 
 class CodeGen:
-    _array_struct = ir.LiteralStructType([
-                ir.PointerType(),  # pointer to array contents
-                ir.IntType(64)  # length field
-            ])
+    _GC_LIB='../garbage_collector/libps_gc.bc'
     
     def __init__(self, filename:str, file:TextIO, speed_opt:int=0, size_opt:int=0) -> None:
+        
         #required for code generation (no cross-compile yet, needs initialize_all* for that)
         initialize()
         initialize_native_target()
@@ -54,6 +59,79 @@ class CodeGen:
         self.optimizer_pass = PassBuilder(self.target, PipelineTuningOptions(speed_opt, size_opt)
                                           ).getModulePassManager()
         self.named_values = Scopes()
+        
+    def _init_builtin_functions_prototypes(self, context:CodeGenContext):
+        """Adds builtin functions to the global scope"""
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
+        char_ptr = ir.PointerType()
+        void_ptr = ir.PointerType()
+        void = ir.VoidType()
+        
+        for name, func_type in [
+                            ("__PS_InitRootTracking", ir.FunctionType(void,[])),
+                            ("__PS_EnterScope", ir.FunctionType(void,[size_t_type])),
+                            ("__PS_LeaveScope", ir.FunctionType(void,[])),
+                            ("__PS_CollectGarbage", ir.FunctionType(void,[])),
+                            ("__PS_PrintHeapStats", ir.FunctionType(void,[])),
+                            ("__PS_Cleanup", ir.FunctionType(void,[])),
+                            ("__PS_AllocateObject", ir.FunctionType(void_ptr,[size_t_type])),
+                            ("__PS_AllocateValueArray", ir.FunctionType(void_ptr,[size_t_type,size_t_type])),
+                            ("__PS_AllocateRefArray", ir.FunctionType(void_ptr,[size_t_type])),
+                            ("__PS_RegisterType", ir.FunctionType(size_t_type,[size_t_type, size_t_type, char_ptr])),
+                            ("__PS_InitTypeRegistry", ir.FunctionType(void,[size_t_type])),
+                            ("__PS_RegisterRoot", ir.FunctionType(void,[void_ptr, size_t_type, char_ptr])),
+                                ]:
+            func = ir.Function(context.module, func_type, name)
+            context.builtin_functions[name] = func
+            
+    def _get_size(self, context:CodeGenContext, typ:Typ):
+        """Returns the size of the type (struct) in bytes"""
+        size = 0
+        for field in typ.fields:
+            field_typ = field.typer_pass_var_type
+            if field_typ.is_reference_type:
+                size += ir.PointerType().get_abi_size(context.target_data)
+            else:
+                typeinfo = self.typer.get_type_info(field_typ)
+                size += typeinfo.bit_width
+                
+        return size
+        
+    def _register_types_to_gc(self, context:CodeGenContext):
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
+        types_list = self.typer.known_types
+        for known_type in types_list.values():
+            for field in known_type.fields:
+                self.typer._type_class_property(field)
+        
+        i = 2 #first index of a type (0 and 1 are taken up by array types!)
+        for typ in types_list.values():
+            if not typ.is_reference_type or typ.name in ['void','__null', '__array']:
+                continue
+            size = ir.Constant(size_t_type, self._get_size(context, typ))
+            num_ref_types = ir.Constant(size_t_type, sum([t.typer_pass_var_type.is_reference_type for t in typ.fields]))
+            
+            #size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name)
+            name_c_str = context.get_char_ptr_from_string(typ.name)
+            context.builder.call(context.builtin_functions["__PS_RegisterType"],[
+                                     size,
+                                     num_ref_types,
+                                     #convert string to bytes array
+                                     name_c_str])
+            context.type_ids[typ.name] = i
+            i += 1
+        
+    def _initialize_gc_on_start(self, context:CodeGenContext):
+        context.builder.call(context.builtin_functions["__PS_InitRootTracking"],[])
+        self._register_types_to_gc(context)
+        
+    def _cleanup_gc_on_exit(self, context:CodeGenContext):
+        context.builder = ir.IRBuilder(context.global_exit_block)
+        #TODO call all GC cleanup functions
+        
+        context.builder.call(context.builtin_functions["__PS_Cleanup"],[])
+        #exit gracefully
+        context.builder.ret(ir.Constant(ir.IntType(32), 0))
 
     def get_llvm_type(self, type_: Typ) -> ir.Type:
         if type_.name in self.type_map:
@@ -63,8 +141,7 @@ class CodeGen:
         
         if type_info.type_class == TypeClass.ARRAY:
             #return a generic array struct (contains an int and a pointer to the array)
-            self.type_map[type_.name] = self._array_struct
-            return self._array_struct
+            return ir.PointerType()
         elif type_info.type_class == TypeClass.CLASS:
             field_types = []
             for prop in type_.fields:
@@ -83,14 +160,30 @@ class CodeGen:
         else:
             raise TypingError(f"Unsupported type: {type_.name}")
 
-    def compile_file_to_ir(self, warnings:bool=False):        
+    def compile_file_to_ir(self, warnings:bool=False) -> ModuleRef:
+        with open(self._GC_LIB, "rb") as f:
+            gc_module = parse_bitcode(f.read())
+        
         self.ast = self.typer.type_program(warnings)
         
         context = CodeGenContext(target_data=self.target.target_data,
                                  module=self.module, scopes=self.named_values,
                                  get_llvm_type=self.get_llvm_type)
+        self._init_builtin_functions_prototypes(context)
+        
         self._compile_program(self.ast, context)
-        return context.module
+        program_module = parse_assembly(str(context.module))
+        program_module.link_in(gc_module)
+        return program_module
+    
+    def __init_type_registry(self, context:CodeGenContext):
+        """Initialize type registry with correct size"""
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
+        # void __PS_InitTypeRegistry(size_t initial_capacity)
+        context.builder.call(context.builtin_functions['__PS_InitTypeRegistry'],
+                             [ir.Constant(size_t_type,len(self.typer.known_types))])
+        # len(self.typer.known_types) includes value types but having a bit extra space can be optimized later
+        # it's fine for now
 
     def _compile_program(self, program: PProgram, context:CodeGenContext):
         self.named_values.enter_scope() #for global vars
@@ -114,11 +207,6 @@ class CodeGen:
             warn(f"'main' function is defined at {main_func.position}\n instructions outside of functions will not be run!", CompilerWarning)
         self._compile_entrypoint_function(main_stmts, main_func, context=context)
         context.scopes.leave_scope()
-        #NB: here scopes should be empty
-        
-    def _compile_type_global_value(self, type:ir.Type):
-        """Adds global value associated to a Type. Adds an address for a Type and adds the method table"""
-        pass
 
     def _compile_entrypoint_function(self, statements:List[PStatement], main_func:Optional[PFunction], context:CodeGenContext):
         """ Generates IR for the entrypoint
@@ -128,6 +216,9 @@ class CodeGen:
         # Create function in module
         func = ir.Function(self.module, func_type, name="main")
         context.builder = ir.IRBuilder(func.append_basic_block('__implicit_main_entrypoint'))
+        context.global_exit_block = func.append_basic_block('___main_exit_cleanup')
+        self.__init_type_registry(context)
+        self._initialize_gc_on_start(context)
         
         for stmt in statements:
             if isinstance(stmt, PVariableDeclaration):
@@ -135,10 +226,11 @@ class CodeGen:
             else:
                 stmt.generate_llvm(context)
         if main_func is not None:
+            
             for stmt in main_func.body.statements:
                 stmt.generate_llvm(context)
-
-        context.builder.ret(ir.Constant(self.type_map['i32'], 0))
+        context.builder.branch(context.global_exit_block)
+        self._cleanup_gc_on_exit(context)
 
     def register_class_type(self, cls: PClass, context:CodeGenContext):
         """Register class type and methods"""
