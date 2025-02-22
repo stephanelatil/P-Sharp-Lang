@@ -49,6 +49,12 @@ class CodeGenTestCase(TestCase):
         self._engine.run_static_constructors()
         return mod
     
+    def compile_and_run_main(self, source:str):
+        mod = self.generate_module(source)
+        self.compile_ir(str(mod))
+        main_proto = [ctypes.c_int32]
+        return self.run_function("main", main_proto)
+    
     def run_function(self, func_name:str, func_prototype_ctypes:List[Type], *args):
         """Runs a function compiled in the engine using ctypes and returns the result"""
         func_ptr = self._engine.get_function_address(func_name)
@@ -60,22 +66,49 @@ class CodeGenTestCase(TestCase):
 class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
     """Test basic variable and function declarations"""
 
+    def test_valid_primitive_global_literal_declarations(self):
+        """Test valid primitive type declarations"""
+        test_cases = [
+            ("i32 x = 42;", "x"),
+            ("f64 pi = 3.14159;", "pi"),
+            # "string msg = \"hello\";", #TODO strings not defined yet
+            ("bool flag = true;", "flag"),
+            ("char c = 'a';", "c")
+        ]
+
+        for source, var_name in test_cases:
+            with self.subTest(source=source):
+                module = self.generate_module(source)
+                global_ir = str(module)
+                main_ir = self.get_function_ir(module)
+                self.assertIn(f"@{var_name} = external global", global_ir)
+                self.assertIn("store", main_ir)
+
+
     def test_valid_primitive_literal_declarations(self):
         """Test valid primitive type declarations"""
         test_cases = [
-            "i32 x = 42;",
-            "f64 pi = 3.14159;",
-            # "string msg = \"hello\";", #TODO strings not defined yet
-            "bool flag = true;",
-            "char c = 'a';"
+            ("""i32 main()
+            {
+                i32 x = 42;
+                return x;
+            }""", 42),
+            ("""i32 main()
+            {
+                char c = 'a';
+                return c;
+            }""", 97),
+            ("""i32 main()
+            {
+                bool flag = true;
+                return flag;
+            }""", 1)
         ]
 
-        for source in test_cases:
+        for source, expected_result in test_cases:
             with self.subTest(source=source):
-                module = self.generate_module(source)
-                main = self.get_function_ir(module)
-                self.assertIn("global", main)
-                self.assertIn("store", main)
+                ret_val = self.compile_and_run_main(source)
+                self.assertEqual(ret_val, expected_result)
 
     def test_valid_array_declarations(self):
         """Test valid array declarations"""
