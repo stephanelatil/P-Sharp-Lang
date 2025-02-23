@@ -61,7 +61,12 @@ class TestTypeConversions(TestCase):
             # Same type conversions
             ("i32", "i32", True),
             ("f32", "f32", True),
-
+            
+            # Char int conversions
+            ("char", "i32", True),
+            ("char", "i8", False), # Char is equivalent to u8. Need explicit cast to convert
+            ("char", "u8", True),
+            
             # Integer width conversions
             ("i8", "i16", True),
             ("i16", "i32", True),
@@ -94,7 +99,12 @@ class TestTypeConversions(TestCase):
 
             # Float to integer requires explicit cast
             ("f32", "i32", False),
-            ("f64", "i64", False)
+            ("f64", "i64", False),
+            
+            #non numerics This should never happen but test anyways
+            ("void", "i8", False),
+            ("string", "i32", False),
+            ("__array", "i64", False)
         ]
 
         for from_type, to_type, expected in test_cases:
@@ -353,6 +363,50 @@ class TestTyperBasicDeclarations(TestCase):
         for source in test_cases:
             with self.subTest(source=source):
                 self.parse_and_type(source)
+
+    def test_valid_discard(self):
+        """Test valid primitive type declarations"""
+        test_cases = [
+            "_ = 1;",
+            "_ = 'a';",
+            """void f() {}
+            _ = f();""",
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
+
+    def test_valid_assignment(self):
+        """Test valid primitive type declarations"""
+        test_cases = [
+            """bool a;
+               a = false;""",
+            """f32[] a;
+               a = new f32[3];""",
+            """i32 a;
+               a = 'a';""",
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
+
+    def test_invalid_assignment(self):
+        """Test valid primitive type declarations"""
+        test_cases = [
+            """i32 a;
+               a = "hello";""",
+            """bool a;
+               a = 'c';""",
+            """f64 a;
+               a = new f32[2];""",
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source):
+                with self.assertRaises(TypingConversionError):
+                    self.parse_and_type(source)
 
     def test_invalid_primitive_declarations(self):
         """Test invalid primitive type declarations"""
@@ -770,7 +824,9 @@ class TestTyperOperators(TestCase):
             "i32 b = 3 - 4;",
             "i32 c = 5 * 6;",
             "i32 d = 8 / 2;",
-            "i32 e = 10 % 3;"
+            "i32 e = 10 % 3;",
+            "i32 f = 23 & 7;",
+            "i32 g = 8 | 1;"
         ]
         for source in test_cases:
             with self.subTest(source=source):
@@ -866,13 +922,12 @@ class TestTyperControlFlow(TestCase):
             """,
             """
             if (1 < 2) {
-                i32 y = 2;
+                _ = 2;
             }
             """,
             """
-            if (not false) {
-                i32 z = 3;
-            }"""]
+            if (not false)
+                i32 z = 3;"""]
         for source in test_cases:
             with self.subTest(source=source):
                 prog = self.parse_and_type(source)
@@ -1269,11 +1324,10 @@ class TestTyperFunctionReturnPaths(TestCase):
             (
                 """
                 i32 valid1(bool b) {
-                    if (b) {
+                    if (b)
                         return 1;
-                    } else {
+                    else
                         return 0;
-                    }
                 }
                 """,
                 "If-else with returns in both branches"
