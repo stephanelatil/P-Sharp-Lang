@@ -289,8 +289,6 @@ class ScopeManager:
     def enter_function_scope(self):
         self._function_scope_stack.append(self.current_scope)
         global_scope = self.current_scope
-        while global_scope.parent is not None:
-            global_scope = global_scope.parent
         self.current_scope = Scope(parent=global_scope)
 
     def enter_scope(self) -> None:
@@ -456,7 +454,7 @@ class Typer:
         # Check functions
         for func in self.all_functions:
             if func.position is Position.default:
-                pass
+                continue #ignore builtin or imported functions
             if not func.is_called and func.name != 'main':  # Exclude main if present
                 self.warnings.append(CompilerWarning(
                     f"Function '{func.name}' is declared but never called",
@@ -739,7 +737,7 @@ class Typer:
                                           PForStatement, PReturnStatement,
                                           PBreakStatement, PContinueStatement,
                                           PAssertStatement, PVariableDeclaration,
-                                          PClassField, PDotAttribute,
+                                          PClassField, PDotAttribute, PDiscard,
                                           PObjectInstantiation, PCast, PType,
                                           PArrayType, PBlock, PFunction, PThis)):
             raise TypingError(f"Cannot type the {type(statement)} element at location {statement.position}")
@@ -798,9 +796,7 @@ class Typer:
         return type_
 
     def _type_function(self, function: PFunction|PMethod) -> None:
-        """Type checks a function definition"""        
-        if self.expected_return_type is not None:
-            raise TypingError("Cannot define a function inside another function")
+        """Type checks a function definition"""
         if not isinstance(function, PMethod):
             self.all_functions.append(function)
         else: #method not function
@@ -832,12 +828,6 @@ class Typer:
                 self._type_variable_declaration(param)
                 #Set is_assigned to true of all function params (they are always assigned)
                 self._scope_manager.lookup(param.name, param).is_assigned = True
-        #first pass for defined methods
-        for statement in block.statements:
-            if isinstance(statement, PFunction):
-                if self.expected_return_type is not None:
-                    raise TypingError("Cannot define a function inside another function")
-                self._scope_manager.define_function(statement)
 
         for statement in block.statements:
             self._type_statement(statement)
@@ -1244,7 +1234,7 @@ class Typer:
         return False
     
     def _add_implicit_cast(self, expression_to_cast:PExpression, target_type:Typ):
-        cast = PCast(PType(target_type.name, expression_to_cast.position), expression_to_cast)
+        cast = PCast(self._ptype_from_typ(target_type, expression_to_cast.position), expression_to_cast)
         cast.expr_type = target_type
         return cast
 
