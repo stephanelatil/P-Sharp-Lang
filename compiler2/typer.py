@@ -1125,6 +1125,8 @@ class Typer:
         array_size_type = self._type_expression(array_init.size)
         if self.get_type_info(array_size_type).type_class != TypeClass.INTEGER:
             raise TypingError(f"Expected an array size of type Integer but got '{array_size_type}'")
+        if array_size_type != self.known_types['u64']:
+            array_init.size = self._add_implicit_cast(array_init.size, self.known_types['u64'])
         array_init._element_type_typ = self._type_ptype(array_init.element_type)
         return array_init.expr_type
         
