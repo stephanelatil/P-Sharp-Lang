@@ -519,6 +519,14 @@ class Typer:
         if str(expected) == str(actual):
             return True
 
+        # Handle numeric conversions
+        if self.is_numeric_type(expected) and self.is_numeric_type(actual):
+            return self.can_convert_numeric(actual, expected)
+        
+        # Can always set a reference type to null
+        if expected.is_reference_type and actual == self.known_types["__null"]:
+            return True
+
         expected_info = self.get_type_info(expected)
         actual_info = self.get_type_info(actual)
 
@@ -526,10 +534,6 @@ class Typer:
         if expected_info.type_class == TypeClass.ARRAY and actual_info.type_class == TypeClass.ARRAY:
             # Array types must match exactly
             return str(expected) == str(actual)
-
-        # Handle numeric conversions
-        if self.is_numeric_type(expected) and self.is_numeric_type(actual):
-            return self.can_convert_numeric(actual, expected)
 
         # Handle string conversions - anything can convert to string
         return False
@@ -950,8 +954,7 @@ class Typer:
 
     def _type_return_statement(self, return_stmt: PReturnStatement) -> None:
         """Type checks a return statement against expected return type"""
-        if self.expected_return_type is None:
-            raise TypingError("Cannot return outside a function")
+        assert self.expected_return_type is not None
         expression_type = self._type_expression(return_stmt.value)
         if not self.check_types_match(self.expected_return_type, expression_type):
             raise TypingConversionError(expression_type, self.expected_return_type, return_stmt)
@@ -1029,31 +1032,24 @@ class Typer:
         """Type checks a literal and returns its type"""
         # choses a default but can be cast if the user needs a bigger number (or suffixed)
         if literal.literal_type == 'int':
-            if not isinstance(literal.value, int):
-                raise TypingError(f"'{literal.value}' is not a int but described as an int")
+            assert isinstance(literal.value, int)
             # Currently number out of range will be truncated and only least significant bits kept 
             literal.expr_type = self.known_types['i32']
         elif literal.literal_type == 'bool':
-            if not isinstance(literal.value, bool):
-                raise TypingError(f"'{literal.value}' is not a boolean but described as a boolean")
+            assert isinstance(literal.value, bool)
             literal.expr_type = self.known_types['bool']
         elif literal.literal_type == 'char':
-            if not isinstance(literal.value, int):
-                raise TypingError(f"'{literal.value}' is not a char but described as a char")
+            assert isinstance(literal.value, int)
             literal.expr_type = self.known_types['char']
         elif literal.literal_type == 'string':
-            if not isinstance(literal.value, str):
-                raise TypingError(f"'{literal.value}' is not a string but described as a string")
+            assert isinstance(literal.value, str)
             literal.expr_type = self.known_types['string']
         elif literal.literal_type == 'null':
-            if literal.value is not None:
-                raise TypingError(f"'{literal.value}' is not null but described as a null")
+            assert literal.value is None
             literal.expr_type = self.known_types['__null']
         else:
-            if not literal.literal_type == 'float':
-                raise TypingError(f"Unknown literal type '{literal.literal_type}'")
-            if not isinstance(literal.value, float):
-                raise TypingError(f"'{literal.value}' is not a float but described as a float")
+            assert literal.literal_type == 'float'
+            assert isinstance(literal.value, float)
             # Currently number out of range will be truncated and cropped to f32 precision
             literal.expr_type = self.known_types['f32']
         return literal.expr_type
@@ -1080,11 +1076,9 @@ class Typer:
             # TODO Add warning for loss of precision if reduction in bit-width
         elif target_type_info.type_class == TypeClass.BOOLEAN:
             cast.expr_type = target_type
-        elif expression_type_info.type_class == TypeClass.BOOLEAN and self.is_numeric_type(target_type):
-            cast.expr_type = target_type
         elif target_type_info.type_class == TypeClass.STRING:
             raise TypingError(f"Cannot cast to string. Use the .ToString() method instead")
-        elif expression_type.name == self.known_types['__null']:
+        elif expression_type == self.known_types['__null']:
             # in case it's a null literal
             cast.expr_type = target_type
         else:
@@ -1096,7 +1090,7 @@ class Typer:
         """Type checks an array indexing expression and returns the element type"""
         array_type = self._type_expression(array_index.array)
         if not array_type.name.endswith('[]'):
-            TypingError(f"Expected array type but got '{array_type.name}'")     
+            raise TypingError(f"Expected array type but got '{array_type.name}'")     
         if array_type.name.endswith('[][]'):
             array_elem_type = array_type.copy_with(array_type.name[:-2], is_array=array_type.name[:-2].endswith('[]')) #strip of array from the end
         else:
