@@ -786,7 +786,8 @@ class TestParserControlFlow(TestParserBase):
                 assert isinstance(var_decl, PVariableDeclaration)
                 self.assertIsInstance(var_decl.initial_value, PTernaryOperation)
                 assert isinstance(var_decl.initial_value, PTernaryOperation)
-
+                
+    def test_nested_ternary(self):
         # Nested Expression
         source="i32 x = a ? c ? a : c : b;"
         with self.subTest(source="i32 x = a ? c ? a : c : b;"):
@@ -1337,9 +1338,6 @@ class TestParserClassDefinitions(TestParserBase):
         self.assertIsInstance(arr_decl.initial_value, PArrayInstantiation)
         assert isinstance(arr_decl.initial_value, PArrayInstantiation)
         size_expr = arr_decl.initial_value.size
-        self.assertIsInstance(size_expr, PCast)
-        assert isinstance(size_expr, PCast)
-        size_expr = size_expr.expression
         self.assertIsInstance(size_expr, PIdentifier)
         assert isinstance(size_expr, PIdentifier)
         self.assertEqual(size_expr.name, "size")

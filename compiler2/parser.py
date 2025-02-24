@@ -880,6 +880,10 @@ class Parser:
                                        NodeType.ATTRIBUTE,
                                        NodeType.CLASS_PROPERTY,
                                        NodeType.IDENTIFIER)
+        
+        # Add matching member access in expression
+        if self._match(LexemeType.OPERATOR_DOT):
+            left = self._parse_member_access(left)
 
         while (not self.current_lexeme is Lexeme.default and
                self.current_lexeme.type in self.unary_binary_ops and
