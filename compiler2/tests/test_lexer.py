@@ -327,6 +327,7 @@ class LexerTests(TestCase):
             "'\\n'": LexemeType.NUMBER_CHAR,
             "'\\t'": LexemeType.NUMBER_CHAR,
             "'\\''": LexemeType.NUMBER_CHAR,
+            "'\\\\'": LexemeType.NUMBER_CHAR,
             "'\\x41'": LexemeType.NUMBER_CHAR  # Hex escape
         }
         for input_str, expected_type in test_cases.items():
@@ -340,13 +341,15 @@ class LexerTests(TestCase):
     def test_invalid_character_literals(self) -> None:
         """Test that invalid character literals raise appropriate errors."""
         invalid_chars = [
-            "'",       # Unterminated
+            "'",       # Unterminated and empty
             "''",      # Empty
             "'ab'",    # Too long
             "'\\x'",   # Incomplete hex escape
             "'\\x0'",  # Incomplete hex escape
             "'\\xGG'"  # Invalid hex digits
-            "'\\"      # Incomplete escape sequence
+            "'\\'",    # Empty escape sequence
+            "'\\",     # Unterminated empty escape sequence
+            "'\\n"     # Unterminated escape sequence
         ]
         for char in invalid_chars:
             with self.subTest(char=char):
