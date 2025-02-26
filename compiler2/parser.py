@@ -1,10 +1,43 @@
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Generator
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
-from lexer import Lexer, LexemeType, Lexeme, LexemeStream
+from lexer import Lexer, LexemeType, Lexeme
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
-from utils import Position, TypingError, CodeGenContext
+from utils import Position, TypingError, CodeGenContext, TYPE_INFO, TypeClass, TypeInfo, CompilerError
 from llvmlite import ir
+
+class LexemeStream:
+    def __init__(self, lexmes:Generator[Lexeme, None, None], filename:str):
+        self.lexeme_gen = lexmes
+        self.buffer = deque()
+        self.pos = Position(filename=filename)
+        self.eof = False
+
+    def peek(self, amount=0) -> Lexeme:
+        if self.eof and len(self.buffer) == 0:
+            return Lexeme.default
+
+        while len(self.buffer) <= amount:
+            lexeme = next(self.lexeme_gen, None)
+            if not lexeme:
+                self.eof = True
+                return Lexeme.default
+            self.buffer.append(lexeme)
+
+        return self.buffer[amount]
+
+    def advance(self) -> Lexeme:
+        lexeme = self.peek()
+        if lexeme is not None:
+            self.buffer.popleft()
+            self.pos = lexeme.pos
+        if lexeme is None:
+            raise EOFError()
+        return lexeme
+
+    def position(self) -> Position:
+        return self.pos.copy()
 
 @dataclass
 class Typ:
