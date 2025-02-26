@@ -733,7 +733,7 @@ class Typer:
         """Type checks a statement (or expression) and returns its type"""
         if isinstance(statement, PExpression):
             return self._type_expression(statement)
-        if not isinstance(statement, (PArrayIndexing, PArrayInstantiation,
+        assert isinstance(statement, (PArrayIndexing, PArrayInstantiation,
                                           PIdentifier, PLiteral, PBinaryOperation,
                                           PUnaryOperation, PTernaryOperation,
                                           PFunctionCall, PMethodCall, PClass,
@@ -743,25 +743,21 @@ class Typer:
                                           PAssertStatement, PVariableDeclaration,
                                           PClassField, PDotAttribute, PDiscard,
                                           PObjectInstantiation, PCast, PType,
-                                          PArrayType, PBlock, PFunction, PThis)):
-            raise TypingError(f"Cannot type the {type(statement)} element at location {statement.position}")
+                                          PArrayType, PBlock, PFunction, PThis))
         typer_func = self._node_function_map.get(type(statement), None)
-        if typer_func is None:
-            raise TypingError(f"Cannot type the {type(statement)} element at location {statement.position}")
+        assert typer_func is not None
         return typer_func(statement)
 
     def _type_expression(self, expression: PExpression) -> Typ:
         """Type checks an expression definition and returns its type"""
-        if not isinstance(expression, (PArrayIndexing, PArrayInstantiation,
+        assert isinstance(expression, (PArrayIndexing, PArrayInstantiation,
                                           PIdentifier, PLiteral, PBinaryOperation,
                                           PUnaryOperation, PTernaryOperation,
                                           PFunctionCall, PMethodCall, PThis,
                                           PDotAttribute, PObjectInstantiation,
-                                          PCast, PNoop, PVoid, PAssignment)):
-            raise TypingError(f"Cannot type {type(expression)}, it's not a valid expression.")
+                                          PCast, PNoop, PVoid, PAssignment))
         typer_func = self._node_function_map.get(type(expression), None)
-        if typer_func is None:
-            raise TypingError(f"Cannot type the {type(expression)} element at location {expression.position}")
+        assert typer_func is not None
         return typer_func(expression)
     
     def _type_noop(self, noop:PNoop):
@@ -1167,14 +1163,15 @@ class Typer:
 
     def _type_assert_statement(self, assert_stmt: PAssertStatement) -> None:
         """Type checks an assert statement"""
-        condition_type = self._type_expression(assert_stmt.condition)
-        if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
-            raise TypingError(f"An assertion expression must be a boolean. Are you missing a cast? {assert_stmt.condition.position}")
+        raise NotImplementedError("Assert not implemented yet")
+        # condition_type = self._type_expression(assert_stmt.condition)
+        # if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
+        #     raise TypingError(f"An assertion expression must be a boolean. Are you missing a cast? {assert_stmt.condition.position}")
         
-        if assert_stmt.message is not None:
-            message_type = self._type_expression(assert_stmt.message)
-            if self.get_type_info(message_type).type_class != TypeClass.STRING:
-                raise TypingError(f"An assertion message must be a string!")
+        # if assert_stmt.message is not None:
+        #     message_type = self._type_expression(assert_stmt.message)
+        #     if self.get_type_info(message_type).type_class != TypeClass.STRING:
+        #         raise TypingError(f"An assertion message must be a string!")
             
     def _cfg_check(self, program:Union[PProgram,PBlock]) -> None:
         """Check to ensure all functions have a valid return. Raises error if invalid otherwise returns None"""
@@ -1188,14 +1185,6 @@ class Typer:
                         continue #ignore builtin methods. Just here for linking
                     if not self._has_return(method.body):
                         raise TypingError(f"Not all code paths return a value for function {method.name} at {method.position}")
-            elif isinstance(statement, PIfStatement):
-                self._cfg_check(statement.then_block)
-                if statement.else_block is not None:
-                    self._cfg_check(statement.else_block)
-            elif isinstance(statement, (PForStatement, PWhileStatement)):
-                self._cfg_check(statement.body)
-            elif isinstance(statement, PBlock):
-                self._cfg_check(statement)
     
     def _has_return(self, statement:Optional[PStatement]) -> bool:
         if statement is None:
@@ -1216,17 +1205,6 @@ class Typer:
         if isinstance(statement, (PWhileStatement,PForStatement)):
             return self._has_return(statement.body)
         
-        return False
-    
-    def _function_has_return(self, func:PFunction):
-        # void functions are always valid because they do not need a return (implicitly added at the end)
-        if self.get_type_info(self._type_ptype(func.return_type)).type_class == TypeClass.VOID:
-            return True
-        
-        for statement in func.body.statements:
-            if self._has_return(statement):
-                return True
-            
         return False
     
     def _add_implicit_cast(self, expression_to_cast:PExpression, target_type:Typ):
