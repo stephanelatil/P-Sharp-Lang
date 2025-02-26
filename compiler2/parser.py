@@ -56,7 +56,10 @@ class Typ:
         self.methods.append(PMethod("ToString", 
                                       PType('string', Lexeme.default), 
                                       [],
-                                      PBlock([], Lexeme.default),
+                                      PBlock([], Lexeme.default, BlockProperties(
+                                                    is_top_level=False,
+                                                    return_type=PType('string', Lexeme.default)
+                                          )),
                                       Lexeme.default, is_builtin=True))
 
     def copy_with(self, name, is_array):
@@ -109,21 +112,20 @@ class BlockProperties:
     """The properties of the current block to be passed to statements and lower blocks"""
     is_class:bool = False
     is_top_level:bool = True
-    is_function:bool = False
     is_loop:bool = False
     return_type:Optional['PType'] = None
+    block_vars:List['PVariableDeclaration'] = field(default_factory=list)
 
-    def copy_with(self, current_lexeme, is_function:bool=False, is_loop:bool=False,
+    def copy_with(self, current_lexeme, is_loop:bool=False,
                   is_class:bool=False, return_type:Optional['PType']=None,
                   is_top_level:bool=False):
         if return_type and self.return_type is not None and return_type != self.return_type:
             raise ParserError("Error setting block return type different from existing return type", current_lexeme)
         return BlockProperties(
-            is_function=self.is_function or is_function,
             is_loop=self.is_loop or is_loop,
             is_class= self.is_class or is_class,
             is_top_level= self.is_top_level and is_top_level,
-            return_type=return_type)
+            return_type=return_type or self.return_type)
 
 @dataclass
 class PStatement:
@@ -238,9 +240,10 @@ class PBlock(PStatement):
     statements: List[PStatement]
     block_properties:BlockProperties
 
-    def __init__(self, statements: List[PStatement], lexeme: Lexeme):
+    def __init__(self, statements: List[PStatement], lexeme: Lexeme, block_properties:BlockProperties):
         super().__init__(NodeType.BLOCK, lexeme.pos)
         self.statements = statements
+        self.block_properties = block_properties
     
     def generate_llvm(self, context: CodeGenContext) -> None:
         for stmt in self.statements:
@@ -760,7 +763,7 @@ class Parser:
         elif self._match(LexemeType.KEYWORD_CONTROL_FOR):
             return self._parse_for_statement(block_properties.copy_with(self.current_lexeme, is_top_level=False))
         elif self._match(LexemeType.KEYWORD_CONTROL_RETURN):
-            if not block_properties.is_function:
+            if block_properties.return_type is None:
                 raise ParserError("Cannot have a return statement outside of a function", self.current_lexeme)
             return self._parse_return_statement()
         elif self._match(LexemeType.KEYWORD_CONTROL_BREAK):
@@ -799,10 +802,12 @@ class Parser:
 
         # Function declaration
         if self._match(LexemeType.PUNCTUATION_OPENPAREN):
+            if not block_properties.is_top_level:
+                raise ParserError("Functions cannot be defined in a scope. They must be defined at the top level.", self.current_lexeme)
             return self._parse_function_declaration(name, var_type, type_lexeme,
                                                     block_properties.copy_with(
                                                         self.current_lexeme,
-                                                        is_function=True,
+                                                        is_top_level=False,
                                                         return_type=var_type))
 
         # Variable declaration
@@ -854,7 +859,8 @@ class Parser:
             statements.append(self._parse_statement(block_properties))
 
         self._expect(LexemeType.PUNCTUATION_CLOSEBRACE)
-        return PBlock(statements, start_lexeme)
+        return PBlock(statements, start_lexeme, 
+                      block_properties=block_properties)
 
     def _parse_type(self) -> PType:
         """
@@ -1216,7 +1222,8 @@ class Parser:
         else:
             start_lexeme = self.current_lexeme
             then_block = self._parse_statement(block_properties)
-            then_block = PBlock([then_block], start_lexeme)
+            then_block = PBlock([then_block], start_lexeme,
+                                block_properties=block_properties)
 
         else_block = None
 
@@ -1228,7 +1235,8 @@ class Parser:
             else:
                 start_lexeme = self.current_lexeme
                 else_block = self._parse_statement(block_properties)
-                else_block = PBlock([else_block], start_lexeme)
+                else_block = PBlock([else_block], start_lexeme,
+                                    block_properties=block_properties)
 
         return PIfStatement(condition, then_block, else_block, if_lexeme)
 
@@ -1245,7 +1253,8 @@ class Parser:
         else:
             start_lexeme = self.current_lexeme
             body = PBlock([self._parse_statement(block_properties.copy_with(start_lexeme, is_loop=True))],
-                          start_lexeme)
+                          start_lexeme,
+                          block_properties=block_properties)
         return PWhileStatement(condition, body, while_lexeme)
 
     def _parse_for_statement(self, block_properties:BlockProperties) -> PForStatement:
@@ -1280,7 +1289,8 @@ class Parser:
         else:
             start_lexeme = self.current_lexeme
             body = PBlock([self._parse_statement(block_properties)],
-                          start_lexeme)
+                          start_lexeme,
+                          block_properties=block_properties)
 
         return PForStatement(initializer, condition, increment, body, for_lexeme)
 
@@ -1345,7 +1355,6 @@ class Parser:
                     method = self._parse_function_declaration(member_name, type_name, type_lexeme,
                                                               block_properties.copy_with(self.current_lexeme,
                                                                                          is_class=True,
-                                                                                         is_function=True,
                                                                                          return_type=type_name))
                     methods.append(
                         PMethod(method.name, method.return_type,
