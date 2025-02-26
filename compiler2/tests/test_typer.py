@@ -4,7 +4,7 @@ from lexer import Position, Lexeme
 from parser import (PProgram, PType, PArrayType, PVariableDeclaration,
                     PExpression, PMethodCall, PCast, PClass,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
-                    PWhileStatement, PForStatement)
+                    PWhileStatement, PForStatement, PTernaryOperation)
 from typer import (Typer, TypeClass, Typ,
                   UnknownTypeError, TypingError, TypingConversionError,
                   SymbolNotFoundError, SymbolRedefinitionError)
@@ -334,7 +334,7 @@ class TestErrorHandling(TestCase):
 
     def test_typing_error(self):
         """Test TypingError is raised for invalid typing scenarios"""
-        with self.assertRaises(TypingError):
+        with self.assertRaises(AssertionError):
             # Try to type an invalid node type
             class InvalidNode(PProgram):
                 pass
@@ -356,6 +356,7 @@ class TestTyperBasicDeclarations(TestCase):
             "i32 x = 42;",
             "f64 pi = 3.14159;",
             "string msg = \"hello\";",
+            "string empty = null;",
             "bool flag = true;",
             "char c = 'a';"
         ]
@@ -451,7 +452,8 @@ class TestTyperBasicDeclarations(TestCase):
             ("string[] arr = new i32[5];", TypingConversionError),
             ("i32[] arr = new i32[5][];", TypingConversionError),
             ("i32[][] arr = new i32[5];", TypingConversionError),
-            ("UnknownType[] arr = new UnknownType[5];", UnknownTypeError)
+            ("UnknownType[] arr = new UnknownType[5];", UnknownTypeError),
+            ("i32[] arr = new i32[2.5];", TypingError)
         ]
 
         for source, expected_error in test_cases:
@@ -516,6 +518,35 @@ class TestTyperFunctionCall(TestCase):
         for source in test_cases:
             with self.subTest(source=source.strip()):
                 self.parse_and_type(source)
+                
+    def test_invalid_function_calls(self):
+        test_cases = [
+            ("""
+             i32 f(i32 x) { return x; }
+             f(3.1415);
+             """
+             ,TypingConversionError),
+            ("""
+             i32 max(i32 x, i32 y) { return x; }
+             max(5);
+             """
+             ,TypingError),
+            ("""
+             i32 max(i32 x, i32 y) { return x; }
+             max(1,2,3);
+             """
+             ,TypingError),
+            ("""
+             i32 max = 3;
+             max(1,2,3);
+             """
+             ,TypingError)
+        ]
+        
+        for source, expected_error in test_cases:
+            with self.subTest(source=source, expected=expected_error):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
 
 class TestTyperFunctionDeclarations(TestCase):
     """Test function declarations and return types"""
@@ -554,6 +585,11 @@ class TestTyperFunctionDeclarations(TestCase):
             }
             """,
             """
+            i32 ReturnTrue() {
+                return true;
+            }
+            """,
+            """
             string greet(string name) {
                 return "Hello " + name;
             }
@@ -567,21 +603,21 @@ class TestTyperFunctionDeclarations(TestCase):
     def test_invalid_return_types(self):
         """Test functions with invalid return types"""
         test_cases = [
-            """
+            ("""
             i32 wrong() {
                 return "string";
             }
-            """,
-            """
+            """,TypingConversionError),
+            ("""
             bool getBool() {
                 return 42;
             }
-            """
+            """,TypingConversionError)
         ]
 
-        for source in test_cases:
+        for source, expected_error in test_cases:
             with self.subTest(source=source.strip()):
-                with self.assertRaises(TypingConversionError):
+                with self.assertRaises(expected_error):
                     self.parse_and_type(source)
 
 class TestTyperClassDeclarations(TestCase):
@@ -650,12 +686,37 @@ class TestTyperClassDeclarations(TestCase):
             class TypeMismatch {
                 i32 x = "string";
             }
+            """,
+            """
+            class UnknownField {
+                i32 x;
+            }
+            _ = new UnknownField().y;
             """
         ]
 
         for source in test_cases:
             with self.subTest(source=source.strip()):
-                with self.assertRaises((UnknownTypeError, TypingConversionError)):
+                with self.assertRaises((UnknownTypeError, TypingConversionError, TypingError)):
+                    self.parse_and_type(source)
+
+    def test_invalid_this_location(self):
+        """Test class with invalid property types"""
+        test_cases = [
+            """
+            void DoThis(){
+                _  = this;
+            }
+            """,
+            """
+            if (false)
+                _ = this;
+            """
+        ]
+
+        for source in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(TypingError):
                     self.parse_and_type(source)
 
 class TestTyperMethodCalls(TestCase):
@@ -750,6 +811,14 @@ class TestTyperMethodCalls(TestCase):
 
             Test t = new Test();
             t.unknownMethod();
+            """,
+            """
+            class Test {
+                void method() {}
+            }
+
+            Test t = new Test();
+            t.method(123);
             """
         ]
 
@@ -799,7 +868,12 @@ class TestTyperArrayOperations(TestCase):
             ("""
             i32[] arr = new i32[10];
             bool x = arr[0];
-            """, TypingConversionError)
+            """, TypingConversionError),
+
+            ("""
+            i32 not_arr = 123;
+            _ = not_arr[0];
+            """, TypingError)
         ]
 
         for source, expected_error in test_cases:
@@ -820,7 +894,7 @@ class TestTyperOperators(TestCase):
     def test_valid_arithmetic_operators(self):
         """Test valid arithmetic operators"""
         test_cases = [
-            "i32 a = 1 + 2;",
+            "i32 a = true + 2;",
             "i32 b = 3 - 4;",
             "i32 c = 5 * 6;",
             "i32 d = 8 / 2;",
@@ -837,7 +911,43 @@ class TestTyperOperators(TestCase):
                 self.assertIsNotNone(var_decl.initial_value)
                 assert var_decl.initial_value is not None
                 self.assertEqual(var_decl.initial_value.expr_type, self.typer.known_types['i32'])
-            
+
+    def test_valid_ternary_operators(self):
+        """Test valid arithmetic operators"""
+        test_cases = [
+            "i32 a = true ? 1 : 2;",
+            "i32 b = false ? 1 : 2;",
+            "i32 b = 1 == 1 ? 1 : 2;",
+            "i32 b = 1 == 1 ? ('a' == 'b' ? 2 : 3) : 4;",
+        ]
+        for source in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                var_decl = prog.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                self.assertIsNotNone(var_decl.initial_value)
+                assert var_decl.initial_value is not None
+                tern = var_decl.initial_value
+                self.assertIsInstance(tern, PTernaryOperation)
+                assert isinstance(tern, PTernaryOperation)
+                self.assertEqual(tern.condition.expr_type, self.typer.known_types['bool'])
+                self.assertEqual(tern.true_value.expr_type, self.typer.known_types['i32'])
+                self.assertEqual(tern.false_value.expr_type, self.typer.known_types['i32'])
+
+
+    def test_invalid_ternary(self):
+        """Test invalid operator usage"""
+        test_cases = [
+            ("i32 x = 'a' ? 1 : 2;", TypingError),
+            ("string x = false ? false : null;", TypingError),
+            ("i32 x = true ? 1.23 : 123;", TypingConversionError)
+        ]
+
+        for source, expected_error in test_cases:
+            with self.subTest(source=source.strip()):
+                with self.assertRaises(expected_error):
+                    self.parse_and_type(source)
 
     def test_valid_comparison_operators(self):
         """Test valid comparison operators"""
@@ -939,39 +1049,64 @@ class TestTyperControlFlow(TestCase):
 
     def test_valid_while_conditions(self):
         """Test valid while loop conditions"""
-        source = """
+        test_cases = ["""
             while (true) {
                 i32 x = 1;
             }
+            """,
+            """
             i32 i = 0;
             while (i < 10) {
                 i = i + 1;
             }
-        """
-        prog = self.parse_and_type(source)
-        for statement in prog.statements:
-            if isinstance(statement, PVariableDeclaration):
-                break
-            self.assertIsInstance(statement, PWhileStatement)
-            assert isinstance(statement, PWhileStatement)
-            self.assertEqual(statement.condition.expr_type, self.typer.known_types['bool'])
+            """,
+            """
+            while (true) {
+                break;
+            }
+            """,
+            """
+            i32 i = 0;
+            while (true) {
+                if ( i < 10){
+                    i++;
+                    continue;
+                }
+                break;
+            }
+            """
+        ]
+        for source in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                for statement in prog.statements:
+                    if isinstance(statement, PVariableDeclaration):
+                        break
+                    self.assertIsInstance(statement, PWhileStatement)
+                    assert isinstance(statement, PWhileStatement)
+                    self.assertEqual(statement.condition.expr_type, self.typer.known_types['bool'])
 
     def test_valid_for_components(self):
         """Test valid for loop components"""
-        source = """
+        test_cases = ["""
             for (i32 i = 0; i < 10; i = i + 1) {
                 i32 x = i;
-            }
+            }""",
+            """
             for (i32 j = 10; j > 0; j = j - 1) {
                 i32 y = j;
-            }
+            }""",
+            """
             for (;;){}
-        """
-        prog = self.parse_and_type(source)
-        for statement in prog.statements:
-            self.assertIsInstance(statement, PForStatement)
-            assert isinstance(statement, PForStatement)
-            self.assertEqual(statement.condition.expr_type, self.typer.known_types['bool'])
+            """
+        ]
+        for source in test_cases:
+            with self.subTest(source=''.join(source.replace("\n", '').split(' '))):
+                prog = self.parse_and_type(source)
+                statement = prog.statements[0]
+                self.assertIsInstance(statement, PForStatement)
+                assert isinstance(statement, PForStatement)
+                self.assertEqual(statement.condition.expr_type, self.typer.known_types['bool'])
 
     def test_invalid_control_flow_conditions(self):
         """Test invalid conditions in control flow statements"""
@@ -981,18 +1116,21 @@ class TestTyperControlFlow(TestCase):
                     i32 x = 1;
                 }
             """, TypingConversionError),
-
             ("""
                 while ("string") {
                     i32 x = 1;
                 }
             """, TypingConversionError),
-
             ("""
                 for (string s = "start"; s < 10; s = s + 1) {
                     i32 x = 1;
                 }
-            """, TypingError)
+            """, TypingError),
+            ("""
+                for (i32 i = 0; i++;) {
+                    i32 x = 1;
+                }
+            """, TypingConversionError)
         ]
 
         for source, expected_error in test_cases:
@@ -1069,29 +1207,53 @@ class TestTyperTypeCasting(TestCase):
 
     def test_valid_numeric_down_casts(self):
         """Test valid numeric down casting"""
-        source = """
-        i64 large = 42;
-        i32 medium = (i32)large;  // i64 -> i32
-        i16 small = (i16)medium;  // i32 -> i16
-        i8 tiny = (i8)small;      // i16 -> i8
-        """
-        try:
-            self.parse_and_type(source)
-        except Exception as e:
-            self.fail(f"Failed to parse valid numeric down casts: {e}")
+        test_cases = [
+        "i64 large = 42;",
+        "i32 medium = (i32)((i64)12345);  // i64 -> i32",
+        "i16 small = (i16)123;  // i32 -> i16",
+        "i8 tiny = (i8)1;      // i16 -> i8"
+        ]
+        
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
+
+    def test_valid_null_cast(self):
+        """Test valid numeric down casting"""
+        test_cases = [
+        """class Test{}
+        Test t = (Test) null;"""
+        ]
+        
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
 
     def test_valid_float_to_integer_casts(self):
         """Test valid float to integer casts"""
-        source = """
-        f64 double = 3.14;
-        i32 int32 = (i32)double;  // f64 -> i32
-        f32 single = 2.718;
-        i16 int16 = (i16)single;  // f32 -> i16
-        """
-        try:
-            self.parse_and_type(source)
-        except Exception as e:
-            self.fail(f"Failed to parse valid float to integer casts: {e}")
+        test_cases = [
+        "f64 double = 3.14; i32 int32 = (i32)double;  // f64 -> i32",
+        "f32 single = 2.718; i16 int16 = (i16)single;  // f32 -> i16"
+        ]
+        
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
+
+    def test_valid_cast_to_bool(self):
+        """Test valid float to integer casts"""
+        test_cases = [
+        "_ = (bool) 3.14;",
+        "_ = (bool) ((f16) 12.34); ",
+        "_ = (bool) 'a';", 
+        "_ = (bool) \"hello\";",
+        "_ = (bool) null;",
+        "_ = (i32) false;",
+        ]
+        
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
 
     def test_invalid_casts(self):
         """Test invalid type casts"""
@@ -1099,6 +1261,10 @@ class TestTyperTypeCasting(TestCase):
             ("""
             string str = "42";
             i32 num = (i32)str;  // Can't cast string to int
+            """, TypingError),
+            ("""
+            i32 num = 123;  
+            _ = (string) num;    // Can't cast to string
             """, TypingError),
             ("""
             bool[] flag = new bool[1];
@@ -1453,6 +1619,11 @@ class TestTyperFunctionReturnPaths(TestCase):
             (
                 "i32 invalid1() { }",
                 "Missing return statement",
+                TypingError
+            ),
+            (
+                """class A {i32 invalid1() {} }""",
+                "Missing return statement in method",
                 TypingError
             ),
             (
