@@ -4,7 +4,41 @@ This is quick TODO list for me for my next steps. This does not guarantee that i
 
 ## [X] GC
 
-## Integer and Float literal suffixes to denote the expected size
+## [ ] llvm_transpiler refactor
+
+Need to simplify each function and what it does in the setup and compiling phase.
+Need simpler functions and to more clearly define a code flow path for compiling. e.g:
+
+- 1. Init CodeGen class
+- 1. Lex, PArse and Type code
+- 1. Init CodeGenContext
+- 1. Init Type list/map
+- 1. Init Function prototype list/map for builtin functions (Also need a new file with all constants to avoid magic strings/values)
+- 1. Generate code for all defined functions, classes and globals (while keeping non-definition statements separate to place in the main function)
+- 1. If not a library
+    - 1. Generate code for main function setup (potentially add places for pre-post setup code)
+    - 1. Generate code for the statements to place in the main function
+    - 1. Generate code for main function teardown (potentially add places for pre-post cleanup code)
+    - 1. Statically link to GC (and other builtins to add the runtime env to the executable)
+- 1. Run llvm code verification
+- 1. Run optimization passes
+- 1. Output all code to a file (or pass to clang/compiler) to output .ll .bc or .o depending on params
+
+## [ ] Add "interpreter" to run compiled llvm code `main` function using ctypes
+
+## [ ] Add proper main executable file with documentation, cli args etc. for the compiler
+
+## [ ] `override` operator to override __PS_* methods
+
+Should add the possibility to add specific functions to run before/after GC init and before/after program shutdown a bit like adding an `atexit` hook.
+
+It will allow to override specific language internal functions for specific use like overriding `__PS_malloc` and `__PS_free`.
+
+## [ ] Errors and ability to throw them instead of immediate crash
+
+## [ ] Try/catch (finally) once errors are enabled
+
+## [ ] Integer and Float literal suffixes to denote the expected size
 
 Currently all integer literals (except chars) are i32. If I want to define a literal unsigned, or smaller int you have to cast it. Or defining a literal i64 (bigger than the 32bit max value) results in a truncated value. 
 
@@ -28,12 +62,6 @@ c -> P# : It needs the structure definition to define an appropriate Class proto
 
 ## [ ] Copy operator
 
-## [ ] `override` operator to override __PS_* methods
-
-Should add the possibility to add specific functions to run before/after GC init and before/after program shutdown a bit like adding an `atexit` hook.
-
-It will allow to override specific language internal functions for specific use like overriding `__PS_malloc` and `__PS_free`.
-
 ## [ ] Add possiblitity to add `operator` keyword to write custom operators for operations with classes (like in c# or some python dunders)
 
 ## [ ] Add keywords `implicit` and `explicit` for casting classes
@@ -53,3 +81,7 @@ Only allows class fields to be set in the class constructor (and?) or as a field
 ## [ ] Add `property` keyword to have a read-only property method (like in python)
 
 Properties can be used to return constants or computed values (like the current Length) field on a 
+
+## [ ] Possible native CUDA integration (cf. llvm and cuda integration?)
+
+Will need to add special syntax and keywords to enable this!
