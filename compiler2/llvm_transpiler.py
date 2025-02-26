@@ -44,8 +44,6 @@ class CodeGen:
             'bool': ir.IntType(1),
             'null': ir.PointerType() # null is a point type (points to nothing but still a pointer technically)
         }
-        arch_size = ctypes.sizeof(ctypes.c_void_p)*8
-        # used for pointer size (useful for size calcs and the GC probably?)
         self.typer = Typer(filename, file)
         self.module = ir.Module(name=filename+".o")
         self.target = Target.from_default_triple().create_target_machine(
