@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any, Union, Generator
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from lexer import Lexer, LexemeType, Lexeme
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
@@ -46,7 +46,6 @@ class Typ:
     methods: List['PMethod']
     fields: List['PClassField']
     is_reference_type:bool = True
-    is_array:bool = False
     
     def __post_init__(self):
         for function in self.methods:
@@ -58,15 +57,22 @@ class Typ:
                                       [],
                                       PBlock([], Lexeme.default, BlockProperties(
                                                     is_top_level=False,
-                                                    return_type=PType('string', Lexeme.default)
+                                                    in_function=True
                                           )),
                                       Lexeme.default, is_builtin=True))
 
-    def copy_with(self, name, is_array):
-        return Typ(name, self.methods, self.fields, is_array=is_array)
-    
     def __str__(self):
         return self.name
+    
+class ArrayTyp(Typ):
+    def __init__(self, element_type:Typ):
+        self.element_typ:Typ = element_type
+        methods:List[PMethod] = []
+        fields:List[PClassField] = []
+        super().__init__(f'{element_type.name}[]',
+                         methods=methods,
+                         fields=fields,
+                         is_reference_type=True)
 
 class ParserError(Exception):
     """Custom exception for parser-specific errors"""
@@ -533,10 +539,12 @@ class PArrayInstantiation(PExpression):
 @dataclass
 class PType(PStatement):
     type_string:str
+    expr_type:Optional[Typ]
 
     def __init__(self, base_type:str, lexeme_pos:Union[Lexeme,Position]):
         super().__init__(NodeType.TYPE, lexeme_pos if isinstance(lexeme_pos, Position) else lexeme_pos.pos)
         self.type_string = base_type
+        self.expr_type = None
 
     def __str__(self):
         if isinstance(self.type_string, str):

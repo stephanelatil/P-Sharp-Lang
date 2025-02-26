@@ -5,7 +5,7 @@ from parser import (PProgram, PType, PArrayType, PVariableDeclaration,
                     PExpression, PMethodCall, PCast, PClass,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
                     PWhileStatement, PForStatement, PTernaryOperation)
-from typer import (Typer, TypeClass, Typ,
+from typer import (Typer, TypeClass, Typ, ArrayTyp,
                   UnknownTypeError, TypingError, TypingConversionError,
                   SymbolNotFoundError, SymbolRedefinitionError)
 
@@ -426,10 +426,10 @@ class TestTyperBasicDeclarations(TestCase):
     def test_valid_array_declarations(self):
         """Test valid array declarations"""
         test_cases = [
-            ("i32[] numbers = new i32[10];", "i32[]"),
-            ("string[] names = new string[5];", "string[]"),
-            ("bool[] flags = new bool[3];", "bool[]"),
-            ("i32[][] matrix = new i32[3][];", "i32[][]")
+            ("i32[] numbers = new i32[10];", ArrayTyp(self.typer.known_types['i32'])),
+            ("string[] names = new string[5];", ArrayTyp(self.typer.known_types['string'])),
+            ("bool[] flags = new bool[3];", ArrayTyp(self.typer.known_types['bool'])),
+            ("i32[][] matrix = new i32[3][];", ArrayTyp(ArrayTyp(self.typer.known_types['i32'])))
         ]
 
         for source, expected_type in test_cases:
@@ -442,8 +442,8 @@ class TestTyperBasicDeclarations(TestCase):
                 assert isinstance(var_decl.initial_value, PExpression)
                 self.assertIsInstance(var_decl.initial_value.expr_type, Typ)
                 assert isinstance(var_decl.initial_value.expr_type, Typ)
-                self.assertTrue(var_decl.initial_value.expr_type.is_array)
-                self.assertEqual(var_decl.initial_value.expr_type.name, expected_type)
+                self.assertIsInstance(var_decl.initial_value.expr_type, ArrayTyp)
+                self.assertEqual(var_decl.initial_value.expr_type, expected_type)
 
     def test_invalid_array_declarations(self):
         """Test invalid array declarations"""
@@ -641,7 +641,8 @@ class TestTyperClassDeclarations(TestCase):
         self.parse_and_type(source)
         self.assertIn('Point', self.typer.known_types)
         typ = self.typer.known_types['Point']
-        self.assertFalse(typ.is_array)
+        self.assertIsInstance(typ, Typ)
+        self.assertNotIsInstance(typ, ArrayTyp)
         self.assertTrue(typ.is_reference_type)
         self.assertEqual(len(typ.methods), 1)
         self.assertEqual(len(typ.fields), 2)

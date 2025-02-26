@@ -197,30 +197,7 @@ _builtin_types: Dict[str, Typ] = {
         fields=[],
         is_reference_type=False
     ),
-
-    # Array type (will be used as base for all array types)
-    "__array": Typ(
-        name="__array",
-        methods=[
-            create_method("ToString", "string", []),
-            create_method("Copy", "void", [("i32", "sourceIndex"),
-                                         ("array", "destination"),
-                                         ("i32", "destinationIndex"),
-                                         ("i32", "length")]),
-            create_method("Fill", "void", [("any", "value")]),
-            create_method("Clear", "void", []),
-            create_method("Contains", "bool", [("any", "value")]),
-            create_method("IndexOf", "i32", [("any", "value")]),
-            create_method("LastIndexOf", "i32", [("any", "value")]),
-            create_method("Reverse", "void", [])
-        ],
-        fields=[
-            create_property("Length", "u64"),
-        ],
-        is_reference_type=True,
-        is_array=True
-    ),
-    'void': Typ('void', [],[]),
+    'void': Typ('void', [],[], True),
     '__null': Typ('null', [], [], True)
 }
 
@@ -483,22 +460,16 @@ class Typer:
     def _ptype_from_typ(self, typ:Typ, pos:Optional[Position]=None) -> PType|PArrayType:
         if pos is None:
             pos = Position.default
-        if not typ.is_array:
+        if not isinstance(typ, ArrayTyp):
             return PType(typ.name, pos)
         #typ is array
-        #gets the base type name then loops over to create a PArrayType of the correct dimension
-        base_name = typ.name.replace('[]','')
-        ptyp = PType(base_name, pos)
-        while len(base_name) < len(typ.name):
-            base_name += '[]'
-            ptyp = PArrayType(ptyp, pos)
-        return ptyp
+        return PArrayType(self._ptype_from_typ(typ.element_typ), pos)
 
     def get_type_info(self, type_: Typ) -> TypeInfo:
         """Get TypeInfo for a given type, handling array types"""
 
         # Handle array types
-        if type_.is_array:
+        if isinstance(type_, ArrayTyp):
             return TypeInfo(TypeClass.ARRAY, is_signed=False)
 
         type_str = type_.name
@@ -793,11 +764,11 @@ class Typer:
             base = ptype.base_type
             if base.type_string not in self.known_types:
                 raise UnknownTypeError(base)
-            return self.known_types['__array'].copy_with(str(ptype), is_array=True)
+            self.known_types[ptype.type_string] = ArrayTyp(self._type_ptype(ptype.element_type))
+            return self.known_types[ptype.type_string]
         if not ptype.type_string in self.known_types:
-                raise UnknownTypeError(ptype)
-        type_ = self.known_types[ptype.type_string]
-        return type_
+            raise UnknownTypeError(ptype)
+        return self.known_types[ptype.type_string]
 
     def _type_function(self, function: PFunction|PMethod) -> None:
         """Type checks a function definition"""
@@ -1088,13 +1059,9 @@ class Typer:
     def _type_array_indexing(self, array_index: PArrayIndexing) -> Typ:
         """Type checks an array indexing expression and returns the element type"""
         array_type = self._type_expression(array_index.array)
-        if not array_type.name.endswith('[]'):
-            raise TypingError(f"Expected array type but got '{array_type.name}'")     
-        if array_type.name.endswith('[][]'):
-            array_elem_type = array_type.copy_with(array_type.name[:-2], is_array=array_type.name[:-2].endswith('[]')) #strip of array from the end
-        else:
-            array_elem_type = self.known_types[array_type.name[:-2]]     
-               
+        if not isinstance(array_type, ArrayTyp):
+            raise TypingError(f"Expected array type but got '{array_type.name}'")    
+        
         index = self._type_expression(array_index.index)
         if self.get_type_info(index).type_class != TypeClass.INTEGER:
             raise TypingError(f"The index must be an integer type not '{index}'")
@@ -1104,8 +1071,8 @@ class Typer:
                 array_index.index,
                 self.known_types['u64'])
         
-        array_index.expr_type = array_elem_type
-        return array_elem_type
+        array_index.expr_type = array_type.element_typ
+        return array_type.element_typ
 
     def _type_object_instantiation(self, obj_init: PObjectInstantiation) -> Typ:
         """Type checks an object instantiation and returns the object type"""

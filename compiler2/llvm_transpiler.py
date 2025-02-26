@@ -3,13 +3,12 @@
 import os
 os.environ['LLVMLITE_ENABLE_OPAQUE_POINTERS'] = "1"
 
-from typer import Typer, Typ, TypeClass, TypingError
-from parser import (PClass,PFunction,PProgram,
+from typer import Typer, TypeClass, TypingError
+from parser import (PClass,PFunction,PProgram, Typ, ArrayTyp,
                     PStatement, PVariableDeclaration)
-from typing import TextIO, List, Dict, Optional, Union, Tuple
+from typing import TextIO, List, Dict, Optional, Union
 from utils import CodeGenContext, Scopes, CompilerError, CompilerWarning
 from llvmlite import ir
-import ctypes
 from warnings import warn
 from llvmlite.binding import (initialize, initialize_native_target, 
                               initialize_native_asmprinter, PipelineTuningOptions,
