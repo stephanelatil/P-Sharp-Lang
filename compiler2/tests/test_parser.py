@@ -724,12 +724,6 @@ class TestParserControlFlow(TestParserBase):
                 self.assertIsInstance(loop, (PWhileStatement, PForStatement))
                 assert isinstance(loop, (PWhileStatement, PForStatement))
 
-    def test_break_continue_only_in_loops(self):
-        pass # TODO add test
-
-    def test_return_only_in_functions(self):
-        pass # TODO
-
     def test_assert_statement_variations(self):
         """Test parsing of assert statements with different patterns."""
         test_cases = [

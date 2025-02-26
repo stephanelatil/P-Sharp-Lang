@@ -1290,15 +1290,22 @@ class TestTyperUnaryOperations(TestCase):
     def test_valid_numeric_negation(self):
         """Test valid numeric negation"""
         test_cases = (
-            "i32 a = -42;",
-            "f64 b = -3.14;",
-            "i32 c = -(1 + 2);",
-            "f32 d = -(2.0 * 3.0);"
+            ("i32 a = -42;",'i32'),
+            ("f32 b = -3.14;",'f32'),
+            ("i32 c = -(1 + 2);",'i32'),
+            ("f32 d = -(2.0 * 3.0);",'f32')
         )
-        for var_decl in test_cases:
-            with self.subTest(source=var_decl):
-                program = self.parse_and_type(var_decl)
-                #TODO add assertions
+        for source, expected_type in test_cases:
+            with self.subTest(source=source):
+                program = self.parse_and_type(source)
+                self.assertGreater(len(program.statements), 0)
+                var_decl = program.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                self.assertIsInstance(var_decl.initial_value, PUnaryOperation)
+                assert isinstance(var_decl.initial_value, PUnaryOperation)
+                self.assertEqual(var_decl.initial_value.expr_type, self.typer.known_types[expected_type])
+                self.assertEqual(var_decl.initial_value.operand.expr_type, self.typer.known_types[expected_type])
 
     def test_valid_logical_not(self):
         """Test valid logical not operations"""
@@ -1306,23 +1313,48 @@ class TestTyperUnaryOperations(TestCase):
                       "bool b = not (1 < 2);",
                       "bool c = not (true and false);",
                       "bool d = not not true;")
-        for var_decl in test_cases:
-            with self.subTest(source=var_decl):
-                program = self.parse_and_type(var_decl)
-                #TODO add assertions
+        for source in test_cases:
+            with self.subTest(source=source):
+                program = self.parse_and_type(source)
+                self.assertGreater(len(program.statements), 0)
+                var_decl = program.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                self.assertIsInstance(var_decl.initial_value, PUnaryOperation)
+                assert isinstance(var_decl.initial_value, PUnaryOperation)
+                self.assertEqual(var_decl.initial_value.expr_type, self.typer.known_types['bool'])
+                self.assertEqual(var_decl.initial_value.operand.expr_type, self.typer.known_types['bool'])
 
     def test_valid_increment_decrement(self):
         """Test valid increment/decrement operations"""
         test_cases = ("i32 x = 0; x++;",
                       "i32 x = 0; ++x;",
                       "i32 x = 0; x--;",
-                      "i32 x = 0; --x;",
-                      "i32 x = 0; i32 y = x++;",
+                      "i32 x = 0; --x;")
+        for source in test_cases:
+            with self.subTest(source=source):
+                program = self.parse_and_type(source)
+                self.assertGreater(len(program.statements), 1)
+                incr = program.statements[1]
+                self.assertIsInstance(incr, PUnaryOperation)
+                assert isinstance(incr, PUnaryOperation)
+                self.assertEqual(incr.expr_type, self.typer.known_types['i32'])
+                self.assertEqual(incr.operand.expr_type, self.typer.known_types['i32'])
+
+    def test_valid_expression_from_increment(self):
+        test_cases = ("i32 x = 0; i32 y = x++;",
                       "i32 x = 0; i32 z = ++x;")
         for source in test_cases:
             with self.subTest(source=source):
                 program = self.parse_and_type(source)
-                #TODO add assertions
+                self.assertGreater(len(program.statements), 1)
+                incr = program.statements[1]
+                self.assertIsInstance(incr, PVariableDeclaration)
+                assert isinstance(incr, PVariableDeclaration)
+                self.assertIsInstance(incr.initial_value, PUnaryOperation)
+                assert isinstance(incr.initial_value, PUnaryOperation)
+                self.assertEqual(incr.initial_value.expr_type, self.typer.known_types['i32'])
+                self.assertEqual(incr.initial_value.operand.expr_type, self.typer.known_types['i32'])
 
     def test_invalid_unary_operations(self):
         """Test invalid unary operations"""
