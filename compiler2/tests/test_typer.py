@@ -1269,6 +1269,9 @@ class TestTyperTypeCasting(TestCase):
             ("""
             bool[] flag = new bool[1];
             f64 double = (f64)flag;  // Can't cast array to float
+            """, TypingError),
+            ("""
+            i32 value = (i32) null;  // Can't cast null to value type
             """, TypingError)
         ]
 

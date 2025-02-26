@@ -506,9 +506,9 @@ class Typer:
         # Must be a custom class
         return TypeInfo(TypeClass.CLASS, is_builtin=False)
 
-    def is_numeric_type(self, type_: Typ) -> bool:
+    def is_numeric_type(self, type_: Union[Typ, TypeInfo]) -> bool:
         """Check if type is numeric (integer or float)"""
-        info = self.get_type_info(type_)
+        info = type_ if isinstance(type_, TypeInfo) else self.get_type_info(type_)
         return info.type_class in (TypeClass.INTEGER, TypeClass.FLOAT, TypeClass.BOOLEAN)
 
     def check_types_match(self, expected: Typ, actual: Typ) -> bool:
@@ -1058,23 +1058,22 @@ class Typer:
 
     def _type_cast(self, cast: PCast) -> Typ:
         """Type checks a cast expression and returns the target type"""
-        #TODO always valid if numeric or bool beware of char, not if class/ref type
         expression_type = self._type_expression(cast.expression)
         target_type = self._type_ptype(cast.target_type)
-        expression_type_info = self.get_type_info(expression_type)
         target_type_info = self.get_type_info(target_type)
         
         if expression_type.name == target_type.name:
-            # TODO add warning for useless cast
+            self.warnings.append(CompilerWarning(f"Unnecessary Cast", cast.position))
             cast.expr_type = target_type
-        elif self.is_numeric_type(expression_type) and self.is_numeric_type(target_type):
+        elif self.is_numeric_type(expression_type) and self.is_numeric_type(target_type_info):
             cast.expr_type = target_type
-            # TODO Add warning for loss of precision if reduction in bit-width
         elif target_type_info.type_class == TypeClass.BOOLEAN:
             cast.expr_type = target_type
         elif target_type_info.type_class == TypeClass.STRING:
             raise TypingError(f"Cannot cast to string. Use the .ToString() method instead")
         elif expression_type == self.known_types['__null']:
+            if not target_type.is_reference_type:
+                raise TypingError(f'Cannot place null into a non-reference type')
             # in case it's a null literal
             cast.expr_type = target_type
         else:
