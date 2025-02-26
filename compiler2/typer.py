@@ -28,15 +28,14 @@ def create_property(name: str, type_str: str) -> PClassField:
 
 def create_method(name: str, return_type: str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
     """Helper function to create a method"""
-    func_return_type = PType(return_type, Lexeme.default)
     parameters = [PVariableDeclaration(n, PType(t, Lexeme.default), None, Lexeme.default) for t, n in params]
     return PMethod(
         name=name,
-        return_type=func_return_type,
+        return_type=PType(return_type, Lexeme.default),
         parameters=parameters,
         body=PBlock([], Lexeme.default,
                     block_properties=BlockProperties(is_class=True, is_top_level=False,
-                                                     return_type=func_return_type, block_vars=parameters)),
+                                                     in_function=True, block_vars=parameters)),
         lexeme=Lexeme.default
     )
 

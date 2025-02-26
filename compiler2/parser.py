@@ -110,22 +110,26 @@ class NodeType(Enum):
 @dataclass
 class BlockProperties:
     """The properties of the current block to be passed to statements and lower blocks"""
+    
+    """Whether the block is contained in a class"""
     is_class:bool = False
+    """Whether this block is the top level block of the module"""
     is_top_level:bool = True
+    """Whether this block is contained in a loop (Note that this keeps the value True if nested multiple loops deep and is False only if it's not within a loop)"""
     is_loop:bool = False
-    return_type:Optional['PType'] = None
+    """Whether this block is contained inside a function block"""
+    in_function:bool = False
+    """The list of variables declared in this scope"""
     block_vars:List['PVariableDeclaration'] = field(default_factory=list)
 
-    def copy_with(self, current_lexeme, is_loop:bool=False,
-                  is_class:bool=False, return_type:Optional['PType']=None,
+    def copy_with(self, is_loop:bool=False,
+                  is_class:bool=False, in_function:bool=False,
                   is_top_level:bool=False):
-        if return_type and self.return_type is not None and return_type != self.return_type:
-            raise ParserError("Error setting block return type different from existing return type", current_lexeme)
         return BlockProperties(
             is_loop=self.is_loop or is_loop,
             is_class= self.is_class or is_class,
             is_top_level= self.is_top_level and is_top_level,
-            return_type=return_type or self.return_type)
+            in_function=in_function or self.in_function)
 
 @dataclass
 class PStatement:
@@ -763,7 +767,7 @@ class Parser:
         elif self._match(LexemeType.KEYWORD_CONTROL_FOR):
             return self._parse_for_statement(block_properties.copy_with(self.current_lexeme, is_top_level=False))
         elif self._match(LexemeType.KEYWORD_CONTROL_RETURN):
-            if block_properties.return_type is None:
+            if not block_properties.in_function:
                 raise ParserError("Cannot have a return statement outside of a function", self.current_lexeme)
             return self._parse_return_statement()
         elif self._match(LexemeType.KEYWORD_CONTROL_BREAK):
@@ -804,11 +808,13 @@ class Parser:
         if self._match(LexemeType.PUNCTUATION_OPENPAREN):
             if not block_properties.is_top_level:
                 raise ParserError("Functions cannot be defined in a scope. They must be defined at the top level.", self.current_lexeme)
+            if block_properties.in_function:
+                raise ParserError("Functions cannot be defined inside another function. They must be defined at the top level.", self.current_lexeme)
             return self._parse_function_declaration(name, var_type, type_lexeme,
                                                     block_properties.copy_with(
                                                         self.current_lexeme,
                                                         is_top_level=False,
-                                                        return_type=var_type))
+                                                        in_function=True))
 
         # Variable declaration
         initial_value = None
@@ -1355,7 +1361,7 @@ class Parser:
                     method = self._parse_function_declaration(member_name, type_name, type_lexeme,
                                                               block_properties.copy_with(self.current_lexeme,
                                                                                          is_class=True,
-                                                                                         return_type=type_name))
+                                                                                         in_function=True))
                     methods.append(
                         PMethod(method.name, method.return_type,
                                 method.parameters, method.body, name_lexeme)
