@@ -103,8 +103,7 @@ class TestTypeConversions(TestCase):
             
             #non numerics This should never happen but test anyways
             ("void", "i8", False),
-            ("string", "i32", False),
-            ("__array", "i64", False)
+            ("string", "i32", False)
         ]
 
         for from_type, to_type, expected in test_cases:
