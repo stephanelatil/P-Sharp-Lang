@@ -218,6 +218,13 @@ class PClass(PStatement):
     name: str
     fields: List['PClassField']
     methods: List[PMethod]
+    _class_typ:Optional[Typ] = None
+    
+    @property
+    def class_typ(self) ->Typ:
+        if self._class_typ is None:
+            raise TypingError('Class has not been typed yet')
+        return self._class_typ
 
     def __init__(self, name: str, fields: List['PClassField'],
                  methods: List[PMethod], lexeme: Lexeme):
@@ -231,11 +238,17 @@ class PClassField(PStatement):
     """Class field definition node"""
     name: str
     var_type: 'PType'
-    typer_pass_var_type: Optional[Typ]
     is_public: bool
     default_value: Optional[PExpression]
+    _typer_pass_var_type: Optional[Typ] = None
     is_assigned: bool = False
     is_read: bool = False
+    
+    @property
+    def typer_pass_var_type(self) -> Typ:
+        if self._typer_pass_var_type is None:
+            raise TypingError("Typer has not typed this node yet!")
+        return self._typer_pass_var_type
 
     def __init__(self, name: str, type: 'PType', is_public: bool, lexeme: Lexeme, default_value:Optional[PExpression]):
         super().__init__(NodeType.CLASS_PROPERTY, lexeme.pos)
