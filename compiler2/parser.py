@@ -49,7 +49,7 @@ class Typ:
     
     def __post_init__(self):
         for function in self.methods:
-            if function.name == "ToString" and len(function.parameters) == 0:
+            if function.name == "ToString" and len(function.function_args) == 0:
                 return
         #add default ToString method if it does not exist. Just returns the Type name
         self.methods.append(PMethod("ToString", 
@@ -177,7 +177,7 @@ class PFunction(PStatement):
     """Function definition node"""
     name: str
     return_type: 'PType'
-    parameters: List['PVariableDeclaration']  # List of (type, name) tuples
+    function_args: List['PVariableDeclaration']  # List of (type, name) tuples
     body: 'PBlock'
     is_called: bool = False
     _return_typ_typed:Optional[Typ] = None
@@ -193,7 +193,7 @@ class PFunction(PStatement):
         super().__init__(NodeType.FUNCTION, lexeme.pos)
         self.name = name
         self.return_type = return_type
-        self.parameters = parameters
+        self.function_args = parameters
         self.body = body
 
 @dataclass    
@@ -1367,12 +1367,11 @@ class Parser:
                 if self._match(LexemeType.PUNCTUATION_OPENPAREN):
                     # Method
                     method = self._parse_function_declaration(member_name, type_name, type_lexeme,
-                                                              block_properties.copy_with(self.current_lexeme,
-                                                                                         is_class=True,
+                                                              block_properties.copy_with(is_class=True,
                                                                                          in_function=True))
                     methods.append(
                         PMethod(method.name, method.return_type,
-                                method.parameters, method.body, name_lexeme)
+                                method.function_args, method.body, name_lexeme)
                     )
                 else:
                     # Property

@@ -297,7 +297,7 @@ class ScopeManager:
             function.return_type,
             function,
             is_function=True,
-            parameters=function.parameters
+            parameters=function.function_args
         )
 
     def lookup(self, name: str, statement:PStatement) -> Symbol:
@@ -781,7 +781,7 @@ class Typer:
         self._scope_manager.enter_function_scope()
         self.expected_return_type = self._type_ptype(function.return_type)
         function._return_typ_typed = self.expected_return_type
-        self._type_block(function.body, function.parameters)
+        self._type_block(function.body, function.function_args)
         
         #add implicit return at the end of a void function if there isn't one already
         if self.get_type_info(self.expected_return_type).type_class == TypeClass.VOID:
@@ -971,11 +971,11 @@ class Typer:
             raise TypingError(f"Method {method_call.method_name} of type {obj_type} if unknown at location {method_call.position}")
         
         method.is_called = True
-        if len(method.parameters) != len(method_call.arguments):
-            raise TypingError(f"The function expects {len(method_call.arguments)} arguments but got {len(method.parameters)}"+\
+        if len(method.function_args) != len(method_call.arguments):
+            raise TypingError(f"The function expects {len(method_call.arguments)} arguments but got {len(method.function_args)}"+\
                               f"at location {method_call.position}")
 
-        for expected_param, actual in zip(method.parameters, method_call.arguments):
+        for expected_param, actual in zip(method.function_args, method_call.arguments):
             expected_type = self._type_ptype(expected_param.var_type)
             actual_type = self._type_expression(actual)
             if not self.check_types_match(expected_type, actual_type):
