@@ -336,9 +336,6 @@ class Lexer:
         if value in self.keywords:
             return Lexeme(self.keywords[value], value, start_pos, self.stream.position())
 
-        if value.startswith("PS_GC__"):
-            raise LexerError("Identifiers cannot start with PS_GC__", start_pos, self.stream.position())
-
         if value.startswith("__"):
             raise LexerError("Identifiers cannot start with double underscore", start_pos, self.stream.position())
 
