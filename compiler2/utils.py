@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, List, Dict, Callable, Tuple
+from typing import Optional, List, Dict, Tuple, Union
 from llvmlite import ir, binding
 
 class Position:
@@ -92,6 +92,8 @@ class VarInfo:
     name:str
     type_:ir.Type
     alloca:Optional[ir.NamedValue]=None
+    """This is useful to know if the var needs to be explicitly dereferenced! A global var is a pointer to the given type"""
+    is_global:bool=False
     func_ptr:Optional[ir.Function]=None
     
     @property
@@ -107,12 +109,12 @@ class ScopeVars:
             raise CompilerError(f"Variable already exists!")
         self.scope_vars["name"] = VarInfo(name, return_type, func_ptr=function_ptr)
         
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue, is_global:bool=False):
         if name in self.scope_vars:
             raise CompilerError(f"Variable already exists!")
-        self.scope_vars[name] = VarInfo(name, type_, alloca=alloca)
+        self.scope_vars[name] = VarInfo(name, type_, alloca=alloca, is_global=is_global)
         
-    def get_var(self, name:str) -> Optional[VarInfo]:
+    def get_symbol(self, name:str) -> Optional[VarInfo]:
         return self.scope_vars.get(name, None)
 
 class Scopes:
@@ -126,8 +128,8 @@ class Scopes:
     def leave_scope(self):
         self.scopes.pop()
 
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
-        self.scopes[-1].declare_var(name, type_, alloca)
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue, is_global:bool=False):
+        self.scopes[-1].declare_var(name, type_, alloca, is_global)
         
     def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
         self.declare_func(name, return_type, function_ptr)
@@ -140,12 +142,28 @@ class Scopes:
     def leave_func_scope(self):
         self.leave_scope()
         self.scopes = [self.scopes[0], *self.tmp_func_stack.pop()]
+        
+    def has_symbol(self, name:str) -> bool:
+        """Checks if a given symbol is known
 
-    def get_var(self, name:str):
+        Args:
+            name (str): _description_
+
+        Returns:
+            bool: _description_
+        """
         for scope in self.scopes[::-1]:
-            var_info = scope.get_var(name)
+            var_info = scope.get_symbol(name)
+            if var_info is not None:
+                return True
+        return False
+
+    def get_symbol(self, name:str) -> VarInfo:
+        for scope in self.scopes[::-1]:
+            var_info = scope.get_symbol(name)
             if var_info is not None:
                 return var_info
+        
         raise CompilerError(f"Unable to find variable {name}")
     
     def get_global_scope(self):
@@ -165,22 +183,19 @@ class CodeGenContext:
     module:ir.Module
     scopes:Scopes
     target_data:binding.TargetData
-    """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
-    get_llvm_type: Callable[['Typ'],ir.Type]
+    # """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
+    # get_llvm_type: Callable[['Typ'],ir.Type]
+    """A dict containing all Types known to the typer and it's corresponding ir.Type"""
+    type_map:Dict['Typ', Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]]
     """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
     loopinfo:List[Tuple[ir.Block, ir.Block]] = field(default_factory=list)
     builder:ir.IRBuilder = ir.IRBuilder()
     global_exit_block:Optional[ir.Block]=None
-    type_ids:Dict[str, int] = field(default_factory=dict)
-    builtin_functions:Dict[str, ir.Function] = field(default_factory=dict)
+    type_ids:Dict['Typ', int] = field(default_factory=dict)
     _global_strings:Dict[str, ir.GlobalValue] = field(default_factory=dict)
     """Whether the builder is currently compiling code withing the main function.
     This is used to replace 'return' instructions with setting the return value to the global return variable and branching to the main exit block"""
     is_in_main_function:bool=False
-    
-    @property
-    def _RETURN_CODE_VAR_NAME(self):
-        return '__PS_ReturnCodeValue'
     
     def get_char_ptr_from_string(self, string:str):
         """Adds a Global string with the given value (if none already exists) and returns a GEP pointer to the first character (char* c string style)
@@ -202,3 +217,6 @@ class CodeGenContext:
             self._global_strings[string] = c_str
         zero = ir.Constant(ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8), 0)
         return self.builder.gep(c_str, [zero, zero], inbounds=True)
+    
+    def get_method_symbol_name(self, class_name:str, method_identifier:str):
+        return f"__{class_name}.__{method_identifier}"
