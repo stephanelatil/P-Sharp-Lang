@@ -107,7 +107,7 @@ class ScopeVars:
     def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
         if name in self.scope_vars:
             raise CompilerError(f"Variable already exists!")
-        self.scope_vars["name"] = VarInfo(name, return_type, func_ptr=function_ptr)
+        self.scope_vars[name] = VarInfo(name, return_type, func_ptr=function_ptr)
         
     def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue, is_global:bool=False):
         if name in self.scope_vars:
