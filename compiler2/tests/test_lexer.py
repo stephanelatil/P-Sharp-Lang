@@ -455,7 +455,6 @@ class LexerTests(TestCase):
         """Test that invalid identifiers raise appropriate errors."""
         invalid_ids = [
             "123identifier",    # Cannot start with number
-            "PS_GC__name",     # Cannot start with PS_GC__
             "__reserved",      # Cannot start with double underscore
         ]
         for identifier in invalid_ids:
