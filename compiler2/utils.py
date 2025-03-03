@@ -132,7 +132,7 @@ class Scopes:
         self.scopes[-1].declare_var(name, type_, alloca, is_global)
         
     def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
-        self.declare_func(name, return_type, function_ptr)
+        self.scopes[-1].declare_func(name, return_type, function_ptr)
         
     def enter_func_scope(self):
         self.tmp_func_stack.append(self.scopes[1:].copy())
