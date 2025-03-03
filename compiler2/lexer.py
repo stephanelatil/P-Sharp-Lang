@@ -4,7 +4,11 @@ from typing import TextIO, Generator, Optional
 from utils import Position
 
 class LexemeType(Enum):
+    #Reserved word for future or internal use
+    RESERVED_KEYWORD = auto()
+    
     # Keywords
+    RESERVED_AUTORENAME_IDENTIFIER_MAIN = auto() #this is to avoid a user adding a "main" function and it overwriting the c style main function added by the compiler
     KEYWORD_CONTROL_IF = auto()
     KEYWORD_CONTROL_ELSE = auto()
     KEYWORD_CONTROL_RETURN = auto()
@@ -200,7 +204,10 @@ class Lexer:
             'and':LexemeType.OPERATOR_BINARY_BOOL_AND,
             'or':LexemeType.OPERATOR_BINARY_BOOL_OR,
             'not':LexemeType.OPERATOR_UNARY_BOOL_NOT,
-            '_':LexemeType.DISCARD
+            '_':LexemeType.DISCARD,
+            
+            # The main function cannot be defined. It's needed for the ELF entrypoint
+            'main':LexemeType.RESERVED_AUTORENAME_IDENTIFIER_MAIN
         }
 
         # Build operator lookup table
@@ -334,6 +341,8 @@ class Lexer:
             value += self.stream.advance()
 
         if value in self.keywords:
+            if self.keywords[value] == LexemeType.RESERVED_AUTORENAME_IDENTIFIER_MAIN:
+                return Lexeme(LexemeType.IDENTIFIER, '__renamed_main', start_pos, self.stream.position())
             return Lexeme(self.keywords[value], value, start_pos, self.stream.position())
 
         if value.startswith("__"):
