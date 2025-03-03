@@ -513,7 +513,7 @@ static void test_value_array_allocation(void) {
     
     // Allocate array for primitive types (integers)
     size_t array_size = sizeof(size_t) + (10 * sizeof(int)); // size header + 10 integers
-    size_t* value_array_obj = __PS_AllocateValueArray(array_size);
+    size_t* value_array_obj = __PS_AllocateValueArray(sizeof(size_t), array_size);
     assert(value_array_obj != NULL);
 
     
@@ -632,7 +632,7 @@ static void test_array_edge_cases(void) {
     
     // Test zero-sized arrays
     size_t zero_size = sizeof(size_t);
-    int* empty_value_array = __PS_AllocateValueArray(zero_size);
+    int* empty_value_array = __PS_AllocateValueArray(sizeof(int), zero_size);
     TestComplexObject** empty_ref_array = __PS_AllocateRefArray(zero_size);
     
     void** empty_value_loc = (void**)&empty_value_array;
