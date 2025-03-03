@@ -296,7 +296,7 @@ class PVariableDeclaration(PStatement):
 @dataclass
 class PAssignment(PExpression):
     """Assignment operation node"""
-    target: Union['PIdentifier', 'PDotAttribute', 'PArrayIndexing']
+    target: Union['PIdentifier', 'PDotAttribute', 'PArrayIndexing', 'PCast']
     value: PExpression
 
     def __init__(self, target: Union['PIdentifier', 'PDotAttribute', 'PArrayIndexing'], value: PExpression, lexeme: Lexeme):

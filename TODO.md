@@ -9,20 +9,26 @@ This is quick TODO list for me for my next steps. This does not guarantee that i
 Need to simplify each function and what it does in the setup and compiling phase.
 Need simpler functions and to more clearly define a code flow path for compiling. e.g:
 
-- 1. Init CodeGen class
-- 1. Lex, PArse and Type code
-- 1. Init CodeGenContext
-- 1. Init Type list/map
-- 1. Init Function prototype list/map for builtin functions (Also need a new file with all constants to avoid magic strings/values)
-- 1. Generate code for all defined functions, classes and globals (while keeping non-definition statements separate to place in the main function)
-- 1. If not a library
-    - 1. Generate code for main function setup (potentially add places for pre-post setup code)
-    - 1. Generate code for the statements to place in the main function
-    - 1. Generate code for main function teardown (potentially add places for pre-post cleanup code)
-    - 1. Statically link to GC (and other builtins to add the runtime env to the executable)
-- 1. Run llvm code verification
-- 1. Run optimization passes
-- 1. Output all code to a file (or pass to clang/compiler) to output .ll .bc or .o depending on params
+1. Init CodeGen class
+1. Lex, Parse and Type code
+1. Init CodeGenContext
+1. Init Type list/map
+1. Init Function prototype list/map for builtin functions (Also need a new file with all constants to avoid magic strings/values)
+1. Generate code for all defined functions, classes and globals (while keeping non-definition statements separate to place in the main function)
+1. If not a library
+    - Generate code for main function setup (potentially add places for pre-post setup code)
+    - Generate code for the statements to place in the main function
+    - Generate code for main function teardown (potentially add places for pre-post cleanup code)
+    - Statically link to GC (and other builtins to add the runtime env to the executable)
+1. Run llvm code verification
+1. Run optimization passes
+1. Output all code to a file (or pass to clang/compiler) to output .ll .bc or .o depending on params
+
+## [ ] Add debug symbols in LLVM IR generation with metadata
+
+This will help with program debugging. They should be added if a flag is given to the compiler
+
+## [ ] Add a Pass after the CFG check for example, to check and optimize out constant values and calculations
 
 ## [ ] Add "interpreter" to run compiled llvm code `main` function using ctypes
 
@@ -37,6 +43,14 @@ It will allow to override specific language internal functions for specific use 
 ## [ ] Errors and ability to throw them instead of immediate crash
 
 ## [ ] Try/catch (finally) once errors are enabled
+
+## [ ] Add explicit alignments in llvm IR code generation
+
+## [ ] Add `packed` keyword
+
+This is still in debate whether it's useful. It can save memory (and may have slight perf gains cache wise) but may have a performance hit due to getting a non-aligned bit (or byte). 
+
+**Note to self:** This feature is necessary in cases to handle network packets or protocols with bit-flags for example when packing then to be written/read. It should be a simple add but be *very careful* to add alignment specifiers in the LLVM IR generation
 
 ## [ ] Integer and Float literal suffixes to denote the expected size
 
