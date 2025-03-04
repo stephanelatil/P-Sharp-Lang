@@ -313,7 +313,10 @@ class CodeGen:
             if isinstance(statement.initial_value, PLiteral):
                 global_var.initializer = statement.initial_value.generate_llvm(context)
             else:
-                global_var.initializer = statement.typer_pass_var_type.default_llvm_value
+                if isinstance(global_var.value_type, ir.LiteralStructType):
+                    global_var.initializer = ir.Constant(global_var.value_type, None)
+                else:
+                    global_var.initializer = statement.typer_pass_var_type.default_llvm_value
             context.scopes.declare_var(global_var.name, var_type, global_var)
         
     def _compile_module_functions(self, ast:PProgram, context:CodeGenContext):
