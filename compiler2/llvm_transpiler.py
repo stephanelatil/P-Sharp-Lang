@@ -471,7 +471,7 @@ class CodeGen:
                     # The value type struct of an array element
                     # Direct value type or a pointer if it's a reference type
                     # TODO: Later convert to direct struct for classes: avoids one pointer deref on each access
-                    typ.get_llvm_value_type(),
+                    typ.element_typ.get_llvm_value_type(),
                     0) #arbitrary size
             ])
 
