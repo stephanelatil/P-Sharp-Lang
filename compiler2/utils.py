@@ -193,9 +193,6 @@ class CodeGenContext:
     global_exit_block:Optional[ir.Block]=None
     type_ids:Dict['Typ', int] = field(default_factory=dict)
     _global_strings:Dict[str, ir.GlobalValue] = field(default_factory=dict)
-    """Whether the builder is currently compiling code withing the main function.
-    This is used to replace 'return' instructions with setting the return value to the global return variable and branching to the main exit block"""
-    is_in_main_function:bool=False
     
     def get_char_ptr_from_string(self, string:str):
         """Adds a Global string with the given value (if none already exists) and returns a GEP pointer to the first character (char* c string style)
