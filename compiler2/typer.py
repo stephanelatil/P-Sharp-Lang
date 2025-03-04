@@ -168,7 +168,8 @@ _builtin_types: Dict[str, Typ] = {
             create_method("EndsWith", "bool", [("string", "value")])
         ],
         fields=[
-            create_property("Length", "u64")
+            create_property("Length", "u64"),
+            create_property("__c_string", "string")
         ]
     ),
 
