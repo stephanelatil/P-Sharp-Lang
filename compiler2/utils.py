@@ -212,6 +212,8 @@ class CodeGenContext:
             c_str.initializer = ir.Constant(c_string_type, bytearray(string_bytes))
             c_str.global_constant = True
             self._global_strings[string] = c_str
+        else:
+            c_str = self._global_strings[string]
         zero = ir.Constant(ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8), 0)
         return self.builder.gep(c_str, [zero, zero], inbounds=True)
     
