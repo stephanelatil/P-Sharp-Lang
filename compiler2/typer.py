@@ -169,7 +169,7 @@ _builtin_types: Dict[str, Typ] = {
         ],
         fields=[
             create_property("Length", "u64"),
-            create_property("__c_string", "string")
+            create_property("__c_string", "null") # a pointer to the start of the c_string
         ]
     ),
 
