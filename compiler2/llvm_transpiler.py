@@ -2,6 +2,9 @@
 # later versions of llvmlite will make this mandatory
 import os
 os.environ['LLVMLITE_ENABLE_OPAQUE_POINTERS'] = "1"
+import llvmlite
+llvmlite.ir_layer_typed_pointers_enabled = False
+llvmlite.opaque_pointers_enabled = True
 
 from typer import Typer, TypeClass, TypingError
 from parser import (PClass,PFunction,PProgram, Typ, ArrayTyp,
@@ -58,8 +61,6 @@ class CodeGen:
             jit=False,
         )
         self.optimizer_pass = PassBuilder(self.target, PipelineTuningOptions(speed_opt, size_opt))
-        
-                                        #   ).getModulePassManager()
     
     
     def compile_module(self, filename:str, file:TextIO, is_library:bool=False):
@@ -69,15 +70,21 @@ class CodeGen:
         self.typer = Typer(filename, file)
         # Lex, Parse and Type code
         typed_abstract_syntax_tree = self.typer.type_program(self.use_warnings)
-        #Init type list map
+        #Init type list map. Initially all reference type fields are just pointers. On subsequent passes they are converter to _TypedPointers
         type_map:Dict[Typ, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]] = {
-            typ:self.get_llvm_struct(typ)
+            typ:self.get_llvm_struct(typ, None)
             for typ in self.typer.known_types.values()
         }
         # Create CodeGenContext
         context = CodeGenContext(target_data=self.target.target_data,
                                  module=self.module, scopes=Scopes(),
                                  type_map=type_map)
+        # Extra passes to types to convert all simple pointers to pointer to specific reference types
+        for i in range(3):
+            context.type_map = {
+                typ:self.get_llvm_struct(typ, context)
+                for typ in self.typer.known_types.values()
+            }
         #Enter global scope
         context.scopes.enter_scope()
         #initialize builtin function prototypes
@@ -151,19 +158,21 @@ class CodeGen:
         func_type = ir.FunctionType(ir.IntType(32),[])
         main_func = ir.Function(context.module, func_type, ENTRYPOINT_FUNCTION_NAME)
         # Add primary main function blocks
+        # Entry
         context.builder.position_at_end(main_func.append_basic_block('__main_entrypoint'))
+        # Exit
+        context.global_exit_block = main_func.append_basic_block('__main_exit_cleanup')
         
         # Initialize GC and run hooks if there are any
         self._generate_gc_init(context)
         user_main_func_code_block = context.builder.append_basic_block(MAIN_FUNCTION_USER_CODE_BLOCK)
         context.builder.branch(user_main_func_code_block)
         context.builder.position_at_end(user_main_func_code_block)
-        # Branch to exit if no explicit return is added
-        context.global_exit_block = main_func.append_basic_block('__main_exit_cleanup')
         
         # Generate the user code in the main function
         self._generate_user_main_code(ast, context)
         
+        # Branch to exit if no explicit return is added
         #make sure use code block is terminated
         assert isinstance(context.builder.block, ir.Block)
         if not context.builder.block.is_terminated:
@@ -207,7 +216,7 @@ class CodeGen:
             assert isinstance(typ, Typ)
             if not isinstance(ir_type, ir.LiteralStructType):
                 continue
-            if not typ.is_reference_type or isinstance(typ, ArrayTyp) or typ.name in ['void','__null']:
+            if not typ.is_reference_type or isinstance(typ, ArrayTyp) or typ.name in ['void','null']:
                 continue
             size = ir.Constant(size_t_type,
                                ir_type.get_abi_size(target_data=context.target_data))
@@ -258,9 +267,10 @@ class CodeGen:
             assert hook is not None
             context.builder.call(hook, [])
             
-        exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME).alloca
-        assert exit_code is not None
-        context.builder.ret(context.builder.load(exit_code))
+        exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME)
+
+        assert exit_code.alloca is not None
+        context.builder.ret(context.builder.load(exit_code.alloca, typ=exit_code.type_))
         
         
     def _declare_module_functions(self, ast:PProgram, context:CodeGenContext):
@@ -270,10 +280,10 @@ class CodeGen:
                 continue
             if statement.name == ENTRYPOINT_FUNCTION_NAME:
                 continue #ignore main: will be added later
-            return_type = context.type_map[statement.return_typ_typed]
+            return_type = statement.return_typ_typed.get_llvm_value_type(context)
             assert return_type is not None
             arg_types = [
-                context.type_map[arg.typer_pass_var_type] 
+                arg.typer_pass_var_type.get_llvm_value_type(context)
                 for arg in statement.function_args
             ]
             func_type = ir.FunctionType(return_type, arg_types)
@@ -288,12 +298,12 @@ class CodeGen:
             for method in statement.methods:
                 # TODO: use vtable instead of defining as a global symbol
                 method_name = context.get_method_symbol_name(statement.class_typ.name, method.name)
-                return_type = context.type_map[method.return_typ_typed]
+                return_type = method.return_typ_typed.get_llvm_value_type(context)
                 assert return_type is not None
                 #set "this" as first argument
-                arg_types = [context.type_map[statement.class_typ]]
+                arg_types = [statement.class_typ.get_llvm_value_type(context)]
                 for arg in method.function_args:
-                    arg_types.append(context.type_map[arg.typer_pass_var_type])
+                    arg_types.append(arg.typer_pass_var_type.get_llvm_value_type(context))
                 func_type = ir.FunctionType(return_type, arg_types)
                 func_ptr = ir.Function(context.module, func_type, method_name)
                 context.scopes.declare_func(method_name, return_type, func_ptr)
@@ -308,7 +318,7 @@ class CodeGen:
         for statement in ast.statements:
             if not isinstance(statement, PVariableDeclaration):
                 continue
-            var_type = context.type_map[statement.typer_pass_var_type]
+            var_type = statement.typer_pass_var_type.get_llvm_value_type(context)
             global_var = ir.GlobalVariable(context.module, var_type,statement.name)
             if isinstance(statement.initial_value, PLiteral):
                 global_var.initializer = statement.initial_value.generate_llvm(context)
@@ -329,7 +339,11 @@ class CodeGen:
             context.scopes.enter_func_scope()
             #add params to the scope (and name them for easy retrieval)
             for ir_arg, p_arg in zip(function.args, statement.function_args):
-                context.scopes.declare_var(p_arg.name, ir_arg.type, ir_arg)
+                # Make sure we have a pointer to the argument location. That way the arg can be overwritten
+                # This will be optimized out anyway with the mem2reg pass
+                arg_alloca = context.builder.alloca(ir_arg.type)
+                context.builder.store(ir_arg, arg_alloca)
+                context.scopes.declare_var(p_arg.name, ir_arg.type, arg_alloca)
             #compile function body
             statement.body.generate_llvm(context, build_basic_block=False)
             context.scopes.leave_func_scope()
@@ -427,8 +441,13 @@ class CodeGen:
                                 ]:
             func = ir.Function(context.module, func_type, name)
             context.scopes.declare_func(name, func_type.return_type, func)
+            
+        fprintf = ir.Function(context.module, ir.FunctionType(ir.IntType(32),[ir.IntType(32), ir.PointerType()], True), "fprintf")
+        exit_func = ir.Function(context.module, ir.FunctionType(ir.VoidType(),[ir.IntType(32)]), "exit")
+        context.scopes.declare_func("fprintf", ir.IntType(32), fprintf)
+        context.scopes.declare_func("exit", ir.VoidType(), exit_func)
 
-    def get_llvm_struct(self, typ: Typ) -> Union[ir.IntType,
+    def get_llvm_struct(self, typ: Typ, context:Optional[CodeGenContext]) -> Union[ir.IntType,
                                                    ir.HalfType,
                                                    ir.FloatType,
                                                    ir.DoubleType,
@@ -456,7 +475,7 @@ class CodeGen:
         
         if type_info.type_class == TypeClass.CLASS:
             field_types = [
-                prop.typer_pass_var_type.get_llvm_value_type()
+                prop.typer_pass_var_type.get_llvm_value_type(context)
                 for prop in typ.fields
             ]
             return ir.LiteralStructType(field_types)
@@ -466,12 +485,11 @@ class CodeGen:
             assert isinstance(typ, ArrayTyp)
             #return a generic array struct (contains an int and a pointer to the array)
             return ir.LiteralStructType([
-                ir.IntType(64), #the string length
+                ir.IntType(64), #the array length
                 ir.ArrayType(
                     # The value type struct of an array element
                     # Direct value type or a pointer if it's a reference type
-                    # TODO: Later convert to direct struct for classes: avoids one pointer deref on each access
-                    typ.element_typ.get_llvm_value_type(),
+                    typ.element_typ.get_llvm_value_type(context),
                     0) #arbitrary size
             ])
 

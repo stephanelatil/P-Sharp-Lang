@@ -47,6 +47,20 @@ class Typ:
     fields: List['PClassField']
     is_reference_type:bool = True
     
+    def __hash__(self) -> int:
+        return hash(self.name) + sum(
+            [hash(method) for method in self.methods]
+        ) + sum(
+            [hash(field) for field in self.fields]
+        )
+    
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, Typ):
+            return False
+        return self.name == value.name \
+               and all((m1 == m2 for m1, m2 in zip(self.methods, value.methods))) \
+               and all((f1 == f2 for f1, f2 in zip(self.fields, value.fields)))
+    
     def __post_init__(self):
         for function in self.methods:
             if function.name == "ToString" and len(function.function_args) == 0:
@@ -60,9 +74,45 @@ class Typ:
                                                     in_function=True
                                           )),
                                       Lexeme.default, is_builtin=True))
+    
+    def get_llvm_value_type(self, context:Optional[CodeGenContext]) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
+        """Returns the llvm value-Type corresponding to the Typ. All reference types will return an ir.PointerType
+
+        Returns:
+            ir.Type: The value type of this type. It's either a PointerType, VoidType, IntType or some FloatType (depending on bit-width)
+        """
+        type_map = {
+            'void': ir.VoidType(),
+            'char': ir.IntType(8),
+            'i8': ir.IntType(8),
+            'i16': ir.IntType(16),
+            'i32': ir.IntType(32),
+            'i64': ir.IntType(64),
+            'u8': ir.IntType(8),
+            'u16': ir.IntType(16),
+            'u32': ir.IntType(32),
+            'u64': ir.IntType(64),
+            'f16': ir.HalfType(),
+            'f32': ir.FloatType(),
+            'f64': ir.DoubleType(),
+            'bool': ir.IntType(1),
+            'null': ir.PointerType() # null is a point type (points to nothing but still a pointer technically)
+        }
+        
+        if self.is_reference_type:
+            if context is None:
+                return ir.PointerType()
+            else:
+                return ir.PointerType(context.type_map[self])
+        assert self.name in type_map
+        return type_map[self.name]
 
     def __str__(self):
         return self.name
+    
+    def default_llvm_value(self, context:CodeGenContext):
+        # return ir.Constant(context.type_map[self], None)
+        return ir.Constant(self.get_llvm_value_type(context), None)
     
 class ArrayTyp(Typ):
     def __init__(self, element_type:Typ):
