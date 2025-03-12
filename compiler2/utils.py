@@ -214,8 +214,10 @@ class CodeGenContext:
             self._global_strings[string] = c_str
         else:
             c_str = self._global_strings[string]
+            assert isinstance(c_str.type, ir.types._TypedPointerType)
+            c_string_type = c_str.type.pointee
         zero = ir.Constant(ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8), 0)
-        return self.builder.gep(c_str, [zero, zero], inbounds=True)
+        return self.builder.gep(c_str, [zero, zero], inbounds=True, source_etype=c_string_type)
     
     def get_method_symbol_name(self, class_name:str, method_identifier:str):
         return f"__{class_name}.__{method_identifier}"
