@@ -111,7 +111,7 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
     def test_valid_array_declarations(self):
         """Test valid array declarations"""
         test_cases = [
-            # ("i32[] arr = new i32[10];", "@__PS_AllocateValueArray"),
+            ("i32[] arr = new i32[10];", "@__PS_AllocateValueArray"),
             ("string[] arr = new string[5];", "@__PS_AllocateRefArray"),
             ("bool[] arr = new bool[3];", "@__PS_AllocateValueArray"),
             ("i32[][] arr = new i32[3][];", "@__PS_AllocateRefArray")
@@ -277,8 +277,15 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
             i32 main() {
                 i32[] arr = new i32[10];
                 arr[0] = 42;
+                arr[5] = 2;
                 i32 x = arr[5];
                 return x;
+            }
+            """, 2),
+            ("""
+            i32 main() {
+                i32[] arr = new i32[3];
+                return arr[1];
             }
             """, 0),
             ("""
@@ -299,7 +306,7 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
                 self.assertIn("getelementptr", ir_code)
                 self.assertIn("store", ir_code)
                 self.assertIn("load", ir_code)
-                result = self.run_function('main', [ctypes.c_int32])
+                result = self.compile_and_run_main(source)
                 self.assertEqual(result, expected_result)
 
 class TestCodeGeneratorOperators(CodeGenTestCase):
