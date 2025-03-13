@@ -748,6 +748,7 @@ class Typer:
 
     def _type_class(self, class_def: PClass) -> None:
         """Type checks a class definition and returns its type"""
+        class_def._class_typ = self.known_types[class_def.name]
         for prop in class_def.fields:
             self._type_class_property(prop)
         

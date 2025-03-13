@@ -191,7 +191,7 @@ class CodeGenContext:
     loopinfo:List[Tuple[ir.Block, ir.Block]] = field(default_factory=list)
     builder:ir.IRBuilder = ir.IRBuilder()
     global_exit_block:Optional[ir.Block]=None
-    type_ids:Dict['Typ', int] = field(default_factory=dict)
+    type_ids:Dict[str, int] = field(default_factory=dict)
     _global_strings:Dict[str, ir.GlobalValue] = field(default_factory=dict)
     
     def get_char_ptr_from_string(self, string:str):
