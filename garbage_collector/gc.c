@@ -427,3 +427,25 @@ void __PS_PrintHeapStats(void) {
     printf("Number of roots (variables): %zu\n", root_count);
     printf("Number of registered types: %zu\n", __PS_type_registry.count);
 }
+
+void *__PS_DefaultToString(void* object)
+{
+    __PS_ObjectHeader* header = (__PS_ObjectHeader*) (object - sizeof(__PS_ObjectHeader));
+    char* name = header->type->type_name;
+    // Get the length of the type name
+    int64_t string_length = (int64_t) strlen(name) + strlen('<Class >') + 1; //add 1 for the null terminator
+
+    //allocate memory to store the string
+    void* string_obj = __PS_AllocateValueArray(sizeof(char), string_length + sizeof(int64_t));
+    
+    // store its length
+    ((int64_t*)string_obj)[0] = string_length;
+
+    //get the start of the actual c_string
+    char* string_start = ((char*)string_obj) + sizeof(int64_t);
+
+    // Write the Class name to memory
+    snprintf(string_start, string_length, "<Class %s>", name);
+
+    return string_obj;
+}

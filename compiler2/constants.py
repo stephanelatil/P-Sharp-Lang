@@ -16,6 +16,7 @@ FUNC_GC_ALLOCATE_OBJECT = "__PS_AllocateObject"
 FUNC_GC_ALLOCATE_VALUE_ARRAY = "__PS_AllocateValueArray"
 FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY = "__PS_AllocateRefArray"
 FUNC_GC_PRINT_HEAP_STATS = "__PS_PrintHeapStats"
+FUNC_DEFAULT_TOSTRING = "__PS_DefaultToString"
 
 # Special setup hooks called before or after the garbage collector init/cleanups
 """Function called before the GC initializes.

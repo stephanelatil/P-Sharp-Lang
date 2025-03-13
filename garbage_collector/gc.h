@@ -115,3 +115,6 @@ void __PS_Cleanup(void);
 
 // Debug function to print heap statistics
 void __PS_PrintHeapStats(void);
+
+
+void* __PS_DefaultToString(void*);
