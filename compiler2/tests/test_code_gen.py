@@ -308,6 +308,72 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
                 self.assertIn("load", ir_code)
                 result = self.compile_and_run_main(source)
                 self.assertEqual(result, expected_result)
+    """Test array operations and indexing"""
+
+    def test_valid_field_array_indexing(self):
+        """Test valid array indexing operations"""
+        test_cases = [
+            ("""
+            class C
+            {
+                i32[] arr = new i32[5];
+            }
+            i32 main() {
+                C obj = new C();
+                obj.arr[0] = 123;
+                return arr[0];
+            }
+            """, 123),
+            ("""
+            class C
+            {
+                i32[] arr = new i32[5];
+            }
+            i32 main() {
+                C obj = new C();
+                obj.arr[1] = 123;
+                return arr[0];
+            }
+            """, 0),
+            ("""
+            class C
+            {
+                i32[][] matrix = new i32[2][];
+            }
+            i32 main() {
+                C obj = new C();
+                obj.matrix[0] = new i32[1];
+                obj.matrix[1] = new i32[2];
+                obj.matrix[0][0] = 1;
+                obj.matrix[1][1] = 2;
+                return obj.matrix[1][1];
+            }
+            """, 2),
+            ("""
+            class C
+            {
+                i32[][] matrix = new i32[2][];
+            }
+            i32 main() {
+                C obj = new C();
+                obj.matrix[0] = new i32[1];
+                obj.matrix[1] = new i32[2];
+                obj.matrix[0][0] = 1;
+                obj.matrix[1][1] = 2;
+                return obj.matrix[1][0];
+            }
+            """, 0)
+        ]
+
+        for source, expected_result in test_cases:
+            with self.subTest(source=source.strip()):
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
+                self.assertIn("getelementptr", ir_code)
+                self.assertIn("store", ir_code)
+                self.assertIn("load", ir_code)
+                result = self.compile_and_run_main(source)
+                self.assertEqual(result, expected_result)
 
 class TestCodeGeneratorOperators(CodeGenTestCase):
     """Test operator type checking"""
@@ -315,52 +381,52 @@ class TestCodeGeneratorOperators(CodeGenTestCase):
     def test_valid_arithmetic_operators(self):
         """Test valid arithmetic operators"""
         test_cases = [
-            "i32 a = 1 + 2;",
-            "i32 b = 3 - 4;",
-            "i32 c = 5 * 6;",
-            "i32 d = 8 / 2;",
-            "i32 e = 10 % 3;"
+            ("i32 main() { return 1 + 2;}", 3, "add"),
+            ("i32 main() { return 3 - 4;}", -1, "sub"),
+            ("i32 main() { return 5 * 6;}", 30, "mul"),
+            ("i32 main() { return 8 / 2;}", 4, "div"),
+            ("i32 main() { return 10 % 3;}", 1, "srem")
         ]
-        for source in test_cases:
+        for source, expected_result, operation in test_cases:
             with self.subTest(source=source):
                 module = self.generate_module(source)
                 ir_code = self.get_function_ir(module)
-                self.assertIn("add", ir_code)
-                self.assertIn("sub", ir_code)
-                self.assertIn("mul", ir_code)
-                self.assertIn("sdiv", ir_code)
-                self.assertIn("srem", ir_code)
+                self.assertIn(operation, ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, expected_result)
 
     def test_valid_comparison_operators(self):
         """Test valid comparison operators"""
         test_cases = [
-            "bool a = 1 < 2;",
-            "bool b = 3 > 4;",
-            "bool c = 5 <= 6;",
-            "bool d = 7 >= 8;",
-            "bool e = 9 == 10;",
-            "bool f = 11 != 12;"
+            ("i32 main() { return 1 < 2;}", True),
+            ("i32 main() { return 3 > 4;}", False),
+            ("i32 main() { return 5 <= 6;}", True),
+            ("i32 main() { return 7 >= 8;}", False),
+            ("i32 main() { return 9 == 10;}", False),
+            ("i32 main() { return 11 != 12;}", True)
         ]
-        for source in test_cases:
+        for source, expected_result in test_cases:
             with self.subTest(source=source):
                 module = self.generate_module(source)
                 ir_code = self.get_function_ir(module)
                 self.assertIn("icmp", ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, int(expected_result))
 
     def test_valid_logical_operators(self):
         """Test valid logical operators"""
         test_cases = [
-            "bool a = true and false;",
-            "bool b = true or false;",
-            "bool c = not true;"
+            ("i32 main() { return true and false;}", False, "and"),
+            ("i32 main() { return true or false;}", True, "or"),
+            ("i32 main() { return not true;}", False, "xor")
         ]
-        for source in test_cases:
+        for source, expected_result, operation in test_cases:
             with self.subTest(source=source):
                 module = self.generate_module(source)
                 ir_code = self.get_function_ir(module)
-                self.assertIn("and", ir_code)
-                self.assertIn("or", ir_code)
-                self.assertIn("xor", ir_code)
+                self.assertIn(operation, ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, int(expected_result))
 
 class TestCodeGeneratorControlFlow(CodeGenTestCase):
     """Test type checking in control flow statements"""
