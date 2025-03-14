@@ -15,6 +15,7 @@ from parser import (Parser, PFunction, PClassField, PProgram, PType,
                    PTernaryOperation, PThis,PVariableDeclaration, 
                    PWhileStatement, PDiscard, PVoid, Typ, ArrayTyp,
                    BlockProperties)
+from constants import FUNC_DEFAULT_TOSTRING
 
 def create_property(name: str, type_str: str) -> PClassField:
     """Helper function to create a class property"""
@@ -406,6 +407,10 @@ class Typer:
             self._print_warnings()
             return self._ast
         self._ast = self.parser.parse()
+        
+        self._scope_manager.define_function(PFunction(FUNC_DEFAULT_TOSTRING,PType('string', Position.default),
+                                                      [PVariableDeclaration('this', PType("__null", Lexeme.default), None, Lexeme.default)],
+                                                      PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
 
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
@@ -501,6 +506,11 @@ class Typer:
         
         # Can always set a reference type to null
         if expected.is_reference_type and actual == self.known_types["__null"]:
+            return True
+        
+        if actual.is_reference_type and expected.name == 'null':
+            # null type is a shortcut to signify ANY reference type. Will be fixed when polymorphism is implemented
+            # TODO Fix when adding polymorphism
             return True
 
         expected_info = self.get_type_info(expected)
@@ -748,12 +758,12 @@ class Typer:
 
     def _type_class(self, class_def: PClass) -> None:
         """Type checks a class definition and returns its type"""
-        class_def._class_typ = self.known_types[class_def.name]
         for prop in class_def.fields:
             self._type_class_property(prop)
         
         # self._scope_manager.enter_scope()
         self._in_class = PType(class_def.name, class_def.position)
+        class_def._class_typ = self.known_types[class_def.name]
         # self._scope_manager.current_scope.define("this", self._in_class, class_def)
         for method in class_def.methods:
             self.all_class_methods.append(method)
@@ -1060,6 +1070,7 @@ class Typer:
 
     def _type_array_indexing(self, array_index: PArrayIndexing) -> Typ:
         """Type checks an array indexing expression and returns the element type"""
+        index_type = self.known_types['i64'] # not unsigned to allow for negative indexing (-1 is the last element, -2 the second to last etc.)
         array_type = self._type_expression(array_index.array)
         if not isinstance(array_type, ArrayTyp):
             raise TypingError(f"Expected array type but got '{array_type.name}'")    
@@ -1067,11 +1078,9 @@ class Typer:
         index = self._type_expression(array_index.index)
         if self.get_type_info(index).type_class != TypeClass.INTEGER:
             raise TypingError(f"The index must be an integer type not '{index}'")
-        if array_index.expr_type != self.known_types['u64']:
-            #implicit convert array index to u64
-            array_index.index = self._add_implicit_cast(
-                array_index.index,
-                self.known_types['u64'])
+        if array_index.expr_type != index_type:
+            #implicit convert array index to i64
+            array_index.index = self._add_implicit_cast(array_index.index, index_type)
         
         array_index.expr_type = array_type.element_typ
         return array_type.element_typ
