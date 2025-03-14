@@ -18,6 +18,10 @@ FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY = "__PS_AllocateRefArray"
 FUNC_GC_PRINT_HEAP_STATS = "__PS_PrintHeapStats"
 FUNC_DEFAULT_TOSTRING = "__PS_DefaultToString"
 
+""" Gets a pointer to the nth element of the given array
+void* __PS_GetPtrToArrayElement(void* array, int8_t element_size_in_bytes, int64_t index, char* filename, int32_t position_line, int32_t position_column)"""
+FUNC_GET_ARRAY_ELEMENT_PTR = "__PS_GetPtrToArrayElement"
+
 # Special setup hooks called before or after the garbage collector init/cleanups
 """Function called before the GC initializes.
 The `new` keyword should not be used here (before the GC initializes), it's undefined behavior and may crash"""
