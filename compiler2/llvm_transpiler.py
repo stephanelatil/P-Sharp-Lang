@@ -22,7 +22,7 @@ from llvmlite.binding import (initialize, initialize_native_target,
 
 
 class CodeGen:
-    _GC_LIB='../garbage_collector/libps_gc.bc'
+    _GC_LIB='../garbage_collector/ps_re.bc'
     BUILTINS_TYPE_MAP: Dict[str, Union[ir.IntType,
                                        ir.HalfType,
                                        ir.FloatType,
