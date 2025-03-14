@@ -186,7 +186,7 @@ size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name
     return __PS_type_registry.count++;
 }
 
-void* __PS_AllocateArray(size_t size, size_t type_id){
+void* __PS_AllocateArray(int64_t size, size_t type_id){
     // Calculate total size needed including header
     size_t aligned_size = (sizeof(__PS_ObjectHeader) + size + sizeof(void*)) & ~(sizeof(void*)-1);
 
@@ -208,20 +208,20 @@ void* __PS_AllocateArray(size_t size, size_t type_id){
     return data;
 }
 
-void* __PS_AllocateValueArray(size_t element_size, size_t num_elements){
-    // sizeof(size_t) = allocated for the length of the array
+void* __PS_AllocateValueArray(int8_t element_size, int64_t num_elements){
+    // sizeof(int64_t) = allocated for the length of the array
     // element_size * num_elements = bytes to allocate for the array data
-    size_t size = sizeof(size_t) + element_size * num_elements;
-    size_t* arr_ptr = (size_t*) __PS_AllocateArray(size, VALUE_ARRAY_TYPE_ID);
+    int64_t size = sizeof(int64_t) + element_size * num_elements;
+    int64_t* arr_ptr = (int64_t*) __PS_AllocateArray(size, VALUE_ARRAY_TYPE_ID);
     arr_ptr[0] = num_elements;
     return (void*)arr_ptr;
 }
 
-void* __PS_AllocateRefArray(size_t num_elements){
-    // sizeof(size_t) = allocated for the length of the array
+void* __PS_AllocateRefArray(int64_t num_elements){
+    // sizeof(int64_t) = allocated for the length of the array
     // sizeof(void*) * num_elements = bytes to allocate for the array data, where each element is a pointer to an object (thus a void*)
-    size_t size = sizeof(size_t) + sizeof(void*) * num_elements;
-    size_t* arr_ptr = (size_t*) __PS_AllocateArray(size, REFERENCE_ARRAY_TYPE_ID);
+    int64_t size = sizeof(int64_t) + sizeof(void*) * num_elements;
+    int64_t* arr_ptr = (int64_t*) __PS_AllocateArray(size, REFERENCE_ARRAY_TYPE_ID);
     arr_ptr[0] = num_elements;
     return (void*)arr_ptr;
 }
@@ -281,9 +281,9 @@ static void __PS_MarkObject(void* obj) {
         return;
     
     if (header->type->id == REFERENCE_ARRAY_TYPE_ID){
-        void** array_elements = (void**)(obj+sizeof(size_t)); //skip first element which is the size of the array
-        size_t num_elements = *((size_t*) obj);
-        for (size_t i = 0; i < num_elements; ++i)
+        void** array_elements = (void**)(obj+sizeof(int64_t)); //skip first element which is the size of the array
+        int64_t num_elements = *((int64_t*) obj);
+        for (int64_t i = 0; i < num_elements; ++i)
             __PS_MarkObject(array_elements[i]);//mark object in array
         return;
     }
@@ -426,26 +426,4 @@ void __PS_PrintHeapStats(void) {
     printf("Total memory allocated (bytes): %zu\n", total_mem);
     printf("Number of roots (variables): %zu\n", root_count);
     printf("Number of registered types: %zu\n", __PS_type_registry.count);
-}
-
-void *__PS_DefaultToString(void* object)
-{
-    __PS_ObjectHeader* header = (__PS_ObjectHeader*) (object - sizeof(__PS_ObjectHeader));
-    char* name = header->type->type_name;
-    // Get the length of the type name
-    int64_t string_length = (int64_t) strlen(name) + strlen('<Class >') + 1; //add 1 for the null terminator
-
-    //allocate memory to store the string
-    void* string_obj = __PS_AllocateValueArray(sizeof(char), string_length + sizeof(int64_t));
-    
-    // store its length
-    ((int64_t*)string_obj)[0] = string_length;
-
-    //get the start of the actual c_string
-    char* string_start = ((char*)string_obj) + sizeof(int64_t);
-
-    // Write the Class name to memory
-    snprintf(string_start, string_length, "<Class %s>", name);
-
-    return string_obj;
 }

@@ -1,3 +1,6 @@
+#ifndef PS_LANG_GC_H
+#define PS_LANG_GC_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,12 +103,12 @@ void* __PS_AllocateObject(size_t type_id);
 /// @brief Allocate contiguous memory for an array of value types
 /// @param size The size in bytes to allocate (includes size (size_t) of the array)
 /// @return The pointer to the array_struct
-void* __PS_AllocateValueArray(size_t element_size, size_t num_elements);
+void* __PS_AllocateValueArray(int8_t element_size, int64_t num_elements);
 
 /// @brief Allocate contiguous memory for an array of reference types
 /// @param size The size in bytes to allocate (includes size (size_t) of the array)
 /// @return The pointer to the array_struct
-void* __PS_AllocateRefArray(size_t num_elements);
+void* __PS_AllocateRefArray(int64_t num_elements);
 
 // Main garbage collection function
 void __PS_CollectGarbage(void);
@@ -116,5 +119,4 @@ void __PS_Cleanup(void);
 // Debug function to print heap statistics
 void __PS_PrintHeapStats(void);
 
-
-void* __PS_DefaultToString(void*);
+#endif
