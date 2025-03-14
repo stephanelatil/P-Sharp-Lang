@@ -60,7 +60,12 @@ class CodeGen:
             codemodel='jitdefault',
             jit=False,
         )
-        self.optimizer_pass = PassBuilder(self.target, PipelineTuningOptions(speed_opt, size_opt))
+        opts = PipelineTuningOptions(speed_opt, size_opt)
+        opts.loop_unrolling = speed_opt >= 1
+        opts.loop_interleaving = speed_opt >= 2
+        opts.loop_vectorization = speed_opt >=2
+        opts.slp_vectorization = speed_opt >=3
+        self.pass_builder = PassBuilder(self.target, opts)
     
     
     def compile_module(self, filename:str, file:TextIO, is_library:bool=False):
@@ -114,19 +119,10 @@ class CodeGen:
             # Get ModuleRef
             module_ref = parse_assembly(str(context.module))
 
-        # Run verifier
-        module_ref.verify()
-        # Run optimization passes
-        pass_manager = self.optimizer_pass.getModulePassManager()
-        pass_manager.add_instruction_combine_pass()
-        pass_manager.add_jump_threading_pass()
-        pass_manager.add_simplify_cfg_pass()
-        pass_manager.add_loop_rotate_pass()
-        pass_manager.add_loop_unroll_pass()
-        pass_manager.add_refprune_pass()
-        pass_manager.add_aa_eval_pass()
+        # Run optimization passes and verifier
+        pass_manager = self.pass_builder.getModulePassManager()
         pass_manager.add_verifier()
-        pass_manager.run(module_ref, self.optimizer_pass)
+        pass_manager.run(module_ref, self.pass_builder)
         # Return ModuleRef object
         return module_ref
     
@@ -320,7 +316,7 @@ class CodeGen:
                 continue
             var_type = statement.typer_pass_var_type.get_llvm_value_type(context)
             global_var = ir.GlobalVariable(context.module, var_type,statement.name)
-            if isinstance(statement.initial_value, PLiteral):
+            if isinstance(statement.initial_value, PLiteral) and statement.initial_value.literal_type != "string":
                 global_var.initializer = statement.initial_value.generate_llvm(context)
             else:
                 global_var.initializer = statement.typer_pass_var_type.default_llvm_value(context)
@@ -353,7 +349,8 @@ class CodeGen:
             if not isinstance(statement, PClass):
                 continue
             for method in statement.methods:
-                function = context.scopes.get_symbol(method.name).func_ptr
+                method_name = context.get_method_symbol_name(statement.name, method.name)
+                function = context.scopes.get_symbol(method_name).func_ptr
                 assert function is not None
                 context.builder = ir.IRBuilder(function.append_basic_block(f"{method.name}_{method.position.index}_entrypoint"))
                 context.scopes.enter_func_scope()
@@ -390,6 +387,7 @@ class CodeGen:
 
     def _generate_user_main_code(self, ast:PProgram, context:CodeGenContext):
         """Generates user code in the main function"""
+        #Generate the values of the globals (they may be already set but it'll be optimized out)
         for statement in ast.statements:
             if isinstance(statement, PVariableDeclaration) and statement.initial_value is not None:
                 # It's a global definition and initialize value
@@ -398,6 +396,7 @@ class CodeGen:
                 context.builder.store(statement.initial_value.generate_llvm(context),
                                       global_var)
                 continue
+            
         for statement in ast.statements:
             #ignore already defined functions
             if isinstance(statement, PFunction):
