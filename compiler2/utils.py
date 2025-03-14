@@ -192,7 +192,32 @@ class CodeGenContext:
     builder:ir.IRBuilder = ir.IRBuilder()
     global_exit_block:Optional[ir.Block]=None
     type_ids:Dict[str, int] = field(default_factory=dict)
-    _global_strings:Dict[str, ir.GlobalValue] = field(default_factory=dict)
+    """A Dict where for every given string there is an associated constant string PS object. constant because strings are immutable"""
+    _global_string_objs:Dict[str, ir.GlobalValue] = field(default_factory=dict)
+    
+    def get_string_const(self, string:str):
+        if string in self._global_string_objs:
+            return self._global_string_objs[string]
+        # ensure string is null terminated to be a proper c_str
+        if not string.endswith('\x00'):
+            null_terminated_string = string + '\x00'
+        else:
+            null_terminated_string = string
+            
+        #Build c string
+        string_bytes = null_terminated_string.encode('utf-8')
+        string_typ = ir.LiteralStructType([
+            ir.IntType(64),
+            ir.ArrayType(ir.IntType(8), len(string_bytes))
+        ])
+        #store constant value globally
+        string_obj = ir.GlobalVariable(module=self.module,
+                                       typ=string_typ,
+                                       name=f".__str_obj_{len(self._global_string_objs)}")
+        string_obj.initializer = ir.Constant(string_typ, [len(null_terminated_string), bytearray(string_bytes)])
+        #cache value to avoid saturating executable
+        self._global_string_objs[string] = string_obj
+        return string_obj
     
     def get_char_ptr_from_string(self, string:str):
         """Adds a Global string with the given value (if none already exists) and returns a GEP pointer to the first character (char* c string style)
@@ -203,21 +228,25 @@ class CodeGenContext:
         Returns:
             GEPInstr: a GEP instruction pointer value to the c-string
         """
-        if not string.endswith('\x00'):
-            string += '\x00'
-        if string not in self._global_strings:
-            string_bytes = string.encode('utf-8')
-            c_string_type = ir.ArrayType(ir.IntType(8), len(string_bytes))
-            c_str = ir.GlobalVariable(self.module, c_string_type, name=f".__str_{len(self._global_strings)}")
-            c_str.initializer = ir.Constant(c_string_type, bytearray(string_bytes))
-            c_str.global_constant = True
-            self._global_strings[string] = c_str
-        else:
-            c_str = self._global_strings[string]
-            assert isinstance(c_str.type, ir.types._TypedPointerType)
-            c_string_type = c_str.type.pointee
-        zero = ir.Constant(ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8), 0)
-        return self.builder.gep(c_str, [zero, zero], inbounds=True, source_etype=c_string_type)
+        # if not string.endswith('\x00'):
+        #     string += '\x00'
+        # if string not in self._global_c_strings:
+        #     string_bytes = string.encode('utf-8')
+        #     c_string_type = ir.ArrayType(ir.IntType(8), len(string_bytes))
+        #     c_str = ir.GlobalVariable(self.module, c_string_type, name=f".__str_{len(self._global_c_strings)}")
+        #     c_str.initializer = ir.Constant(c_string_type, bytearray(string_bytes))
+        #     c_str.global_constant = True
+        #     self._global_c_strings[string] = c_str
+        # else:
+        #     c_str = self._global_c_strings[string]
+        #     assert isinstance(c_str.type, ir.types._TypedPointerType)
+        #     c_string_type = c_str.type.pointee
+        string_obj = self.get_string_const(string)
+        assert isinstance(string_obj.type, ir.types._TypedPointerType)
+        string_typ = string_obj.type.pointee
+        zero = ir.Constant(ir.IntType(32), 0)
+        one = ir.Constant(ir.IntType(32), 1)
+        return self.builder.gep(string_obj, [zero, one, zero], inbounds=True, source_etype=string_typ)
     
     def get_method_symbol_name(self, class_name:str, method_identifier:str):
         return f"__{class_name}.__{method_identifier}"
