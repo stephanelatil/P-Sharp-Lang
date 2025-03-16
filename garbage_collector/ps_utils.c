@@ -27,6 +27,7 @@ void *__PS_DefaultToString(void* object)
 }
 
 void* __PS_GetPtrToArrayElement(void* array, int8_t element_size_in_bytes, int64_t index, char* filename, int32_t position_line, int32_t position_column){
+    __PS_NullCheckObject(array, filename, position_line, position_column);
     int64_t array_size = ((int64_t*)array)[0];
     if (index < 0)
         // implement negative indexing to access array from the end
@@ -45,4 +46,18 @@ void* __PS_GetPtrToArrayElement(void* array, int8_t element_size_in_bytes, int64
     // go to start of continuous array memory
     array = array + sizeof(int64_t);
     return array + element_size_in_bytes * index;
+}
+
+void __PS_NullCheckObject(void* object, char* filename, int32_t position_line, int32_t position_column)
+{
+    if (object == NULL)
+    {
+        //print error message if trying to access deref null
+        fprintf(stderr,
+            "Null Reference in file %s at line %" PRId32 ":%" PRId32 "\n",
+            filename, position_line, position_column);
+        //exit with crash
+        exit(1);
+        //TODO later this should raise an exception of some kind
+    }
 }
