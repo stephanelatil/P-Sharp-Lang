@@ -214,6 +214,13 @@ class Symbol:
     #checks symbol use
     is_assigned: bool = False # Checks if a function is assigned before use (can be bypassed if global used in function)
     is_read: bool = False # checks if a variable is read (must be after assignment)
+    
+    def __post_init__(self):
+        if self.name == "this":
+            # "this" is always valid in all methods
+            # Should be removed later to act as flag to send warning to make method static if "this" is not used 
+            self.is_assigned = True
+            self.is_read = True
 
 @dataclass
 class Scope:
@@ -764,11 +771,10 @@ class Typer:
         # self._scope_manager.enter_scope()
         self._in_class = PType(class_def.name, class_def.position)
         class_def._class_typ = self.known_types[class_def.name]
-        # self._scope_manager.current_scope.define("this", self._in_class, class_def)
+        
         for method in class_def.methods:
             self.all_class_methods.append(method)
             self._type_function(method)
-        # self._scope_manager.exit_scope()
 
     def _type_ptype(self, ptype:PType) -> Typ:
         """Type checks a class definition and returns its type"""
@@ -784,16 +790,25 @@ class Typer:
 
     def _type_function(self, function: PFunction|PMethod) -> None:
         """Type checks a function definition"""
+        self._scope_manager.enter_function_scope()
         if not isinstance(function, PMethod):
             self.all_functions.append(function)
         else: #method not function
             assert self._in_class is not None #if method: ensure we're in a function!
             function._class_type = self._type_ptype(self._in_class)
+            #add implicit "this" argument. Do not include for static methods!
+            function.function_args.insert(0,
+                                          PVariableDeclaration('this',
+                                                               self._in_class,
+                                                               None,
+                                                               Lexeme.default))
         
-        self._scope_manager.enter_function_scope()
+        for arg in function.function_args:
+            self._type_statement(arg)
+        
         self.expected_return_type = self._type_ptype(function.return_type)
         function._return_typ_typed = self.expected_return_type
-        self._type_block(function.body, function.function_args)
+        self._type_block(function.body)
         
         #add implicit return at the end of a void function if there isn't one already
         if self.get_type_info(self.expected_return_type).type_class == TypeClass.VOID:
@@ -806,15 +821,11 @@ class Typer:
                         function.body.statements[-1].position))
         self.expected_return_type = None
         self._scope_manager.exit_function_scope()
+        
 
-    def _type_block(self, block: PBlock, params:Optional[List[PVariableDeclaration]]=None) -> None:
+    def _type_block(self, block: PBlock) -> None:
         """Type checks a block of statements, optionally verifying return type"""
         self._scope_manager.enter_scope()
-        if params is not None:
-            for param in params:
-                self._type_variable_declaration(param)
-                #Set is_assigned to true of all function params (they are always assigned)
-                self._scope_manager.lookup(param.name, param).is_assigned = True
 
         for statement in block.statements:
             self._type_statement(statement)
@@ -960,7 +971,7 @@ class Typer:
         
         if len(symbol.parameters) != len(func_call.arguments):
             raise TypingError(f"The function expects {len(func_call.arguments)} arguments but got {len(symbol.parameters)}"+\
-                              f"at location {func_call.position}")
+                              f" at location {func_call.position}")
         
         for i, (expected_param, actual) in enumerate(zip(symbol.parameters, func_call.arguments)):
             expected_type = self._type_ptype(expected_param.var_type)
@@ -983,11 +994,11 @@ class Typer:
             raise TypingError(f"Method {method_call.method_name} of type {obj_type} if unknown at location {method_call.position}")
         
         method.is_called = True
-        if len(method.function_args) != len(method_call.arguments):
-            raise TypingError(f"The function expects {len(method_call.arguments)} arguments but got {len(method.function_args)}"+\
-                              f"at location {method_call.position}")
+        if len(method.explicit_arguments) != len(method_call.arguments):
+            raise TypingError(f"The function expects {len(method.function_args)} arguments but got {len(method_call.arguments)}"+\
+                              f" at location {method_call.position}")
 
-        for expected_param, actual in zip(method.function_args, method_call.arguments):
+        for expected_param, actual in zip(method.explicit_arguments, method_call.arguments):
             expected_type = self._type_ptype(expected_param.var_type)
             actual_type = self._type_expression(actual)
             if not self.check_types_match(expected_type, actual_type):
@@ -1037,11 +1048,12 @@ class Typer:
             literal.expr_type = self.known_types['f32']
         return literal.expr_type
 
-    def _type_this(self, _: PThis) -> Typ:
+    def _type_this(self, this_keyword: PThis) -> Typ:
         """Type checks a cast expression and returns the target type"""
         if self._in_class is None:
             raise TypingError("'this' is not defined outside of a class")
-        return self.known_types[self._in_class.type_string]
+        this_keyword.expr_type = self.known_types[self._in_class.type_string]
+        return this_keyword.expr_type
 
     def _type_cast(self, cast: PCast) -> Typ:
         """Type checks a cast expression and returns the target type"""
