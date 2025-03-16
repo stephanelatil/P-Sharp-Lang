@@ -21,6 +21,9 @@ FUNC_DEFAULT_TOSTRING = "__PS_DefaultToString"
 """ Gets a pointer to the nth element of the given array
 void* __PS_GetPtrToArrayElement(void* array, int8_t element_size_in_bytes, int64_t index, char* filename, int32_t position_line, int32_t position_column)"""
 FUNC_GET_ARRAY_ELEMENT_PTR = "__PS_GetPtrToArrayElement"
+"""Does a null_reference check on the object you're trying to dereference (field, method or array access)
+void __PS_NullCheckObject(void* object, char* filename, int32_t position_line, int32_t position_column)"""
+FUNC_NULL_REF_CHECK = "__PS_NullCheckObject"
 
 # Special setup hooks called before or after the garbage collector init/cleanups
 """Function called before the GC initializes.

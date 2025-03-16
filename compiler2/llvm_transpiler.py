@@ -442,6 +442,7 @@ class CodeGen:
 #(void* array, int8_t element_size_in_bytes, int64_t index, char* filename, int32_t position_line, int32_t position_column){
                             (FUNC_GET_ARRAY_ELEMENT_PTR, ir.FunctionType(void_ptr,[void_ptr, ir.IntType(8), ir.IntType(64),
                                                                                    char_ptr, ir.IntType(32), ir.IntType(32)])),
+                            (FUNC_NULL_REF_CHECK, ir.FunctionType(void,[void_ptr, char_ptr, ir.IntType(32), ir.IntType(32)])),
                             ]:
             func = ir.Function(context.module, func_type, name)
             context.scopes.declare_func(name, func_type.return_type, func)
