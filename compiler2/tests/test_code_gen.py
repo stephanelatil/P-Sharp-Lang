@@ -123,7 +123,7 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
                 main_code = self.get_function_ir(module)
                 global_code = str(module)
                 # assert array var is globally known
-                self.assertIn("@arr = global { i64, [0 x", global_code)
+                self.assertIn("@arr = global ptr", global_code)
                 # assert value is initialized in main func
                 self.assertIn(f"call ptr {alloc_func}", main_code)
 
@@ -425,54 +425,106 @@ class TestCodeGeneratorControlFlow(CodeGenTestCase):
         """Test valid if statement conditions"""
         test_cases = [
             """
-            if (true) {
-                i32 x = 1;
+            i32 main(){
+                i32 x = 0;
+                if (true)
+                    x = 2;
+                return x;
             }
             """,
             """
-            if (1 < 2) {
-                i32 y = 2;
+            i32 main(){
+                i32 x = 0;
+                if (1 < 2)
+                    x = 2;
+                return x;
             }
             """,
             """
-            if (not false) {
-                i32 z = 3;
-            }"""]
+            i32 main(){
+                i32 x = 0;
+                if (not false)
+                    x = 2;
+                return x;
+            }
+            """]
         for source in test_cases:
             with self.subTest(source=source):
                 module = self.generate_module(source)
                 ir_code = self.get_function_ir(module)
                 self.assertIn("br i1", ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, 2)
 
     def test_valid_while_conditions(self):
         """Test valid while loop conditions"""
-        source = """
-            while (true) {
+        test_cases = [
+            ("""
+            i32 main(){
                 i32 x = 1;
+                while (x < 10) 
+                    x++;
+                return x;
+            }""", 10),
+            ("""
+            i32 main(){
+                i32 i = 30;
+                while (i > 10)
+                    i = i - 3;
+                return i;
             }
-            i32 i = 0;
-            while (i < 10) {
-                i = i + 1;
+            """, 9),
+            ("""
+            i32 main(){
+                i32 i = 0;
+                i32 j = 0;
+                while (true)
+                {
+                    if (i == 3)
+                        break;
+                    i++;
+                    j = j + 3;
+                }
+                return j;
             }
-        """
-        module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
-        self.assertIn("br i1", ir_code)
+            """, 9)]
+        for source, excepted_result in test_cases:
+            with self.subTest(source=source):
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
+                self.assertIn("br i1", ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, excepted_result)
 
     def test_valid_for_components(self):
         """Test valid for loop components"""
-        source = """
-            for (i32 i = 0; i < 10; i = i + 1) {
-                i32 x = i;
-            }
-            for (i32 j = 10; j > 0; j = j - 1) {
-                i32 y = j;
-            }
-            for (;;){}
-        """
-        module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
-        self.assertIn("br i1", ir_code)
+        test_cases = [
+            ("""
+            i32 main(){
+                i32 x;
+                for (i32 i = 0; i < 10; i++)
+                    x = i*2;
+                return x;
+            }""",18),
+            ("""
+            i32 main(){
+                i32 y = 0;
+                for (i32 j = 10; j > 0; j--)
+                    y = j;
+                return y;
+            }""",1),
+            ("""
+            i32 main() {
+                for (;;){return 3;}
+            }""",3)
+            ]
+        for source, excepted_result in test_cases:
+            with self.subTest(source=source):
+                module = self.generate_module(source)
+                ir_code = self.get_function_ir(module)
+                self.assertIn("br i1", ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, excepted_result)
 
 class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
     """Test implicit type conversion rules"""
