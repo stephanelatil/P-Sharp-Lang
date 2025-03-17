@@ -298,7 +298,7 @@ class CodeGen:
                 return_type = method.return_typ_typed.get_llvm_value_type(context)
                 assert return_type is not None
                 #set "this" as first argument
-                arg_types = [statement.class_typ.get_llvm_value_type(context)]
+                arg_types = []
                 for arg in method.function_args:
                     arg_types.append(arg.typer_pass_var_type.get_llvm_value_type(context))
                 func_type = ir.FunctionType(return_type, arg_types)
