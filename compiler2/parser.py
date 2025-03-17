@@ -250,7 +250,6 @@ class PNoop(PExpression):
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a NoOp"
-        context.module.add_debug_info()
         return ir.Constant(ir.IntType(1), True)
 
 @dataclass
@@ -862,11 +861,12 @@ class PForStatement(PStatement):
         context.scopes.enter_scope()
         self.initializer.generate_llvm(context)
         # Create basic blocks for loop structure
+        increment_block:ir.Block = context.builder.append_basic_block(f"for_inc_{self.condition.position.index}")
         cond_block:ir.Block = context.builder.append_basic_block(f"for_cond_{self.condition.position.index}")
         body_block:ir.Block = context.builder.append_basic_block(f"for_body_{self.body.position.index}")
         after_block:ir.Block = context.builder.append_basic_block(f"for_after_{self.body.position.index}")
         #add info pointing to condition and end of loop for continue/break
-        context.loopinfo.append((cond_block,after_block))
+        context.loopinfo.append((increment_block,after_block))
         
         context.builder.branch(cond_block)
         # Generate condition in condition block
@@ -877,7 +877,11 @@ class PForStatement(PStatement):
         # Generate loop body in body block
         context.builder.position_at_end(body_block)
         self.body.generate_llvm(context, False)
+        assert isinstance(context.builder.block, ir.Block)
+        if not context.builder.block.is_terminated:
+            context.builder.branch(increment_block)
         # at the end of the for loop run the increment statement
+        context.builder.position_at_end(increment_block)
         self.increment.generate_llvm(context)
         # Branch back to condition block after body execution
         context.builder.branch(cond_block)
