@@ -6,6 +6,10 @@ from lexer import Lexer, LexemeType, Lexeme
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
 from utils import Position, TypingError, CodeGenContext, TYPE_INFO, TypeClass, TypeInfo, CompilerError
 from llvmlite import ir
+from constants import (FUNC_GC_ALLOCATE_OBJECT, FUNC_GC_ALLOCATE_VALUE_ARRAY,
+                       FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY, EXIT_CODE_GLOBAL_VAR_NAME,
+                       FUNC_DEFAULT_TOSTRING, FUNC_GET_ARRAY_ELEMENT_PTR,
+                       FUNC_NULL_REF_CHECK)
 
 class LexemeStream:
     def __init__(self, lexmes:Generator[Lexeme, None, None], filename:str):
@@ -48,28 +52,33 @@ class Typ:
     is_reference_type:bool = True
     
     def __hash__(self) -> int:
-        return hash(self.name) + sum(
-            [hash(method) for method in self.methods]
-        ) + sum(
-            [hash(field) for field in self.fields]
-        )
+        return hash(self.name)
     
     def __eq__(self, value: object) -> bool:
         if not isinstance(value, Typ):
             return False
         return self.name == value.name \
-               and all((m1 == m2 for m1, m2 in zip(self.methods, value.methods))) \
-               and all((f1 == f2 for f1, f2 in zip(self.fields, value.fields)))
+            #    and all((m1 == m2 for m1, m2 in zip(self.methods, value.methods))) \
+            #    and all((f1 == f2 for f1, f2 in zip(self.fields, value.fields)))
     
     def __post_init__(self):
         for function in self.methods:
             if function.name == "ToString" and len(function.function_args) == 0:
                 return
-        #add default ToString method if it does not exist. Just returns the Type name
-        self.methods.append(PMethod("ToString", 
+        # Add default ToString method if it does not exist
+        # Default ToString calls the builtin default
+        self.methods.append(PMethod("ToString",
                                       PType('string', Lexeme.default), 
                                       [],
-                                      PBlock([], Lexeme.default, BlockProperties(
+                                      PBlock([
+                                          PReturnStatement(
+                                              PFunctionCall(
+                                                  PIdentifier(FUNC_DEFAULT_TOSTRING, Lexeme.default),
+                                                  [PThis(Lexeme.default)],
+                                                  Lexeme.default
+                                              ),
+                                              Lexeme.default)
+                                          ], Lexeme.default, BlockProperties(
                                                     is_top_level=False,
                                                     in_function=True
                                           )),
@@ -99,13 +108,14 @@ class Typ:
             'null': ir.PointerType() # null is a point type (points to nothing but still a pointer technically)
         }
         
+        if self.name in type_map:
+            return type_map[self.name]
         if self.is_reference_type:
             if context is None:
                 return ir.PointerType()
             else:
                 return ir.PointerType(context.type_map[self])
-        assert self.name in type_map
-        return type_map[self.name]
+        raise TypingError(f"Unknown value type {self.name}")
 
     def __str__(self):
         return self.name
@@ -123,6 +133,12 @@ class ArrayTyp(Typ):
                          methods=methods,
                          fields=fields,
                          is_reference_type=True)
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
+    def __eq__(self, value: object) -> bool:
+        return super().__eq__(value)
 
 class ParserError(Exception):
     """Custom exception for parser-specific errors"""
@@ -195,22 +211,46 @@ class PStatement:
 
     def generate_llvm(self, context:CodeGenContext) -> None:
         raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
+    
+    def exit_with_error(self, context:CodeGenContext, error_code:int=1, error_message:str="Error "):
+        printf = context.scopes.get_symbol("fprintf").func_ptr
+        assert printf is not None
+        exit_func = context.scopes.get_symbol("exit").func_ptr
+        assert exit_func is not None
+        error_message += f" in file %s at line %d:%d\n"
+        error_message_c_str_with_format = context.get_char_ptr_from_string(error_message)
+        context.builder.call(printf, [
+            ir.Constant(ir.IntType(32), 2), #stderr
+            error_message_c_str_with_format,
+            context.get_char_ptr_from_string(self.position.filename), # filename
+            ir.Constant(ir.IntType(32), self.position.line), # line number
+            ir.Constant(ir.IntType(32), self.position.column), # Column number
+        ])
+        context.builder.call(exit_func, [ir.Constant(ir.IntType(32), error_code)])
+        context.builder.unreachable()
+        
 
 @dataclass
 class PExpression(PStatement):
     """Base class for all expression nodes - nodes that produce a value"""
+    
     def __post_init__(self):
         self.expr_type:Optional[Typ] = None  # Will be set during typing pass
+        self.is_compile_time_constant:bool = False
+        self.is_lvalue = getattr(self, "is_lvalue", False)
 
-    def generate_llvm(self, context:CodeGenContext) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
 
 @dataclass
 class PNoop(PExpression):
     def __init__(self, lexeme:Lexeme):
         super().__init__(NodeType.EMPTY, lexeme.pos)
+        self.is_compile_time_constant = True
     
-    def generate_llvm(self, context: CodeGenContext) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get pointer to a NoOp"
+        context.module.add_debug_info()
         return ir.Constant(ir.IntType(1), True)
 
 @dataclass
@@ -232,6 +272,9 @@ class PFunction(PStatement):
     is_called: bool = False
     _return_typ_typed:Optional[Typ] = None
     
+    def __hash__(self) -> int:
+        return hash(self.name) + hash(self.return_type) + sum([hash(func) for func in self.function_args])
+    
     @property
     def return_typ_typed(self) -> Typ:
         if self._return_typ_typed is None:
@@ -245,6 +288,40 @@ class PFunction(PStatement):
         self.return_type = return_type
         self.function_args = parameters
         self.body = body
+        
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        if not context.scopes.has_symbol(self.name):
+            func_type = ir.FunctionType(self.return_typ_typed.get_llvm_value_type(context),
+                                        [arg.typer_pass_var_type.get_llvm_value_type(context) for arg in self.function_args])
+            func = ir.Function(context.module, func_type, name=self.name)
+        else:
+            func = context.scopes.get_symbol(self.name).func_ptr
+            assert func is not None
+        
+        context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
+        
+        # defined args in scoper:
+        context.scopes.enter_func_scope()
+        assert len(self.function_args) == len(func.args)
+        for param, arg_value in zip(self.function_args, func.args):
+            # build alloca to a function argument
+            # In llvm function arguments are just NamedValues and don't have a mem address.
+            # We define a location on the stack for them so they can be written to.
+            # This will be optimized out by the mem2reg pass
+                # NB: written to just means that an argument x can be written to.
+                # The caller will not have the value changed from his point of view, he just passed a value not a reference!
+            arg_alloca = context.builder.alloca(arg_value.type)
+            context.builder.store(arg_value, arg_alloca)
+            context.scopes.declare_var(param.name,
+                                       param.typer_pass_var_type.get_llvm_value_type(context),
+                                       arg_alloca
+                                       )
+        # run body statements
+        self.body.generate_llvm(context, build_basic_block=False)
+        # for stmt in self.body.statements:
+        #     stmt.generate_llvm(context)
+        
+        context.scopes.leave_func_scope()
 
 @dataclass    
 class PMethod(PFunction):
@@ -255,12 +332,59 @@ class PMethod(PFunction):
                  body: 'PBlock', lexeme: Lexeme, is_builtin:bool = False):
         super().__init__(name, return_type, parameters, body, lexeme)
         self.is_builtin = is_builtin
+        
+    @property
+    def explicit_arguments(self):
+        return self.function_args[1:]
     
     @property
     def class_type(self):
         if self._class_type is None:
             raise TypingError(f"Function has not been typed yet")
         return self._class_type
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, PMethod):
+            return False
+        return super().__eq__(value)
+        
+    def generate_llvm(self, context: CodeGenContext) -> None:        
+        method_name = context.get_method_symbol_name(self.class_type.name, self.name)
+        if not context.scopes.has_symbol(method_name):
+            func_type = ir.FunctionType(self.return_typ_typed.get_llvm_value_type(context),
+                                        [arg.typer_pass_var_type.get_llvm_value_type(context) for arg in self.function_args])
+            func = ir.Function(context.module, func_type, name=self.name)
+        else:
+            func = context.scopes.get_symbol(method_name).func_ptr
+            assert func is not None
+        
+        context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
+        
+        # defined args in scope (including implicit "self"):
+        context.scopes.enter_func_scope()
+        assert len(self.function_args) == len(func.args)
+        for param, arg_value in zip(self.function_args, func.args):
+            # build alloca to a function argument
+            # In llvm function arguments are just NamedValues and don't have a mem address.
+            # We define a location on the stack for them so they can be written to.
+            # This will be optimized out by the mem2reg pass
+                # NB: written to just means that an argument x can be written to.
+                # The caller will not have the value changed from his point of view, he just passed a value not a reference!
+            arg_alloca = context.builder.alloca(arg_value.type)
+            context.builder.store(arg_value, arg_alloca)
+            context.scopes.declare_var(param.name,
+                                       param.typer_pass_var_type.get_llvm_value_type(context),
+                                       arg_alloca
+                                       )
+        # run body statements
+        # for stmt in self.body.statements:
+        #     stmt.generate_llvm(context)
+        self.body.generate_llvm(context, build_basic_block=False)
+        
+        context.scopes.leave_func_scope()
 
 @dataclass
 class PClass(PStatement):
@@ -306,6 +430,14 @@ class PClassField(PStatement):
         self.var_type = type
         self.is_public = is_public
         self.default_value = default_value
+        
+    def __hash__(self) -> int:
+        return hash(self.name) + hash(self.var_type)
+    
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, PClassField):
+            return False
+        return self.name == value.name and self.var_type == value.var_type
 
 @dataclass
 class PBlock(PStatement):
@@ -318,9 +450,29 @@ class PBlock(PStatement):
         self.statements = statements
         self.block_properties = block_properties
     
-    def generate_llvm(self, context: CodeGenContext) -> None:
+    def generate_llvm(self, context: CodeGenContext, build_basic_block:bool=True) -> None:
+        """Generates the llvm IR code for this PBlock
+
+        Args:
+            context (CodeGenContext): The context containing the current module
+            build_basic_block (bool, optional): Whether to generate a new basic block for this PBlock.
+            Also terminates the  current basic block and creates a new one to continue after this one. Defaults to True.
+        """
+        #TODO: Count total number of defined vars and Enter GC scope
+        if build_basic_block:
+            block_scope = context.builder.append_basic_block(f'block_scope_{self.position.index}_entry')
+            context.builder.branch(block_scope)
+            context.builder.position_at_end(block_scope)
+        context.scopes.enter_scope()
         for stmt in self.statements:
             stmt.generate_llvm(context)
+        context.scopes.leave_scope()
+        if build_basic_block:
+            after_block_scope = context.builder.append_basic_block(f'after_block_scope_{self.position.index}')
+            if isinstance(context.builder.block, ir.Block) and not context.builder.block.is_terminated:
+                context.builder.branch(after_block_scope)
+        
+        #TODO leave gc scope
 
 @dataclass
 class PVariableDeclaration(PStatement):
@@ -328,13 +480,12 @@ class PVariableDeclaration(PStatement):
     name: str
     var_type: 'PType'
     _typer_pass_var_type: Optional[Typ]
-    
     initial_value: Optional[PExpression]
     
     @property
     def typer_pass_var_type(self) -> Typ:
         if self._typer_pass_var_type is None:
-            raise 
+            raise CompilerError('PVarDecl fas not been typed')
         return self._typer_pass_var_type
 
     def __init__(self, name: str, var_type: 'PType', initial_value: Optional[PExpression], lexeme: Lexeme):
@@ -342,17 +493,59 @@ class PVariableDeclaration(PStatement):
         self.name = name
         self.var_type = var_type
         self.initial_value = initial_value
+    
+    def __hash__(self) -> int:
+        return hash(self.name) + hash(self.var_type)
+    
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, PVariableDeclaration):
+            return False
+        return self.name == value.name and self.var_type == value.var_type
+    
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        #TODO: register root here to GC
+        
+        type_ = self.typer_pass_var_type.get_llvm_value_type(context)
+        alloca = context.builder.alloca(type_,name=self.name)
+        
+        if self.initial_value is None:
+            init = self.typer_pass_var_type.default_llvm_value(context)
+        else:
+            init = self.initial_value.generate_llvm(context, False)
+        
+        context.scopes.declare_var(self.name, type_, alloca)
+        context.builder.store(init, alloca)
 
 @dataclass
 class PAssignment(PExpression):
     """Assignment operation node"""
-    target: Union['PIdentifier', 'PDotAttribute', 'PArrayIndexing', 'PCast']
+    target: Union['PIdentifier', 'PDotAttribute', 'PArrayIndexing']
     value: PExpression
 
     def __init__(self, target: Union['PIdentifier', 'PDotAttribute', 'PArrayIndexing'], value: PExpression, lexeme: Lexeme):
         super().__init__(NodeType.ASSIGNMENT, lexeme.pos)
         self.target = target
+        self.target.is_lvalue = True
         self.value = value
+        
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get pointer to an assignment value"
+        # get ptr to assign to
+        if isinstance(self.target, PIdentifier):
+            target = context.scopes.get_symbol(self.target.name).alloca
+        elif isinstance(self.target, (PDotAttribute, PArrayIndexing)):
+            #should return GEP ptr value
+            target = self.target.generate_llvm(context, get_ptr_to_expression=True)
+        else:
+            raise NotImplementedError()
+        
+        assert target is not None
+        #get value to assign
+        value = self.value.generate_llvm(context)
+        #assign to target
+        context.builder.store(value, target)
+        #return the value
+        return value
 
 class PDiscard(PStatement):
     """Discard an expression result"""
@@ -361,6 +554,10 @@ class PDiscard(PStatement):
     def __init__(self, expression:PExpression, lexeme: Lexeme):
         super().__init__(NodeType.DISCARD, lexeme.pos)
         self.expression = expression
+    
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        self.expression.generate_llvm(context)
+        #discard result
 
 @dataclass
 class PBinaryOperation(PExpression):
@@ -374,6 +571,139 @@ class PBinaryOperation(PExpression):
         self.operation = operation
         self.left = left
         self.right = right
+        # TODO : This value can be true, calculated at compile time and optimized out if left and right are compile time constants
+        self.is_compile_time_constant = False
+        
+    def generate_and_short_circuit(self, left:ir.Value, context:CodeGenContext):
+        # Create basic blocks for different paths
+        curr_block = context.builder.block
+        true_block = context.builder.append_basic_block(f'and_true_{self.position.index}')
+        end_block = context.builder.append_basic_block(f'and_end_{self.position.index}')
+        
+        # Conditional branch based on left side
+        context.builder.cbranch(left, true_block, end_block)
+
+        # True block: evaluate right side
+        context.builder.position_at_end(true_block)
+        right = self.right.generate_llvm(context)
+        context.builder.branch(end_block)
+
+        # Merge block: PHI node to combine results
+        context.builder.position_at_end(end_block)
+        phi = context.builder.phi(ir.IntType(1))
+        phi.add_incoming(right, true_block)
+        phi.add_incoming(ir.Constant(ir.IntType(1), 0), curr_block)
+
+        return phi
+        
+    def generate_or_short_circuit(self, left:ir.Value, context:CodeGenContext):
+        # Create basic blocks for different paths
+        curr_block = context.builder.block
+        false_block = context.builder.append_basic_block(f'or_false_{self.position.index}')
+        end_block = context.builder.append_basic_block(f'or_end_{self.position.index}')
+        
+        # Conditional branch based on left side
+        context.builder.cbranch(left, end_block, false_block)
+
+        # False block: evaluate right side
+        context.builder.position_at_end(false_block)
+        right = self.right.generate_llvm(context)
+        context.builder.branch(end_block)
+
+        # Merge block: PHI node to combine results
+        context.builder.position_at_end(end_block)
+        phi = context.builder.phi(ir.IntType(1))
+        phi.add_incoming(right, false_block)
+        phi.add_incoming(ir.Constant(ir.IntType(1), 1), curr_block)
+
+        return phi
+
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+        assert not get_ptr_to_expression, "Cannot get pointer to an operation result"
+        left = self.left.generate_llvm(context)
+        if self.expr_type is None:
+            raise CompilerError(f"AST Node has not been typed at location {self.position}")
+        if self.expr_type.is_reference_type:
+            raise NotImplementedError() #here should call the builtin's Equals() function
+        if self.expr_type.name not in TYPE_INFO:
+            raise NotImplementedError() # Should never happen
+        type_info = TYPE_INFO[self.expr_type.name]
+        
+        if self.operation == BinaryOperation.LOGIC_AND:
+            ret_val = context.builder.and_(left, self.right.generate_llvm(context))
+        elif self.operation == BinaryOperation.LOGIC_OR:
+            ret_val = context.builder.or_(left, self.right.generate_llvm(context))
+        elif self.operation == BinaryOperation.BOOL_AND:
+            ret_val = self.generate_and_short_circuit(left, context)
+        elif self.operation == BinaryOperation.BOOL_OR:
+            ret_val = self.generate_or_short_circuit(left, context)
+        elif self.operation in (BinaryOperation.BOOL_EQ,
+                                BinaryOperation.BOOL_GEQ,
+                                BinaryOperation.BOOL_GT,
+                                BinaryOperation.BOOL_LEQ,
+                                BinaryOperation.BOOL_LT,
+                                BinaryOperation.BOOL_NEQ):
+            if type_info.type_class == TypeClass.FLOAT:
+                ret_val = context.builder.fcmp_ordered(self.operation.value, left, self.right.generate_llvm(context))
+            elif type_info.type_class in (TypeClass.INTEGER,TypeClass.BOOLEAN):
+                if type_info.is_signed:
+                    ret_val = context.builder.icmp_signed(self.operation.value, left, self.right.generate_llvm(context))
+                else:
+                    ret_val = context.builder.icmp_unsigned(self.operation.value, left, self.right.generate_llvm(context))
+        elif self.operation == BinaryOperation.DIVIDE:
+            if type_info.type_class == TypeClass.FLOAT:
+                ret_val = context.builder.fdiv(left, self.right.generate_llvm(context))
+            elif type_info.type_class == TypeClass.INTEGER:
+                ret_val = context.builder.sdiv(left, self.right.generate_llvm(context)) if type_info.is_signed else context.builder.udiv(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        elif self.operation == BinaryOperation.MINUS:
+            if type_info.type_class == TypeClass.FLOAT:
+                ret_val = context.builder.fsub(left, self.right.generate_llvm(context))
+            elif type_info.type_class == TypeClass.INTEGER:
+                ret_val = context.builder.sub(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        elif self.operation == BinaryOperation.PLUS:
+            if type_info.type_class == TypeClass.FLOAT:
+                ret_val = context.builder.fadd(left, self.right.generate_llvm(context))
+            elif type_info.type_class == TypeClass.INTEGER:
+                ret_val = context.builder.add(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        elif self.operation == BinaryOperation.MOD:
+            if type_info.type_class == TypeClass.FLOAT:
+                ret_val = context.builder.frem(left, self.right.generate_llvm(context))
+            elif type_info.type_class == TypeClass.INTEGER:
+                ret_val = context.builder.srem(left, self.right.generate_llvm(context)) if type_info.is_signed else context.builder.urem(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        elif self.operation == BinaryOperation.SHIFT_LEFT:
+            if type_info.type_class == TypeClass.INTEGER:
+                ret_val = context.builder.shl(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        elif self.operation == BinaryOperation.SHIFT_RIGHT:
+            if type_info.type_class == TypeClass.INTEGER:
+                ret_val = context.builder.ashr(left, self.right.generate_llvm(context)) if type_info.is_signed else context.builder.lshr(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        elif self.operation == BinaryOperation.TIMES:
+            if type_info.type_class == TypeClass.FLOAT:
+                ret_val = context.builder.fmul(left, self.right.generate_llvm(context))
+            elif type_info.type_class == TypeClass.INTEGER:
+                ret_val = context.builder.mul(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        elif self.operation == BinaryOperation.XOR:
+            if type_info.type_class in (TypeClass.INTEGER, TypeClass.BOOLEAN):
+                ret_val = context.builder.xor(left, self.right.generate_llvm(context))
+            else:
+                raise NotImplementedError()
+        else:
+            raise NotImplementedError()
+        assert isinstance(ret_val, ir.NamedValue)
+        return ret_val
 
 @dataclass
 class PUnaryOperation(PExpression):
@@ -385,6 +715,68 @@ class PUnaryOperation(PExpression):
         super().__init__(NodeType.UNARY_OPERATION, lexeme.pos)
         self.operation = operation
         self.operand = operand
+        # TODO : This value can be true, calculated at compile time and optimized out if the operator is not inc/dec and the operand is const
+        self.is_compile_time_constant = False
+        self.operand.is_lvalue = self.operation in (UnaryOperation.PRE_INCREMENT, UnaryOperation.PRE_DECREMENT,
+                                                    UnaryOperation.POST_INCREMENT, UnaryOperation.POST_DECREMENT)
+
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get pointer to an operation result"
+        # TODO expressions can be pointers or values. Add flag to explicitly deref ptrs (like allocas, index access, etc) or not
+        # TODO add property for PExpression if it's an lvalue (ptr to value) or not
+        
+        operand = self.operand.generate_llvm(context, get_ptr_to_expression=self.operand.is_lvalue)
+        assert self.operand.expr_type is not None
+        assert self.expr_type is not None
+        typeinfo = TYPE_INFO.get(self.operand.expr_type.name, TypeInfo(TypeClass.CLASS))
+        if self.operation in (UnaryOperation.BOOL_NOT, UnaryOperation.LOGIC_NOT, UnaryOperation.MINUS):
+            if self.operation == UnaryOperation.BOOL_NOT:
+                if typeinfo.type_class == TypeClass.FLOAT:
+                    ret_val = context.builder.fcmp_ordered('==', operand, self.operand.expr_type.default_llvm_value(context))
+                elif typeinfo.type_class == TypeClass.BOOLEAN:
+                    ret_val = context.builder.not_(operand)
+                else:
+                    ret_val = context.builder.icmp_unsigned('==', operand, self.operand.expr_type.default_llvm_value(context))
+            elif self.operation == UnaryOperation.LOGIC_NOT:
+                if typeinfo.type_class in [TypeClass.FLOAT, TypeClass.BOOLEAN, TypeClass.INTEGER]:
+                    ret_val = context.builder.not_(operand)
+                else:
+                    raise NotImplementedError()
+            elif self.operation == UnaryOperation.MINUS:
+                if typeinfo.type_class == TypeClass.FLOAT:
+                    ret_val = context.builder.fneg(operand)
+                else:
+                    ret_val = context.builder.neg(operand)
+        elif self.operation in (UnaryOperation.POST_DECREMENT, UnaryOperation.POST_INCREMENT,
+                                UnaryOperation.PRE_DECREMENT, UnaryOperation.PRE_INCREMENT):
+            operand_ptr = operand
+            operand = context.builder.load(operand_ptr,
+                                           typ=self.operand.expr_type.get_llvm_value_type(context))
+            if self.operation == UnaryOperation.PRE_INCREMENT:
+                ret_val = context.builder.add(operand, ir.Constant(self.expr_type.get_llvm_value_type(context),1))
+                # self.operand is a ptr (or NamedValue)
+                assert isinstance(self.operand, (PIdentifier, PArrayIndexing, PThis, PDotAttribute))
+                context.builder.store(ret_val, operand_ptr)
+            elif self.operation == UnaryOperation.PRE_DECREMENT:
+                ret_val = context.builder.sub(operand, ir.Constant(self.expr_type.get_llvm_value_type(context),1))
+                assert isinstance(self.operand, (PIdentifier, PArrayIndexing, PThis, PDotAttribute))
+                context.builder.store(ret_val, operand_ptr)
+            elif self.operation == UnaryOperation.POST_INCREMENT:
+                ret_val = operand
+                after_op_val = context.builder.add(operand, ir.Constant(self.expr_type.get_llvm_value_type(context),1))
+                assert isinstance(self.operand, (PIdentifier, PArrayIndexing, PThis, PDotAttribute))
+                context.builder.store(after_op_val, operand_ptr)
+            elif self.operation == UnaryOperation.POST_DECREMENT:
+                ret_val = operand
+                after_op_val = context.builder.sub(operand, ir.Constant(self.expr_type.get_llvm_value_type(context),1))
+                assert isinstance(self.operand, (PIdentifier, PArrayIndexing, PThis, PDotAttribute))
+                context.builder.store(after_op_val, operand_ptr)
+        else:
+            raise NotImplementedError()
+        assert isinstance(ret_val, ir.NamedValue)
+        return ret_val
+        #for increment/decrement need to get operant alloca or ptr
+            
 
 @dataclass
 class PIfStatement(PStatement):
@@ -399,6 +791,18 @@ class PIfStatement(PStatement):
         self.condition = condition
         self.then_block = then_block
         self.else_block = else_block
+    
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        if self.else_block is not None:
+            with context.builder.if_else(self.condition.generate_llvm(context)) as (then, otherwise):
+                with then:
+                    self.then_block.generate_llvm(context, build_basic_block=False)
+                with otherwise:
+                    self.else_block.generate_llvm(context, build_basic_block=False)
+        else:
+            with context.builder.if_then(self.condition.generate_llvm(context)):
+                self.then_block.generate_llvm(context, build_basic_block=False)
+                
 
 @dataclass
 class PWhileStatement(PStatement):
@@ -410,6 +814,33 @@ class PWhileStatement(PStatement):
         super().__init__(NodeType.WHILE_STATEMENT, lexeme.pos)
         self.condition = condition
         self.body = body
+        
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        context.scopes.enter_scope()
+        # Create basic blocks for loop structure
+        cond_block = context.builder.append_basic_block(f"w_cond_{self.condition.position.index}")
+        body_block = context.builder.append_basic_block(f"w_body_{self.body.position.index}")
+        after_block = context.builder.append_basic_block(f"w_after_{self.body.position.index}")
+        #add info pointing to condition and end of loop for continue/break
+        context.loopinfo.append((cond_block,after_block))
+
+        context.builder.branch(cond_block)
+        # Generate condition in condition block
+        context.builder.position_at_end(cond_block)
+        cond_value = self.condition.generate_llvm(context)
+        context.builder.cbranch(cond_value, body_block, after_block)
+
+        # Generate loop body in body block
+        context.builder.position_at_end(body_block)
+        self.body.generate_llvm(context, False)
+        # Branch back to condition block after body execution
+        context.builder.branch(cond_block)
+
+        # Set insertion point to after block for subsequent code
+        context.builder.position_at_end(after_block)
+        #pop loop info, we're leaving block
+        context.loopinfo.pop()        
+        context.scopes.leave_scope()
 
 @dataclass
 class PForStatement(PStatement):
@@ -426,6 +857,36 @@ class PForStatement(PStatement):
         self.condition = condition
         self.increment = increment
         self.body = body
+        
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        context.scopes.enter_scope()
+        self.initializer.generate_llvm(context)
+        # Create basic blocks for loop structure
+        cond_block:ir.Block = context.builder.append_basic_block(f"for_cond_{self.condition.position.index}")
+        body_block:ir.Block = context.builder.append_basic_block(f"for_body_{self.body.position.index}")
+        after_block:ir.Block = context.builder.append_basic_block(f"for_after_{self.body.position.index}")
+        #add info pointing to condition and end of loop for continue/break
+        context.loopinfo.append((cond_block,after_block))
+        
+        context.builder.branch(cond_block)
+        # Generate condition in condition block
+        context.builder.position_at_end(cond_block)
+        cond_value = self.condition.generate_llvm(context)
+        context.builder.cbranch(cond_value, body_block, after_block)
+
+        # Generate loop body in body block
+        context.builder.position_at_end(body_block)
+        self.body.generate_llvm(context, False)
+        # at the end of the for loop run the increment statement
+        self.increment.generate_llvm(context)
+        # Branch back to condition block after body execution
+        context.builder.branch(cond_block)
+
+        # Set insertion point to after block for subsequent code
+        context.builder.position_at_end(after_block)
+        #pop loop info, we're leaving block
+        context.loopinfo.pop()
+        context.scopes.leave_scope()
 
 @dataclass
 class PReturnStatement(PStatement):
@@ -437,7 +898,18 @@ class PReturnStatement(PStatement):
         self.value = value or PVoid(lexeme)
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        if isinstance(self.value, PVoid):
+        # if we are within the module's main function
+        if context.global_exit_block is not None:
+            #make sure the main function returns the correct return type
+            assert self.value.expr_type is not None
+            assert self.value.expr_type.get_llvm_value_type(context) == ir.IntType(32)
+            exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME).alloca
+            assert exit_code is not None
+            context.builder.store(self.value.generate_llvm(context), exit_code)
+            context.builder.branch(context.global_exit_block)
+            return
+        
+        elif isinstance(self.value, PVoid):
             context.builder.ret_void()
         else:
             context.builder.ret(
@@ -459,6 +931,19 @@ class PFunctionCall(PExpression):
         super().__init__(NodeType.FUNCTION_CALL, lexeme.pos)
         self.function = function
         self.arguments = arguments
+        if function.name == 'main':
+            raise CompilerError(f"Cannot call main function directly")
+    
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get pointer to a function result"
+        # get ptrs to all arguments
+        args = [a.generate_llvm(context) for a in self.arguments]
+        # get function pointer
+        fun = self.function.generate_llvm(context)
+        assert isinstance(fun, ir.Function)
+        #call function
+        ret_val = context.builder.call(fun,args)        
+        return ret_val
 
 @dataclass
 class PMethodCall(PExpression):
@@ -472,6 +957,26 @@ class PMethodCall(PExpression):
         self.object = object
         self.method_name = method
         self.arguments = arguments
+    
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get pointer to a function return value"
+        assert self.object.expr_type is not None
+        # TODO: get method function pointer from a v-table
+        this = self.object.generate_llvm(context, False)
+        # null_check on "this"
+        null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
+        assert null_check_func is not None
+        context.builder.call(null_check_func, [this, context.get_char_ptr_from_string(self.position.filename),
+                                               ir.Constant(ir.IntType(32), self.position.line),
+                                               ir.Constant(ir.IntType(32), self.position.column)])
+        
+        #setup arguments
+        args = [this] + [a.generate_llvm(context) for a in self.arguments]
+        method_name = context.get_method_symbol_name(self.object.expr_type.name, self.method_name)
+        fun = context.scopes.get_symbol(method_name).func_ptr
+        assert isinstance(fun, ir.Function)
+        ret_val = context.builder.call(fun, args)
+        return ret_val
 
 @dataclass
 class PIdentifier(PExpression):
@@ -481,12 +986,35 @@ class PIdentifier(PExpression):
     def __init__(self, name: str, lexeme: Lexeme):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
         self.name = name
+    
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        variable = context.scopes.get_symbol(self.name)
+        if variable.is_function:
+            assert variable.func_ptr is not None
+            return variable.func_ptr
+        assert variable.alloca is not None
+        assert self.expr_type is not None
+        var_type = self.expr_type.get_llvm_value_type(context)
+        if get_ptr_to_expression:
+            return variable.alloca
+        else:
+            return context.builder.load(variable.alloca, typ=var_type)
 
 @dataclass
 class PThis(PExpression):
     """This node: reference to the current instance"""
     def __init__(self, lexeme:Lexeme):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
+    
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        this = context.scopes.get_symbol('this').alloca
+        assert this is not None
+        assert self.expr_type is not None
+        var_type = self.expr_type.get_llvm_value_type(context)
+        if get_ptr_to_expression:
+            return this
+        else:
+            return context.builder.load(this, typ=var_type)
     
 @dataclass
 class PVoid(PExpression):
@@ -504,6 +1032,19 @@ class PLiteral(PExpression):
         super().__init__(NodeType.LITERAL, lexeme.pos)
         self.value = value
         self.literal_type = literal_type
+        self.is_compile_time_constant = True
+        
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get pointer to a literal value"
+        assert self.expr_type is not None
+        const_typ = self.expr_type.get_llvm_value_type(context)
+        if self.literal_type == "string":
+            string_obj = context.get_string_const(self.value)
+            # Bitcast from anon-type to actual string type
+            string_obj = context.builder.bitcast(string_obj, const_typ)
+            assert isinstance(string_obj, ir.CastInstr)
+            return string_obj
+        return ir.Constant(const_typ, self.value)
 
 @dataclass
 class PCast(PExpression):
@@ -511,10 +1052,114 @@ class PCast(PExpression):
     target_type: 'PType'  # The type to cast to
     expression: PExpression  # The expression being cast
 
-    def __init__(self, target_type:'PType', expression):
+    def __init__(self, target_type:'PType', expression:PExpression):
         super().__init__(NodeType.CAST, target_type.position)
         self.target_type = target_type
         self.expression = expression
+        # TODO : This value can be true, calculated at compile time and optimized out if inner expression is const
+        self.is_compile_time_constant = False
+    
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get pointer to a casted value"
+        expr = self.expression.generate_llvm(context)
+        original_type = self.expression.expr_type
+        target_type = self.expr_type
+        assert original_type is not None and target_type is not None
+
+        if target_type == original_type:
+            return expr #nothing to do
+        
+        original_type_info = TYPE_INFO.get(original_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
+        target_type_info = TYPE_INFO.get(target_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
+        
+        if original_type_info.type_class == TypeClass.BOOLEAN:
+            return context.builder.select(
+                    cond=expr,
+                    lhs=ir.Constant(target_type.get_llvm_value_type(context), 1),
+                    rhs=ir.Constant(target_type.get_llvm_value_type(context), 0)
+                )
+        elif (target_type.is_reference_type or original_type.is_reference_type):
+            if target_type.name == "null":
+                #cast to void ptr
+                result = context.builder.bitcast(expr, ir.PointerType())
+                assert isinstance(result, ir.NamedValue)
+                return result
+            raise CompilerError("Cannot cast reference types yet")
+        elif target_type_info.type_class == TypeClass.FLOAT:
+            #convert to float
+            if original_type_info.type_class in [TypeClass.INTEGER]:
+                if original_type_info.is_signed:
+                    val = context.builder.sitofp(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+                else:
+                    val = context.builder.uitofp(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+            elif original_type_info.type_class == TypeClass.FLOAT:
+                if original_type_info.bit_width > target_type_info.bit_width:
+                    #truncate
+                    val = context.builder.fptrunc(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+                else: #increase size of FP
+                    val = context.builder.fpext(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+            else:
+                raise TypingError(f"Cannot Cast from {original_type} to {target_type}")
+        elif target_type_info.type_class == TypeClass.INTEGER:
+            #convert to int
+            if original_type_info.type_class in [TypeClass.INTEGER]:
+                if original_type_info.bit_width < target_type_info.bit_width: #cast to larger int
+                    if original_type_info.is_signed:
+                        val = context.builder.sext(expr, target_type.get_llvm_value_type(context))
+                        assert isinstance(val, ir.instructions.CastInstr)
+                        return val
+                    else:
+                        val = context.builder.zext(expr, target_type.get_llvm_value_type(context))
+                        assert isinstance(val, ir.instructions.CastInstr)
+                        return val
+                elif original_type_info.bit_width > target_type_info.bit_width:
+                    val = context.builder.trunc(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+                else:
+                    #sign to unsigned or vice versa
+                    val = context.builder.bitcast(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+            elif original_type_info.type_class == TypeClass.FLOAT:
+                #float to int
+                if target_type_info.is_signed:
+                    val = context.builder.fptosi(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+                else:
+                    val = context.builder.fptoui(expr, target_type.get_llvm_value_type(context))
+                    assert isinstance(val, ir.instructions.CastInstr)
+                    return val
+        elif target_type_info.type_class == TypeClass.BOOLEAN:
+            #do zero check
+            if original_type_info.type_class == TypeClass.INTEGER:
+                return context.builder.select(
+                    cond=context.builder.icmp_unsigned('!=', expr, ir.Constant(ir.IntType(1), 0)),
+                    lhs=ir.Constant(ir.IntType(1), True),
+                    rhs=ir.Constant(ir.IntType(1), False)
+                )
+            elif original_type_info.type_class == TypeClass.FLOAT:
+                return context.builder.select(
+                    cond=context.builder.fcmp_ordered('!=', expr, ir.Constant(original_type.get_llvm_value_type(context), 0)),
+                    lhs=ir.Constant(ir.IntType(1), True),
+                    rhs=ir.Constant(ir.IntType(1), False)
+                )
+            else:
+                return context.builder.select(
+                    cond=context.builder.icmp_unsigned('!=', expr, ir.Constant(ir.PointerType(), ir.PointerType.null)),
+                    lhs=ir.Constant(ir.IntType(1), True),
+                    rhs=ir.Constant(ir.IntType(1), False)
+                )
+        raise TypingError(f"Cannot Cast from {original_type} to {target_type}")
 
 @dataclass
 class PBreakStatement(PStatement):
@@ -522,6 +1167,10 @@ class PBreakStatement(PStatement):
 
     def __init__(self, lexeme: Lexeme):
         super().__init__(NodeType.BREAK_STATEMENT, lexeme.pos)
+        
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        condition_block,end_of_loop_block = context.loopinfo[-1]
+        context.builder.branch(end_of_loop_block)
 
 @dataclass
 class PContinueStatement(PStatement):
@@ -529,18 +1178,30 @@ class PContinueStatement(PStatement):
 
     def __init__(self, lexeme: Lexeme):
         super().__init__(NodeType.CONTINUE_STATEMENT, lexeme.pos)
+        
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        condition_block,end_of_loop_block = context.loopinfo[-1]
+        context.builder.branch(condition_block)
 
 @dataclass
 class PAssertStatement(PStatement):
     """Assert statement node"""
     condition: PExpression
-    message: Optional[PExpression]
+    message: Optional[PLiteral]
 
-    def __init__(self, condition: PExpression, message: Optional[PExpression], lexeme: Lexeme):
+    def __init__(self, condition: PExpression, message: Optional[PLiteral], lexeme: Lexeme):
         super().__init__(NodeType.ASSERT_STATEMENT, lexeme.pos)
         self.condition = condition
         self.message = message
-
+    
+    def generate_llvm(self, context: CodeGenContext) -> None:
+        condition_is_false = context.builder.not_(self.condition.generate_llvm(context))
+        with context.builder.if_then(condition_is_false, False):
+            if self.message is not None:
+                self.exit_with_error(context, error_code=125, error_message="Assertion Failed: " + str(self.message.value))
+            else:
+                self.exit_with_error(context, error_code=125, error_message="Assertion Failed:")
+            
 @dataclass
 class PDotAttribute(PExpression):
     left:PExpression
@@ -550,6 +1211,42 @@ class PDotAttribute(PExpression):
         super().__init__(NodeType.ATTRIBUTE, left.position)
         self.left = left
         self.right = right
+    
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        # left**
+        left_mem_loc = self.left.generate_llvm(context, get_ptr_to_expression=True)
+        assert isinstance(left_mem_loc, ir.NamedValue)
+        assert self.left.expr_type is not None
+        left_type = self.left.expr_type.get_llvm_value_type(context)
+        assert isinstance(left_type, ir.types._TypedPointerType)
+        # left* (a pointer to the object on the heap/stack)
+        left_ptr = context.builder.load(left_mem_loc, typ=left_type)
+        #Do null check here
+        null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
+        assert null_check_func is not None
+        context.builder.call(null_check_func, [left_ptr, context.get_char_ptr_from_string(self.position.filename),
+                                               ir.Constant(ir.IntType(32), self.position.line),
+                                               ir.Constant(ir.IntType(32), self.position.column)])
+        
+        assert isinstance(left_ptr.type, ir.PointerType)
+        for i, field in enumerate(self.left.expr_type.fields):
+            if field.name == self.right.name:
+                # found the correct field
+                field_ptr = context.builder.gep(left_ptr, [ir.Constant(ir.IntType(32), 0), # *left
+                                                           ir.Constant(ir.IntType(32), i) #(*left).ith element
+                                                           ],
+                                                source_etype=left_type.pointee)
+                #fix typing of the element gotten
+                field_ptr_type = ir.PointerType(field.typer_pass_var_type.get_llvm_value_type(context))
+                field_ptr = context.builder.bitcast(field_ptr, field_ptr_type)
+                assert isinstance(field_ptr, (ir.CastInstr, ir.GEPInstr))
+                
+                if get_ptr_to_expression:
+                    return field_ptr
+                else:
+                    return context.builder.load(field_ptr,
+                                                typ=field.typer_pass_var_type.get_llvm_value_type(context))
+        raise TypingError(f"Cannot find field {self.right.name} in type {self.left.expr_type}")
 
 @dataclass
 class PTernaryOperation(PExpression):
@@ -563,6 +1260,15 @@ class PTernaryOperation(PExpression):
         self.condition = condition
         self.true_value = true_value
         self.false_value = false_value
+        # TODO : This value can be true, calculated at compile time and optimized out if condition and its result are compile time constants
+        self.is_compile_time_constant = False
+    
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        return context.builder.select(
+            self.condition.generate_llvm(context),
+            self.true_value.generate_llvm(context, get_ptr_to_expression),
+            self.false_value.generate_llvm(context, get_ptr_to_expression)
+        )
 
 @dataclass
 class PObjectInstantiation(PExpression):
@@ -579,12 +1285,51 @@ class PObjectInstantiation(PExpression):
         """
         super().__init__(NodeType.OBJECT_INSTANTIATION, lexeme.pos)
         self.class_type = class_type
+    
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
+        
+        assert not get_ptr_to_expression, "Cannot get ptr to Object reference"
+        alloc_func = context.scopes.get_symbol(FUNC_GC_ALLOCATE_OBJECT).func_ptr
+        assert alloc_func is not None
+        assert self.expr_type is not None
+        allocated_ptr = context.builder.call(alloc_func,
+            [ir.Constant(size_t_type, context.type_ids[self.expr_type.name])])
+        assert self.expr_type is not None
+        class_ref_type = self.expr_type.get_llvm_value_type(context)
+        assert isinstance(class_ref_type, ir.types._TypedPointerType)
+        allocated_ptr = context.builder.bitcast(allocated_ptr, class_ref_type)
+        assert isinstance(allocated_ptr, ir.NamedValue)
+        
+        # Implicit constructor
+        # Element is allocated
+        # Now we need to allocate all of its fields
+        for field_num, field in enumerate(self.expr_type.fields):
+            if field.default_value is None:
+                continue #not set it's a null_ptr (zero-ed out field for value types)
+            field_ptr = context.builder.gep(allocated_ptr, 
+                                            [
+                                                ir.Constant(ir.IntType(32), 0),
+                                                ir.Constant(ir.IntType(32), field_num)
+                                            ],
+                                            source_etype=class_ref_type.pointee)
+            context.builder.store(field.default_value.generate_llvm(context, get_ptr_to_expression=False),
+                                  field_ptr)
+        
+        return allocated_ptr
 
 @dataclass
 class PArrayInstantiation(PExpression):
     """Represents array instantiation like new int[10]"""
     element_type: 'PType'  # The base type of array elements
     size: PExpression  # The size expression for the array
+    _element_type_typ:Optional[Typ] = None
+    
+    @property
+    def element_type_typ(self):
+        if self._element_type_typ is None:
+            raise TypingError(f"Element type has not been typed yet")
+        return self._element_type_typ
 
     def __init__(self, element_type: 'PType', size: PExpression, lexeme):
         """
@@ -598,6 +1343,35 @@ class PArrayInstantiation(PExpression):
         super().__init__(NodeType.ARRAY_INSTANTIATION, lexeme.pos)
         self.element_type = element_type
         self.size = size
+    
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        assert not get_ptr_to_expression, "Cannot get ptr to array reference"
+        n_elements = self.size.generate_llvm(context)
+        
+        if self.element_type_typ.is_reference_type:
+            # Each element is a reference type
+            alloc_func = context.scopes.get_symbol(FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY).func_ptr
+            assert alloc_func is not None
+            # void* __PS_AllocateRefArray(size_t num_elements)
+            ptr_to_array = context.builder.call(alloc_func, [n_elements])
+        else:
+            # Each element is a value type
+            element_size = self.element_type_typ.get_llvm_value_type(context).get_abi_size(
+                                                                context.target_data,
+                                                                context.module.context)
+            assert element_size in [1,2,4,8]
+            element_size = ir.Constant(ir.IntType(8), element_size)
+            alloc_func = context.scopes.get_symbol(FUNC_GC_ALLOCATE_VALUE_ARRAY).func_ptr
+            assert alloc_func is not None
+            # void* __PS_AllocateValueArray(size_t element_size, size_t num_elements)
+            ptr_to_array = context.builder.call(alloc_func, [element_size, n_elements])
+        
+        # return pointer to array casted to correct type
+        # assert self.expr_type is not None
+        # arr = context.builder.bitcast(ptr_to_array, self.expr_type.get_llvm_value_type(context))
+        # assert isinstance(arr, ir.CastInstr) or isinstance(arr, ir.CallInstr)
+
+        return ptr_to_array
 
 @dataclass
 class PType(PStatement):
@@ -613,6 +1387,14 @@ class PType(PStatement):
         if isinstance(self.type_string, str):
             return self.type_string
         return str(self.type_string)
+    
+    def __hash__(self) -> int:
+        return hash(str(self))
+    
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, PType):
+            return False
+        return str(self) == str(value)
 
 @dataclass
 class PArrayType(PType):
@@ -629,6 +1411,14 @@ class PArrayType(PType):
     def __str__(self) -> str:
         """Convert array type to string representation"""
         return f"{str(self.element_type)}[]"
+    
+    def __hash__(self) -> int:
+        return hash(str(self))
+    
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, PArrayType):
+            return False
+        return str(self) == str(value)
     
     @property
     def dimensions(self):
@@ -660,6 +1450,48 @@ class PArrayIndexing(PExpression):
         super().__init__(NodeType.ARRAY_ACCESS, lexeme.pos)
         self.array = array
         self.index = index
+    
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        #get type of array
+        assert self.array.expr_type is not None
+        assert self.expr_type is not None
+        array_struct_type = self.array.expr_type.get_llvm_value_type(context)
+        assert isinstance(array_struct_type, ir.types._TypedPointerType)
+        array_element_type = self.expr_type.get_llvm_value_type(context)
+        
+        array_obj = self.array.generate_llvm(context, False)
+        array_element_size_in_bytes = array_element_type.get_abi_size(context.target_data)
+        assert array_element_size_in_bytes in [1,2,4,8], f"Array element should be 1,2,4 or 8 bytes long not {array_element_size_in_bytes}"
+        array_element_size_in_bytes = ir.Constant(ir.IntType(8), array_element_size_in_bytes)
+        index = self.index.generate_llvm(context, False)
+        
+        element_fetch_function = context.scopes.get_symbol(FUNC_GET_ARRAY_ELEMENT_PTR)
+        assert element_fetch_function.func_ptr is not None
+        array_element_ptr = context.builder.call(element_fetch_function.func_ptr,
+                                                 [
+                                                     array_obj, #the array ref
+                                                     array_element_size_in_bytes, #the element size (should be 1,2,4 or 8)
+                                                     index, # the array index to fetch (negative values are accepted)
+                                                     context.get_char_ptr_from_string(self.position.filename),
+                                                     ir.Constant(ir.IntType(32), self.position.line),
+                                                     ir.Constant(ir.IntType(32), self.position.column)
+                                                 ])
+        #make sure it's the correct type because the fetcg function returns a void*
+        array_element_ptr = context.builder.bitcast(array_element_ptr, ir.PointerType(array_element_type))
+        assert isinstance(array_element_ptr, ir.NamedValue)
+        if get_ptr_to_expression:
+            return array_element_ptr
+        else:
+            return context.builder.load(array_element_ptr, typ=array_element_type)
+    
+    def _bounds_check(self, index_ptr:ir.Value, arr_length:ir.Value, context:CodeGenContext):
+        """Check the index is within the bounds. Crashes otherwise"""
+        out_of_bounds = context.builder.or_(
+            context.builder.icmp_unsigned('>=', index_ptr, arr_length),
+            context.builder.icmp_unsigned('<', index_ptr, ir.Constant(ir.IntType(64),0))
+        )
+        with context.builder.if_then(out_of_bounds, False):
+            self.exit_with_error(context, 1, f"Cannot access outside of the bounds of the array")
 
 class Parser:
     """Parser for P# language that builds an AST from lexemes"""
@@ -832,11 +1664,11 @@ class Parser:
             #starts with a type 
             return self._parse_declaration(block_properties)
         elif self._match(LexemeType.KEYWORD_CONTROL_IF):
-            return self._parse_if_statement(block_properties.copy_with(self.current_lexeme, is_top_level=False))
+            return self._parse_if_statement(block_properties.copy_with(is_top_level=False))
         elif self._match(LexemeType.KEYWORD_CONTROL_WHILE):
-            return self._parse_while_statement(block_properties.copy_with(self.current_lexeme, is_top_level=False))
+            return self._parse_while_statement(block_properties.copy_with(is_top_level=False))
         elif self._match(LexemeType.KEYWORD_CONTROL_FOR):
-            return self._parse_for_statement(block_properties.copy_with(self.current_lexeme, is_top_level=False))
+            return self._parse_for_statement(block_properties.copy_with(is_top_level=False))
         elif self._match(LexemeType.KEYWORD_CONTROL_RETURN):
             if not block_properties.in_function:
                 raise ParserError("Cannot have a return statement outside of a function", self.current_lexeme)
@@ -856,11 +1688,10 @@ class Parser:
         elif self._match(LexemeType.KEYWORD_OBJECT_CLASS):
             if not block_properties.is_top_level:
                 raise ParserError("Cannot have a break statement outside of a loop block", self.current_lexeme)
-            return self._parse_class_definition(block_properties.copy_with(self.current_lexeme,
-                                                                           is_class=True,
+            return self._parse_class_definition(block_properties.copy_with(is_class=True,
                                                                            is_top_level=False))
         elif self._match(LexemeType.PUNCTUATION_OPENBRACE):
-            return self._parse_block(block_properties.copy_with(self.current_lexeme, is_top_level=False))
+            return self._parse_block(block_properties.copy_with(is_top_level=False))
 
         # Expression statement (assignment, function call, etc.)
         expr = self._parse_expression()
@@ -883,7 +1714,6 @@ class Parser:
                 raise ParserError("Functions cannot be defined inside another function. They must be defined at the top level.", self.current_lexeme)
             return self._parse_function_declaration(name, var_type, type_lexeme,
                                                     block_properties.copy_with(
-                                                        self.current_lexeme,
                                                         is_top_level=False,
                                                         in_function=True))
 
@@ -1038,7 +1868,7 @@ class Parser:
         if is_lvalue and not (self.current_lexeme is Lexeme.default):
             if self._match(LexemeType.OPERATOR_BINARY_ASSIGN):
                 if not isinstance(left, (PDotAttribute, PIdentifier, PArrayIndexing)):
-                    raise ParserError("Cannot assign to anything else than a variable or field",
+                    raise ParserError("Cannot assign to anything else than a variable, array or field",
                                       self.current_lexeme)
                 self._expect(LexemeType.OPERATOR_BINARY_ASSIGN)
                 assign_lexeme = self.current_lexeme
@@ -1326,10 +2156,10 @@ class Parser:
 
 
         if self._match(LexemeType.PUNCTUATION_OPENBRACE):
-            body = self._parse_block(block_properties.copy_with(self.current_lexeme, is_loop=True))
+            body = self._parse_block(block_properties.copy_with(is_loop=True))
         else:
             start_lexeme = self.current_lexeme
-            body = PBlock([self._parse_statement(block_properties.copy_with(start_lexeme, is_loop=True))],
+            body = PBlock([self._parse_statement(block_properties.copy_with(is_loop=True))],
                           start_lexeme,
                           block_properties=block_properties)
         return PWhileStatement(condition, body, while_lexeme)
@@ -1362,7 +2192,7 @@ class Parser:
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
 
         if self._match(LexemeType.PUNCTUATION_OPENBRACE):
-            body = self._parse_block(block_properties.copy_with(self.current_lexeme, is_loop=True))
+            body = self._parse_block(block_properties.copy_with(is_loop=True))
         else:
             start_lexeme = self.current_lexeme
             body = PBlock([self._parse_statement(block_properties)],
@@ -1404,6 +2234,7 @@ class Parser:
         if self._match(LexemeType.PUNCTUATION_COMMA):
             self.lexeme_stream.advance()
             message = self._parse_expression()
+            assert isinstance(message, PLiteral)
 
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
         self._expect(LexemeType.PUNCTUATION_SEMICOLON)
