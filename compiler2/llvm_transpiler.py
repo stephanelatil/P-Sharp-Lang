@@ -206,9 +206,9 @@ class CodeGen:
         # Populate type registry
         register_type_func = context.scopes.get_symbol(FUNC_GC_REGISTER_TYPE).func_ptr
         assert register_type_func is not None
-        type_id_idx_offset = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
+        type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
         #size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name)
-        for i, (typ, ir_type) in enumerate(context.type_map.items()):
+        for typ, ir_type in context.type_map.items():
             assert isinstance(typ, Typ)
             if not isinstance(ir_type, ir.LiteralStructType):
                 continue
@@ -223,7 +223,8 @@ class CodeGen:
                                      size,
                                      num_ref_types,
                                      name_c_str])
-            context.type_ids[typ.name] = type_id_idx_offset + i
+            context.type_ids[typ.name] = type_id
+            type_id += 1
         
         #init root tracking (tracking reference type vars)
         # void __PS_InitRootTracking(void)
