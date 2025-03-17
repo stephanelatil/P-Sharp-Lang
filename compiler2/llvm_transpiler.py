@@ -330,37 +330,14 @@ class CodeGen:
             if statement.name == ENTRYPOINT_FUNCTION_NAME:
                 # Don't compile main function. It will be added later
                 continue
-            function = context.scopes.get_symbol(statement.name).func_ptr
-            assert function is not None
-            context.builder = ir.IRBuilder(function.append_basic_block(f"{statement.name}_{statement.position.index}_entrypoint"))
-            context.scopes.enter_func_scope()
-            #add params to the scope (and name them for easy retrieval)
-            for ir_arg, p_arg in zip(function.args, statement.function_args):
-                # Make sure we have a pointer to the argument location. That way the arg can be overwritten
-                # This will be optimized out anyway with the mem2reg pass
-                arg_alloca = context.builder.alloca(ir_arg.type)
-                context.builder.store(ir_arg, arg_alloca)
-                context.scopes.declare_var(p_arg.name, ir_arg.type, arg_alloca)
-            #compile function body
-            statement.body.generate_llvm(context, build_basic_block=False)
-            context.scopes.leave_func_scope()
+            statement.generate_llvm(context)
         
     def _compile_module_class_methods(self, ast:PProgram, context:CodeGenContext):
         for statement in ast.statements:
             if not isinstance(statement, PClass):
                 continue
             for method in statement.methods:
-                method_name = context.get_method_symbol_name(statement.name, method.name)
-                function = context.scopes.get_symbol(method_name).func_ptr
-                assert function is not None
-                context.builder = ir.IRBuilder(function.append_basic_block(f"{method.name}_{method.position.index}_entrypoint"))
-                context.scopes.enter_func_scope()
-                #add params to the scope (and name them for easy retrieval)
-                for ir_arg, p_arg in zip(function.args, method.function_args):
-                    context.scopes.declare_var(p_arg.name, ir_arg.type, ir_arg)
-                #compile function body
-                method.body.generate_llvm(context)
-                context.scopes.leave_func_scope()
+                method.generate_llvm(context)
     
     def _compile_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
         """This declares then compiles (in multiple passes) the functions, classes and global vars defined in the module
