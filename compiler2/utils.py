@@ -228,19 +228,6 @@ class CodeGenContext:
         Returns:
             GEPInstr: a GEP instruction pointer value to the c-string
         """
-        # if not string.endswith('\x00'):
-        #     string += '\x00'
-        # if string not in self._global_c_strings:
-        #     string_bytes = string.encode('utf-8')
-        #     c_string_type = ir.ArrayType(ir.IntType(8), len(string_bytes))
-        #     c_str = ir.GlobalVariable(self.module, c_string_type, name=f".__str_{len(self._global_c_strings)}")
-        #     c_str.initializer = ir.Constant(c_string_type, bytearray(string_bytes))
-        #     c_str.global_constant = True
-        #     self._global_c_strings[string] = c_str
-        # else:
-        #     c_str = self._global_c_strings[string]
-        #     assert isinstance(c_str.type, ir.types._TypedPointerType)
-        #     c_string_type = c_str.type.pointee
         string_obj = self.get_string_const(string)
         assert isinstance(string_obj.type, ir.types._TypedPointerType)
         string_typ = string_obj.type.pointee
