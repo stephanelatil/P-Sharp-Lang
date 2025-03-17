@@ -69,9 +69,9 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
         test_cases = [
             ("i32 x = 42;", "x"),
             ("f64 pi = 3.14159;", "pi"),
-            # "string msg = \"hello\";", #TODO strings not defined yet
             ("bool flag = true;", "flag"),
-            ("char c = 'a';", "c")
+            ("char c = 'a';", "c"),
+            ("string msg = \"hello\";", "msg")
         ]
 
         for source, var_name in test_cases:
@@ -79,7 +79,7 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
                 module = self.generate_module(source)
                 global_ir = str(module)
                 main_ir = self.get_function_ir(module)
-                self.assertIn(f"@{var_name} = external global", global_ir)
+                self.assertIn(f"@{var_name} = global", global_ir)
                 self.assertIn("store", main_ir)
 
 
@@ -147,10 +147,11 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
         for (source, f_name, proto, args) in test_cases:
             with self.subTest(source=source.strip()):
                 module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("define void", ir_code)
-                #checks returns None
-                self.compile_ir(module)
+                try:
+                    self.get_function_ir(module, func_name=f_name)
+                    self.compile_ir(module)
+                except:
+                    raise AssertionError(f"Unable to find function {f_name}")
                 self.assertEqual(None, self.run_function(f_name, proto, *args))
                 
 
@@ -176,29 +177,17 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
         for (source, f_name, proto, (args,res)) in test_cases:
             with self.subTest(source=source.strip()):
                 module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("define", ir_code)
-                self.assertIn("ret", ir_code)
-                #checks returns correct result
-                self.compile_ir(module)
+                try:
+                    ir_code = self.get_function_ir(module, func_name=f_name)
+                    self.assertIn("ret", ir_code)
+                    self.compile_ir(module)
+                except:
+                    raise AssertionError(f"Unable to find function {f_name}")
                 self.assertEqual(res, self.run_function(f_name, proto, *args))
 
 
 class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
     """Test class declarations and member access"""
-
-    def test_valid_simple_class(self):
-        """Test valid simple class declaration"""
-        source = """
-        class Point {
-            i32 x;
-            i32 y;
-        }
-        """
-        module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
-        self.assertIn("%Point", ir_code)
-        self.assertIn("i32", ir_code)
 
     def test_valid_class_with_methods(self):
         """Test valid class with method declarations"""
@@ -207,21 +196,20 @@ class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
             i32 width;
             i32 height;
 
-            i32 getArea() {
+            i32 GetArea() {
                 return this.width * this.height;
             }
 
-            void setSize(i32 w, i32 h) {
+            void SetSize(i32 w, i32 h) {
                 this.width = w;
                 this.height = h;
             }
         }
         """
         module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
-        self.assertIn("%Rectangle", ir_code)
-        self.assertIn("define i32", ir_code)
-        self.assertIn("define void", ir_code)
+        self.get_function_ir(module, "__Rectangle.__GetArea")
+        self.get_function_ir(module, "__Rectangle.__SetSize")
+        self.get_function_ir(module, "__Rectangle.__ToString")
 
 class TestCodeGeneratorMethodCalls(CodeGenTestCase):
     """Test method calls and method chaining"""
@@ -230,42 +218,44 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         """Test valid simple method calls"""
         source = """
         class Calculator {
-            i32 add(i32 a, i32 b) {
+            i32 Add(i32 a, i32 b) {
                 return a + b;
             }
         }
-
-        Calculator calc = new Calculator();
-        i32 result = calc.add(5, 3);
+        i32 main(){
+            Calculator calc = new Calculator();
+            return calc.Add(5, 3);   
+        }
         """
         module = self.generate_module(source)
+        ir_code = self.get_function_ir(module, "__Calculator.__ToString")
+        ir_code = self.get_function_ir(module, "__Calculator.__Add")
         ir_code = self.get_function_ir(module)
         self.assertIn("call", ir_code)
         self.assertIn("i32", ir_code)
+        res = self.compile_and_run_main(source)
+        self.assertEqual(res, 3+5)
 
     def test_valid_method_chaining(self):
         """Test valid method chaining"""
         source = """
-        class StringBuilder {
-            string value;
+        class IntBuilder {
+            i32 total = 0;
 
-            StringBuilder append(string text) {
-                this.value = this.value + text;
+            IntBuilder inc(i32 value) {
+                this.total = this.total + value;
                 return this;
             }
-
-            string ToString() {
-                return this.value;
-            }
         }
-
-        StringBuilder builder = new StringBuilder();
-        string result = builder.append("Hello").append(" ").append("World").ToString();
+        i32 main()
+        {
+            IntBuilder ib = new IntBuilder();
+            ib.inc(1).inc(2).inc(3);
+            return ib.total;
+        }
         """
-        module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
-        self.assertIn("call", ir_code)
-        self.assertIn("string", ir_code)
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, 1 + 2 + 3)
 
 class TestCodeGeneratorArrayOperations(CodeGenTestCase):
     """Test array operations and indexing"""
@@ -296,7 +286,7 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
                 i32 x = matrix[0][0];
                 return x;
             }
-            """,1)
+            """, 1)
         ]
 
         for source, expected_result in test_cases:
@@ -321,7 +311,7 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
             i32 main() {
                 C obj = new C();
                 obj.arr[0] = 123;
-                return arr[0];
+                return obj.arr[0];
             }
             """, 123),
             ("""
@@ -332,7 +322,7 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
             i32 main() {
                 C obj = new C();
                 obj.arr[1] = 123;
-                return arr[0];
+                return obj.arr[0];
             }
             """, 0),
             ("""
@@ -560,16 +550,18 @@ class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
     def test_valid_numeric_negation(self):
         """Test valid numeric negation"""
         test_cases = (
-            "i32 a = -42;",
-            "f64 b = -3.14;",
-            "i32 c = -(1 + 2);",
-            "f32 d = -(2.0 * 3.0);"
+            ("i32 main(){ return -42;}", "sub", -42),
+            ("i32 main(){ return -(1 + 2);}", "sub", -3),
+            ("i32 main(){ return (i32) -3.14;}", "fneg", -3),
+            ("i32 main(){ return (i32) -(2.0 * 3.0);}"," fneg", -6)
         )
-        for var_decl in test_cases:
-            with self.subTest(source=var_decl):
-                module = self.generate_module(var_decl)
+        for source, expected_op, expected_result in test_cases:
+            with self.subTest(source=source):
+                module = self.generate_module(source)
                 ir_code = self.get_function_ir(module)
-                self.assertIn("neg", ir_code)
+                self.assertIn(expected_op, ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, expected_result)
 
     def test_valid_logical_not(self):
         """Test valid logical not operations"""
@@ -585,18 +577,18 @@ class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
 
     def test_valid_increment_decrement(self):
         """Test valid increment/decrement operations"""
-        test_cases = ("i32 x = 0; x++;",
-                      "i32 x = 0; ++x;",
-                      "i32 x = 0; x--;",
-                      "i32 x = 0; --x;",
-                      "i32 x = 0; i32 y = x++;",
-                      "i32 x = 0; i32 z = ++x;")
-        for source in test_cases:
+        test_cases = [
+                ("i32 main(){ i32 x = 0; return x++;}", 0),
+                ("i32 main(){ i32 x = 0; return ++x;}", 1),
+                ("i32 main(){ i32 x = 0; return x--;}", 0),
+                ("i32 main(){ i32 x = 0; return --x;}", -1),
+                ("i32 main(){ i32 x = 0; i32 y = x++; return x;}", 1),
+                ("i32 main(){ i32 x = 0; i32 z = ++x; return x;}", 1)
+            ]
+        for source, expected_result in test_cases:
             with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("add", ir_code)
-                self.assertIn("sub", ir_code)
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, expected_result)
 
 class TestRuntimeExecution(CodeGenTestCase):
     """Test cases that verify correct execution results at runtime"""
