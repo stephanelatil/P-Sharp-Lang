@@ -15,7 +15,7 @@ from parser import (Parser, PFunction, PClassField, PProgram, PType,
                    PTernaryOperation, PThis,PVariableDeclaration, 
                    PWhileStatement, PDiscard, PVoid, Typ, ArrayTyp,
                    BlockProperties)
-from constants import FUNC_DEFAULT_TOSTRING
+from constants import FUNC_DEFAULT_TOSTRING, FUNC_PRINT
 
 def create_property(name: str, type_str: str) -> PClassField:
     """Helper function to create a class property"""
@@ -418,6 +418,10 @@ class Typer:
         self._scope_manager.define_function(PFunction(FUNC_DEFAULT_TOSTRING,PType('string', Position.default),
                                                       [PVariableDeclaration('this', PType("__null", Lexeme.default), None, Lexeme.default)],
                                                       PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
+        
+        self._scope_manager.define_function(PFunction(FUNC_PRINT,PType('i32', Position.default),
+                                                      [PVariableDeclaration('s', PType("string", Lexeme.default), None, Lexeme.default)],
+                                                      PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
 
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
@@ -805,6 +809,10 @@ class Typer:
         
         for arg in function.function_args:
             self._type_statement(arg)
+            symbol = self._scope_manager.lookup(arg.name, arg)
+            assert not symbol.is_function
+            # Function args are always assigned
+            symbol.is_assigned = True
         
         self.expected_return_type = self._type_ptype(function.return_type)
         function._return_typ_typed = self.expected_return_type

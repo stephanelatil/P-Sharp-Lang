@@ -17,6 +17,7 @@ FUNC_GC_ALLOCATE_VALUE_ARRAY = "__PS_AllocateValueArray"
 FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY = "__PS_AllocateRefArray"
 FUNC_GC_PRINT_HEAP_STATS = "__PS_PrintHeapStats"
 FUNC_DEFAULT_TOSTRING = "__PS_DefaultToString"
+FUNC_PRINT = "print"
 
 """ Gets a pointer to the nth element of the given array
 void* __PS_GetPtrToArrayElement(void* array, int8_t element_size_in_bytes, int64_t index, char* filename, int32_t position_line, int32_t position_column)"""
