@@ -252,6 +252,62 @@ class TestParserOperators(TestParserBase):
                 assert isinstance(decl.initial_value, (PUnaryOperation,PBinaryOperation))
                 self.assertEqual(decl.initial_value.operation, expected_op)
 
+    def test_assignment_operators(self):
+        """Test parsing of compound assignment operators."""
+        test_cases = [
+            ("x += 5;", BinaryOperation.PLUS),
+            ("x -= 5;", BinaryOperation.MINUS),
+            ("x *= 5;", BinaryOperation.TIMES),
+            ("x /= 5;", BinaryOperation.DIVIDE),
+            ("x &= 5;", BinaryOperation.LOGIC_AND),
+            ("x |= 5;", BinaryOperation.LOGIC_OR),
+            ("x ^= 5;", BinaryOperation.XOR),
+            ("x <<= 5;", BinaryOperation.SHIFT_LEFT),
+            ("x >>= 5;", BinaryOperation.SHIFT_RIGHT)
+        ]
+
+        for source, expected_op in test_cases:
+            with self.subTest(source=source, expected_op=expected_op):
+                program = self.parse_source(source)
+                stmt = program.statements[0]
+                self.assertIsInstance(stmt, PAssignment)
+                # Additional assertions to remove linter warnings
+                assert isinstance(stmt, PAssignment)
+                self.assertIsInstance(stmt.value, PBinaryOperation)
+                # Additional assertions to remove linter warnings
+                assert isinstance(stmt.value, PBinaryOperation)
+                self.assertEqual(stmt.value.operation, expected_op)
+
+    def test_assignment_operators_secondary_value(self):
+        """Test parsing of compound assignment operators."""
+        test_cases = [
+            ("x += 5 + 2;", BinaryOperation.PLUS),
+            ("x += 5 - 3;", BinaryOperation.MINUS),
+            ("x += 5 * 3;", BinaryOperation.TIMES),
+            ("x += 5 / 3;", BinaryOperation.DIVIDE),
+            ("x += 5 & 7;", BinaryOperation.LOGIC_AND),
+            ("x += 5 | 2;", BinaryOperation.LOGIC_OR),
+            ("x += 5 ^ 7;", BinaryOperation.XOR),
+            ("x += 5 << 3;", BinaryOperation.SHIFT_LEFT),
+            ("x += 5 >> 1;", BinaryOperation.SHIFT_RIGHT)
+        ]
+
+        for source, expected_op in test_cases:
+            with self.subTest(source=source, expected_op=expected_op):
+                program = self.parse_source(source)
+                stmt = program.statements[0]
+                self.assertIsInstance(stmt, PAssignment)
+                # Additional assertions to remove linter warnings
+                assert isinstance(stmt, PAssignment)
+                self.assertIsInstance(stmt.value, PBinaryOperation)
+                # Additional assertions to remove linter warnings
+                assert isinstance(stmt.value, PBinaryOperation)
+                self.assertEqual(stmt.value.operation, BinaryOperation.PLUS)
+                self.assertIsInstance(stmt.value.left, PIdentifier)
+                self.assertIsInstance(stmt.value.right, PBinaryOperation)
+                assert isinstance(stmt.value.right, PBinaryOperation)
+                self.assertEqual(stmt.value.right.operation, expected_op)
+
     def test_bitwise_operators(self):
         """Test parsing of bitwise operators."""
         test_cases = [

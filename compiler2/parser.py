@@ -1881,7 +1881,29 @@ class Parser:
                 raise NotImplementedError("Copy Operator is not yet supported")
                 if not isinstance(left, (PDotAttribute, PIdentifier)):
                     raise ParserError("Cannot assign to anything else than a variable or property", self.current_lexeme)
-
+            else:
+                #handle +=, -=, *= ... and other binop assignments
+                for lexeme_type, op in ((LexemeType.OPERATOR_BINARY_PLUSEQ, BinaryOperation.PLUS),
+                                        (LexemeType.OPERATOR_BINARY_MINUSEQ, BinaryOperation.MINUS),
+                                        (LexemeType.OPERATOR_BINARY_TIMESEQ, BinaryOperation.TIMES),
+                                        (LexemeType.OPERATOR_BINARY_DIVEQ, BinaryOperation.DIVIDE),
+                                        (LexemeType.OPERATOR_BINARY_ANDEQ, BinaryOperation.LOGIC_AND),
+                                        (LexemeType.OPERATOR_BINARY_OREQ, BinaryOperation.LOGIC_OR),
+                                        (LexemeType.OPERATOR_BINARY_XOREQ, BinaryOperation.XOR),
+                                        (LexemeType.OPERATOR_BINARY_SHLEQ, BinaryOperation.SHIFT_LEFT),
+                                        (LexemeType.OPERATOR_BINARY_SHREQ, BinaryOperation.SHIFT_RIGHT)):
+                    if self._match(lexeme_type):
+                        curr_lexeme = self.current_lexeme
+                        self._expect(lexeme_type)
+                        assert isinstance(left, (PIdentifier, PDotAttribute, PArrayIndexing))
+                        left = PAssignment(left,
+                                           # do binop
+                                           PBinaryOperation(op,
+                                                            left,
+                                                            self._parse_expression(is_lvalue=False),
+                                                            self.current_lexeme),
+                                           curr_lexeme)
+                        break
         return left
 
     def _parse_discard(self) -> PDiscard:
