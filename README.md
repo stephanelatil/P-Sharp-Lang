@@ -62,9 +62,12 @@ To start using P#, follow these simple steps:
 
 2. **Hello, World!**: Write your first P# program by printing "Hello, World!" to the console:
 
-   ```csharp
-   print("Hello, World!");
-   ```
+```rust
+i32 main(){
+    print("Hello, World!");
+    return 0;
+}
+```
 
 ### Compile and Run: Use the P# compiler to compile your program
 
