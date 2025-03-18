@@ -64,8 +64,10 @@ void __PS_NullCheckObject(void* object, char* filename, int32_t position_line, i
 
 int32_t print(char* string)
 {
-    int64_t string_length = ((int64_t*)string)[0];
+    size_t string_length =(size_t) ((int64_t*)string)[0];
     char* cstring = string+sizeof(int64_t);
-    cstring[string_length] = (char)0;
-    return (int32_t) puts(cstring);
+    return (int32_t) fwrite(cstring,        // start of the string
+                            string_length,  // the number of chars in the string (includes explicit null chars)
+                            sizeof(char),   // the size of each chars
+                            stdout);        // print to stdout
 }
