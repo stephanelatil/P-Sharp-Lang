@@ -4,7 +4,11 @@ This is quick TODO list for me for my next steps. This does not guarantee that i
 
 ## [X] GC
 
-## [ ] llvm_transpiler refactor
+## [ ] GC improvements
+
+Cf. The garbage collector handbook to see how to improve the GC. Maybe cf. the [memory allocator](#[-]-memory-allocator) point
+
+## [X] llvm_transpiler refactor
 
 Need to simplify each function and what it does in the setup and compiling phase.
 Need simpler functions and to more clearly define a code flow path for compiling. e.g:
@@ -24,17 +28,19 @@ Need simpler functions and to more clearly define a code flow path for compiling
 1. Run optimization passes
 1. Output all code to a file (or pass to clang/compiler) to output .ll .bc or .o depending on params
 
+## [ ] Add a proper compiler executable (or main.py) file with documentation, cli args etc.
+
 ## [ ] Add debug symbols in LLVM IR generation with metadata
 
 This will help with program debugging. They should be added if a flag is given to the compiler
 
-## [ ] Add a Pass after the CFG check for example, to check and optimize out constant values and calculations
+## [ ] Add (mandatory) namespaces to avoid linker conflicts with other libs
+
+## [ ] Add Warnings and flags for any and all potentials issues
 
 ## [ ] Add "interpreter" to run compiled llvm code `main` function using ctypes
 
-## [ ] Add proper main executable file with documentation, cli args etc. for the compiler
-
-## [ ] `override` operator to override __PS_* methods
+## [ ] `override` operator to override __PS_* methods (will be replaced with namespaces)
 
 Should add the possibility to add specific functions to run before/after GC init and before/after program shutdown a bit like adding an `atexit` hook.
 
@@ -44,7 +50,9 @@ It will allow to override specific language internal functions for specific use 
 
 ## [ ] Try/catch (finally) once errors are enabled
 
-## [ ] Add explicit alignments in llvm IR code generation
+## [ ] Add explicit alignments in llvm IR code generation?
+
+Check if necessary?
 
 ## [ ] Add `packed` keyword
 
@@ -62,15 +70,25 @@ Something similar should be done for floats (`h` for half size f16, `f` the defa
 
 ## [ ] Memory Allocator
 
+Custom allocator to optimize allocation of objects. Here we use malloc for every single class and array when calling new. If we need to instantiate an array of objects (e.g. 100 objects) that's 100 calls to malloc (+1 for the array itself) which is very slow!
+
+A solution could be to pre-allocate n classes of a type and keep unused ones in a collection somewhere. Directly return a pointer to it when one is requested. Only call malloc when the collection is empty.
+
 ## [ ] Object wrapper to convert from and to c structs 
 
 c -> P# : It needs the structure definition to define an appropriate Class prototype with the same fields. It needs to be recursive for the properties!
 
 ## [ ] Object wrapper to convert from and to c++ classes?
 
-## [ ] String object implementation & methods
+Similar to C but more complex du to the c++ class system.
+
+## [-] String object implementation & methods
+
+Currently missing the string specific methods
 
 ## [ ] Default builtin functions like print
+
+Print is already defined, Cf. "print" function. But it will have to be modified when using new namespace implementation
 
 ## [ ] Array splicing?
 
@@ -86,7 +104,11 @@ Maybe only allowing (ex/im)plicit casts to de defined either *from* or *to* a cl
 
 ## [ ] Function/Method overloading
 
-## [ ] Add method constructors
+## [ ] Add Class constructors?
+
+This will need to have overloading implemented before!
+
+Currently constructors set all non-instantiated fields to 0 or null and uses the currently defined default values
 
 ## [ ] Add `readonly` keyword 
 
