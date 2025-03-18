@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include "gc.h"
 
+int32_t print(char* string);
+
 void *__PS_DefaultToString(void* object);
 
 void __PS_NullCheckObject(void* object, char* filename, int32_t position_line, int32_t position_column);

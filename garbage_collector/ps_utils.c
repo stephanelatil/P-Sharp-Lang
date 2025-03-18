@@ -61,3 +61,11 @@ void __PS_NullCheckObject(void* object, char* filename, int32_t position_line, i
         //TODO later this should raise an exception of some kind
     }
 }
+
+int32_t print(char* string)
+{
+    int64_t string_length = ((int64_t*)string)[0];
+    char* cstring = string+sizeof(int64_t);
+    cstring[string_length] = (char)0;
+    return (int32_t) puts(cstring);
+}
