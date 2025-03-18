@@ -6,6 +6,7 @@ from llvmlite import ir
 from llvmlite.binding import Target, parse_assembly, create_mcjit_compiler, ModuleRef
 from constants import ENTRYPOINT_FUNCTION_NAME
 import ctypes
+import math
 
 def create_execution_engine():
     """
@@ -947,3 +948,432 @@ class TestRuntimeExecution(CodeGenTestCase):
             with self.subTest(source=source):
                 result = self.compile_and_run_main(source)
                 self.assertEqual(result, expected)
+class TestCodeGeneratorNestedLoops(CodeGenTestCase):
+    """Test nested loops: both for–for and while–while combinations."""
+
+    def test_nested_for_loops(self):
+        source = """
+        i32 main(){
+            i32 sum = 0;
+            for (i32 i = 1; i <= 3; i = i + 1) {
+                for (i32 j = 1; j <= 3; j = j + 1) {
+                    sum = sum + i * j;
+                }
+            }
+            return sum;
+        }
+        """
+        # Expected: (1*1 + 1*2 + 1*3) + (2*1 + 2*2 + 2*3) + (3*1 + 3*2 + 3*3) = 36
+        expected = 36
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+    def test_nested_while_loops(self):
+        source = """
+        i32 main(){
+            i32 i = 1;
+            i32 sum = 0;
+            while (i <= 3) {
+                i32 j = 1;
+                while (j <= 3) {
+                    sum = sum + i * j;
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+            return sum;
+        }
+        """
+        expected = 36
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorContinueBreak(CodeGenTestCase):
+    """Test loops using continue and break statements."""
+
+    def test_for_loop_with_continue(self):
+        # Sum only odd numbers from 1 to 10 (skipping even numbers)
+        source = """
+        i32 main(){
+            i32 sum = 0;
+            for (i32 i = 1; i <= 10; i = i + 1) {
+                if (i % 2 == 0)
+                    continue;
+                sum = sum + i;
+            }
+            return sum;
+        }
+        """
+        # 1 + 3 + 5 + 7 + 9 = 25
+        expected = 25
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+    def test_while_loop_with_continue(self):
+        # Sum only odd numbers using a while loop with continue
+        source = """
+        i32 main(){
+            i32 i = 1;
+            i32 sum = 0;
+            while (i <= 10) {
+                if (i % 2 == 0) {
+                    i = i + 1;
+                    continue;
+                }
+                sum = sum + i;
+                i = i + 1;
+            }
+            return sum;
+        }
+        """
+        expected = 25
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+    def test_for_loop_with_break(self):
+        # Break out of the loop when i equals 5
+        source = """
+        i32 main(){
+            i32 sum = 0;
+            for (i32 i = 1; i <= 10; i = i + 1) {
+                if (i == 5)
+                    break;
+                sum = sum + i;
+            }
+            return sum;
+        }
+        """
+        # Sum of 1+2+3+4 = 10
+        expected = 10
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+    def test_while_loop_with_break(self):
+        # Break the while loop when counter reaches 7
+        source = """
+        i32 main(){
+            i32 i = 1;
+            i32 sum = 0;
+            while (i <= 10) {
+                if (i == 7)
+                    break;
+                sum = sum + i;
+                i = i + 1;
+            }
+            return sum;
+        }
+        """
+        # Sum of 1+2+3+4+5+6 = 21
+        expected = 21
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorClassFieldAccess(CodeGenTestCase):
+    """Test that class methods properly access and update fields."""
+
+    def test_counter_class(self):
+        source = """
+        class Counter {
+            i32 value = 0;
+            void inc() {
+                this.value = this.value + 1;
+            }
+            i32 get() {
+                return this.value;
+            }
+        }
+        i32 main(){
+            Counter c = new Counter();
+            c.inc();
+            c.inc();
+            c.inc();
+            return c.get();
+        }
+        """
+        expected = 3
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorArrayOfObjects(CodeGenTestCase):
+    """Test arrays containing objects and invoking their methods."""
+
+    def test_array_of_objects(self):
+        source = """
+        class Dummy {
+            i32 x = 0;
+            void setX(i32 val) {
+                this.x = val;
+            }
+            i32 getX() {
+                return this.x;
+            }
+        }
+        i32 main(){
+            Dummy[] arr = new Dummy[3];
+            arr[0] = new Dummy();
+            arr[1] = new Dummy();
+            arr[2] = new Dummy();
+            arr[0].setX(10);
+            arr[1].setX(20);
+            arr[2].setX(30);
+            return arr[0].getX() + arr[1].getX() + arr[2].getX();
+        }
+        """
+        expected = 60
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorRecursionAdvanced(CodeGenTestCase):
+    """Test recursive function calls using Fibonacci as an example."""
+
+    def test_fibonacci(self):
+        source = """
+        i32 fib(i32 n) {
+            if (n <= 1)
+                return n;
+            return fib(n - 1) + fib(n - 2);
+        }
+        i32 main(){
+            return fib(6);
+        }
+        """
+        # Fibonacci sequence: 0, 1, 1, 2, 3, 5, 8 so fib(6) = 8
+        expected = 8
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorTernaryOperators(CodeGenTestCase):
+    """Test simple and nested ternary (conditional) operators."""
+
+    def test_simple_ternary(self):
+        source = """
+        i32 main(){
+            i32 a = 10;
+            i32 b = 20;
+            i32 max = a > b ? a : b;
+            i32 min = a < b ? a : b;
+            return max - min;
+        }
+        """
+        # Expected: 20 - 10 = 10
+        expected = 10
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+    def test_nested_ternary(self):
+        source = """
+        i32 main(){
+            i32 a = 5;
+            i32 result = a == 5 ? (a == 6 ? 100 : 50) : 0;
+            return result;
+        }
+        """
+        expected = 50
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorMixedTypeExpressions(CodeGenTestCase):
+    """Test expressions combining integer and float types with explicit casts."""
+
+    def test_mixed_int_float(self):
+        source = """
+        i32 main(){
+            i32 a = 3;
+            f32 b = (f32)a;
+            f32 c = b * 1.5;
+            i32 d = (i32)c;
+            return d;
+        }
+        """
+        # 3 * 1.5 = 4.5 which truncates to 4
+        expected = 4
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorEdgeCases(CodeGenTestCase):
+    """Test edge cases such as loops that never execute and zero-length arrays."""
+
+    def test_empty_for_loop(self):
+        source = """
+        i32 main(){
+            i32 sum = 0;
+            for (i32 i = 0; i < 0; i = i + 1)
+                sum = sum + i;
+            return sum;
+        }
+        """
+        expected = 0
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+    def test_zero_length_array(self):
+        source = """
+        i32 main(){
+            i32[] arr = new i32[0];
+            return 42;
+        }
+        """
+        expected = 42
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorLoopWithoutBraces(CodeGenTestCase):
+    """Test for-loops written without braces for a single statement body."""
+
+    def test_single_statement_for_loop(self):
+        source = "i32 main() { i32 sum = 0; for (i32 j = 0; j < 5; j++) sum = sum + j; return sum; }"
+        # Expected: 0+1+2+3+4 = 10
+        expected = 10
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorComplexProgram(CodeGenTestCase):
+    """Combine classes, loops, and recursion into a single complex program."""
+
+    def test_complex_program(self):
+        source = """
+        class Accumulator {
+            i32 sum = 0;
+            void add(i32 x) {
+                this.sum = this.sum + x;
+            }
+            i32 get() {
+                return this.sum;
+            }
+        }
+        i32 factorial(i32 n) {
+            if (n <= 1)
+                return 1;
+            return n * factorial(n - 1);
+        }
+        i32 main(){
+            Accumulator acc = new Accumulator();
+            for (i32 i = 1; i <= 4; i = i + 1)
+                acc.add(i);
+            i32 s = acc.get();
+            return factorial(s);
+        }
+        """
+        # Sum from 1 to 4 = 10; 10! = 3628800
+        sum_tot = sum(range(1,5))
+        expected = math.factorial(sum_tot)
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorVariableScope(CodeGenTestCase):
+    """Test variable scoping rules and shadowing in nested blocks."""
+
+    def test_loop_variable_scope(self):
+        source = """
+        i32 main(){
+            i32 sum = 0;
+            for (i32 i = 0; i < 3; i = i + 1) {
+                i32 temp = i;
+                sum = sum + temp;
+            }
+            return sum;
+        }
+        """
+        # Expected: 0 + 1 + 2 = 3
+        expected = 3
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorComplexMethodChaining(CodeGenTestCase):
+    """Test method chaining in classes with multiple operations."""
+
+    def test_complex_method_chaining(self):
+        source = """
+        class Builder {
+            i32 value = 0;
+            
+            Builder add(i32 x) {
+                this.value = this.value + x;
+                return this;
+            }
+            Builder mul(i32 x) {
+                this.value = this.value * x;
+                return this;
+            }
+        }
+        i32 main(){
+            Builder b = new Builder();
+            b.add(2).mul(3).add(4);
+            return b.value;
+        }
+        """
+        # Calculation: ((0+2)*3)+4 = 10
+        expected = 10
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorOperatorPrecedence(CodeGenTestCase):
+    """Test that arithmetic operator precedence is correctly implemented."""
+
+    def test_operator_precedence(self):
+        source = """
+        i32 main(){
+            i32 a = 5 + 3 * 2 - 4 / 2;
+            return a;
+        }
+        """
+        # 5 + (3*2)=11, 4/2=2, 11-2=9
+        expected = 9
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorMultipleStatements(CodeGenTestCase):
+    """Test multiple statements written on a single line."""
+
+    def test_multiple_statements_on_one_line(self):
+        source = "i32 main() { i32 a = 10; i32 b = 20; return a + b; }"
+        expected = 30
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorLargeLoop(CodeGenTestCase):
+    """Test a larger loop to sum a series of numbers."""
+
+    def test_large_loop_sum(self):
+        source = """
+        i32 main(){
+            i32 sum = 0;
+            for (i32 i = 1; i < 100; i = i + 1)
+                sum = sum + i;
+            return sum;
+        }
+        """
+        expected = sum(range(1,100))
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+
+
+class TestCodeGeneratorComments(CodeGenTestCase):
+    """Test that both single-line and multi-line comments are correctly ignored."""
+
+    def test_comments_handling(self):
+        source = """
+        i32 main(){
+            // This is a single line comment
+            /* This is a multi-line comment */
+            i32 x = 10; // Comment after code
+            return x;
+        }
+        """
+        expected = 10
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
