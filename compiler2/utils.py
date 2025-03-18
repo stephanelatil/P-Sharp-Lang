@@ -198,6 +198,8 @@ class CodeGenContext:
     def get_string_const(self, string:str):
         if string in self._global_string_objs:
             return self._global_string_objs[string]
+        #take length before null termination to properly handle manual strings which may contain null chars (\x00)
+        string_length = len(string)
         # ensure string is null terminated to be a proper c_str
         if not string.endswith('\x00'):
             null_terminated_string = string + '\x00'
@@ -214,7 +216,7 @@ class CodeGenContext:
         string_obj = ir.GlobalVariable(module=self.module,
                                        typ=string_typ,
                                        name=f".__str_obj_{len(self._global_string_objs)}")
-        string_obj.initializer = ir.Constant(string_typ, [len(null_terminated_string), bytearray(string_bytes)])
+        string_obj.initializer = ir.Constant(string_typ, [string_length, bytearray(string_bytes)])
         #cache value to avoid saturating executable
         self._global_string_objs[string] = string_obj
         return string_obj
