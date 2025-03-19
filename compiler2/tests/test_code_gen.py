@@ -52,9 +52,9 @@ class CodeGenTestCase(TestCase):
         mod = self.generate_module(source)
         self.compile_ir(mod)
         main_proto = [ctypes.c_int32]
-        return self.run_function(ENTRYPOINT_FUNCTION_NAME, main_proto)
+        return self._run_function(ENTRYPOINT_FUNCTION_NAME, main_proto)
     
-    def run_function(self, func_name:str, func_prototype_ctypes:List[Type], *args):
+    def _run_function(self, func_name:str, func_prototype_ctypes:List[Type], *args):
         """Runs a function compiled in the engine using ctypes and returns the result"""
         func_ptr = self._engine.get_function_address(func_name)
 
@@ -137,15 +137,23 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
             ("""
             void empty() {
             }
-            """, "empty", (None,),tuple()),
+            i32 main(){
+                empty();
+                return 0;
+            }
+            """, "empty"),
             ("""
             void printInt(i32 int) {
                 // Empty function with parameter
             }
-            ""","printInt", (None,ctypes.c_int32), (1,))
+            i32 main(){
+                printInt(123);
+                return 0;
+            }
+            ""","printInt")
         ]
 
-        for (source, f_name, proto, args) in test_cases:
+        for source, f_name in test_cases:
             with self.subTest(source=source.strip()):
                 module = self.generate_module(source)
                 try:
@@ -153,7 +161,7 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
                     self.compile_ir(module)
                 except:
                     raise AssertionError(f"Unable to find function {f_name}")
-                self.assertEqual(None, self.run_function(f_name, proto, *args))
+                self.assertEqual(0, self.compile_and_run_main(source))
                 
 
     def test_valid_return_type_functions(self):
@@ -163,19 +171,21 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
             i32 add(i32 a, i32 b) {
                 return a + b;
             }
-            """, "add",
-            (ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32),
-            ((2,3),5)),
+            i32 main(){
+                return add(3,2);
+            }
+            """, "add",5),
             ("""
             f32 mul(f32 a, f32 b) {
                 return a * b;
             }
-            """, "mul",
-            (ctypes.c_float, ctypes.c_float, ctypes.c_float),
-            ((2,3),6))
+            i32 main(){
+                return (i32) mul(2,3);
+            }
+            """, "mul", 6)
         ]
 
-        for (source, f_name, proto, (args,res)) in test_cases:
+        for source, f_name, res in test_cases:
             with self.subTest(source=source.strip()):
                 module = self.generate_module(source)
                 try:
@@ -184,7 +194,7 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
                     self.compile_ir(module)
                 except:
                     raise AssertionError(f"Unable to find function {f_name}")
-                self.assertEqual(res, self.run_function(f_name, proto, *args))
+                self.assertEqual(res, self.compile_and_run_main(source))
 
 
 class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
