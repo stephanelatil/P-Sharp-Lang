@@ -1,21 +1,30 @@
 from typing import Dict, List, Optional, Union, TextIO
 from dataclasses import dataclass, field
 from io import StringIO
-from lexer import Lexeme, Lexer
-from utils import TypeClass, TypeInfo, TYPE_INFO, CompilerWarning, Position, TypingError
+from lexer import Lexeme, Lexer, Position
 from operations import BinaryOperation, UnaryOperation
-from parser import (Parser, PFunction, PClassField, PProgram, PType,
-                   PIdentifier, PArrayIndexing, PArrayInstantiation,
-                   PBlock, PArrayType, PAssertStatement, PAssignment,
-                   PBinaryOperation, PBreakStatement, PCast, PClass,
-                   PContinueStatement, PDotAttribute, PExpression,
-                   PForStatement, PUnaryOperation, PFunctionCall, PNoop,
-                   PIfStatement, PLiteral, PMethodCall, PMethod,
-                   PObjectInstantiation, PReturnStatement, PStatement,
-                   PTernaryOperation, PThis,PVariableDeclaration, 
-                   PWhileStatement, PDiscard, PVoid, Typ, ArrayTyp,
-                   BlockProperties)
+from parser import (TypeClass, TypeInfo, TYPE_INFO, TypingError,
+                    Parser, PFunction, PClassField, PProgram, PType,
+                    PIdentifier, PArrayIndexing, PArrayInstantiation,
+                    PBlock, PArrayType, PAssertStatement, PAssignment,
+                    PBinaryOperation, PBreakStatement, PCast, PClass,
+                    PContinueStatement, PDotAttribute, PExpression,
+                    PForStatement, PUnaryOperation, PFunctionCall, PNoop,
+                    PIfStatement, PLiteral, PMethodCall, PMethod,
+                    PObjectInstantiation, PReturnStatement, PStatement,
+                    PTernaryOperation, PThis,PVariableDeclaration, 
+                    PWhileStatement, PDiscard, PVoid, Typ, ArrayTyp,
+                    BlockProperties)
 from constants import FUNC_DEFAULT_TOSTRING, FUNC_PRINT
+
+
+@dataclass
+class CompilerWarning(Warning):
+    message:str
+    position:Position = field(default_factory=Position)
+    
+    def __str__(self):
+        return self.message + f" at location {self.position}"
 
 def create_property(name: str, type_str: str) -> PClassField:
     """Helper function to create a class property"""

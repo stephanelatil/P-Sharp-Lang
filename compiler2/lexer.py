@@ -1,7 +1,34 @@
 from enum import Enum, auto
 from collections import deque
 from typing import TextIO, Generator, Optional
-from utils import Position
+
+class Position:
+    default:'Position'
+    
+    def __init__(self, line:int = 1, column:int = 1, index:int = 0, filename:str='??'):
+        self.line = line
+        self.column = column
+        self.index = index
+        self.filename = filename
+
+    def advance(self, char:str):
+        if char == '\n':
+            self.line += 1
+            self.column = 1
+        else:
+            self.column += 1
+        self.index += 1
+
+    def copy(self) -> 'Position':
+        return Position(self.line, self.column, self.index, self.filename)
+
+    def __add__(self, num_chars:int):
+        return Position(self.line, self.column+num_chars, self.index+num_chars, self.filename)
+    
+    def __str__(self):
+        return f'File "{self.filename}", line {self.line}, column {self.column}'
+    
+Position.default = Position()
 
 class LexemeType(Enum):
     # Keywords

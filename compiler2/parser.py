@@ -2,14 +2,10 @@ from typing import List, Optional, Dict, Any, Union, Generator
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from lexer import Lexer, LexemeType, Lexeme
+from lexer import Lexer, LexemeType, Lexeme, Position
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
-from utils import Position, TypingError, CodeGenContext, TYPE_INFO, TypeClass, TypeInfo, CompilerError
-from llvmlite import ir
-from constants import (FUNC_GC_ALLOCATE_OBJECT, FUNC_GC_ALLOCATE_VALUE_ARRAY,
-                       FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY, EXIT_CODE_GLOBAL_VAR_NAME,
-                       FUNC_DEFAULT_TOSTRING, FUNC_GET_ARRAY_ELEMENT_PTR,
-                       FUNC_NULL_REF_CHECK)
+from llvmlite import ir, binding
+from constants import *
 
 class LexemeStream:
     def __init__(self, lexmes:Generator[Lexeme, None, None], filename:str):
@@ -84,7 +80,7 @@ class Typ:
                                           )),
                                       Lexeme.default, is_builtin=True))
     
-    def get_llvm_value_type(self, context:Optional[CodeGenContext]) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
+    def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
         """Returns the llvm value-Type corresponding to the Typ. All reference types will return an ir.PointerType
 
         Returns:
@@ -120,7 +116,7 @@ class Typ:
     def __str__(self):
         return self.name
     
-    def default_llvm_value(self, context:CodeGenContext):
+    def default_llvm_value(self, context:'CodeGenContext'):
         # return ir.Constant(context.type_map[self], None)
         return ir.Constant(self.get_llvm_value_type(context), None)
     
@@ -146,6 +142,293 @@ class ParserError(Exception):
         self.message = message
         self.lexeme = lexeme
         super().__init__(f"{message} at {lexeme.pos} with lexeme: {lexeme}")
+
+class TypingError(Exception):
+    def __init__(self, msg) -> None:
+        super().__init__(msg)
+
+class TypeClass(Enum):
+    """Classification of types for conversion rules"""
+    VOID = auto()
+    BOOLEAN = auto()
+    INTEGER = auto()
+    FLOAT = auto()
+    STRING = auto()
+    ARRAY = auto()
+    CLASS = auto()
+
+@dataclass
+class TypeInfo:
+    """Information about a type including its class and size"""
+    type_class: TypeClass
+    bit_width: int = 0  # For numeric types
+    is_signed: bool = True  # For integer types
+    is_builtin: bool = True
+
+# Mapping of type names to their TypeInfo
+TYPE_INFO: Dict[str, TypeInfo] = {
+    "void": TypeInfo(TypeClass.VOID),
+    "bool": TypeInfo(TypeClass.BOOLEAN, 1, False),
+    "string": TypeInfo(TypeClass.STRING),
+    "char": TypeInfo(TypeClass.INTEGER, 8, False),
+
+    # Signed integers
+    "i8": TypeInfo(TypeClass.INTEGER, 8, True),
+    "i16": TypeInfo(TypeClass.INTEGER, 16, True),
+    "i32": TypeInfo(TypeClass.INTEGER, 32, True),
+    "i64": TypeInfo(TypeClass.INTEGER, 64, True),
+
+    # Unsigned integers
+    "u8": TypeInfo(TypeClass.INTEGER, 8, False),
+    "u16": TypeInfo(TypeClass.INTEGER, 16, False),
+    "u32": TypeInfo(TypeClass.INTEGER, 32, False),
+    "u64": TypeInfo(TypeClass.INTEGER, 64, False),
+
+    # Floating point
+    "f16": TypeInfo(TypeClass.FLOAT, 16),
+    "f32": TypeInfo(TypeClass.FLOAT, 32),
+    "f64": TypeInfo(TypeClass.FLOAT, 64),
+}
+
+
+@dataclass
+class VarInfo:
+    name:str
+    type_:ir.Type
+    alloca:Optional[ir.NamedValue]=None
+    """This is useful to know if the var needs to be explicitly dereferenced! A global var is a pointer to the given type"""
+    is_global:bool=False
+    func_ptr:Optional[ir.Function]=None
+    
+    @property
+    def is_function(self) -> bool:
+        return self.func_ptr is not None
+
+class ScopeVars:
+    def __init__(self):
+        self.scope_vars = {}
+        
+    def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
+        if name in self.scope_vars:
+            raise CompilerError(f"Variable already exists!")
+        self.scope_vars[name] = VarInfo(name, return_type, func_ptr=function_ptr)
+        
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue, is_global:bool=False):
+        if name in self.scope_vars:
+            raise CompilerError(f"Variable already exists!")
+        self.scope_vars[name] = VarInfo(name, type_, alloca=alloca, is_global=is_global)
+        
+    def get_symbol(self, name:str) -> Optional[VarInfo]:
+        return self.scope_vars.get(name, None)
+
+class Scopes:
+    def __init__(self):
+        self.scopes:List[ScopeVars] = []
+        self.tmp_func_stack = []
+        
+    @property
+    def current_function_scope_depth(self):
+        depth = len(self.scopes) - 2 #2 are the global scopes: one with the global functions and another where the global vars are defined
+        assert depth > 0
+        return depth
+
+    def enter_scope(self):
+        self.scopes.append(ScopeVars())
+
+    def leave_scope(self):
+        self.scopes.pop()
+
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue, is_global:bool=False):
+        self.scopes[-1].declare_var(name, type_, alloca, is_global)
+        
+    def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
+        self.scopes[-1].declare_func(name, return_type, function_ptr)
+        
+    def has_symbol(self, name:str) -> bool:
+        """Checks if a given symbol is known
+
+        Args:
+            name (str): _description_
+
+        Returns:
+            bool: _description_
+        """
+        for scope in self.scopes[::-1]:
+            var_info = scope.get_symbol(name)
+            if var_info is not None:
+                return True
+        return False
+
+    def get_symbol(self, name:str) -> VarInfo:
+        for scope in self.scopes[::-1]:
+            var_info = scope.get_symbol(name)
+            if var_info is not None:
+                return var_info
+        
+        raise CompilerError(f"Unable to find variable {name}")
+    
+    def get_global_scope(self):
+        return self.scopes[0]
+
+class CompilerError(Exception):
+    def __init__(self, msg):
+        super().__init__(msg)
+        self.msg = msg
+        
+    def __str__(self):
+        return f"Compiler Error: {self.msg}"
+
+@dataclass
+class LoopContext:
+    continue_loop_block:ir.Block
+    end_of_loop_block:ir.Block
+    is_for_loop:bool
+    current_loop_scope_depth:int = 0
+
+@dataclass
+class CodeGenContext:
+    """Context needed by various node when generating IR in the codegen pass"""
+    module:ir.Module
+    scopes:Scopes
+    target_data:binding.TargetData
+    # """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
+    # get_llvm_type: Callable[['Typ'],ir.Type]
+    """A dict containing all Types known to the typer and it's corresponding ir.Type"""
+    type_map:Dict[Typ, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]]
+    """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
+    loopinfo:List[LoopContext] = field(default_factory=list)
+    builder:ir.IRBuilder = ir.IRBuilder()
+    global_exit_block:Optional[ir.Block]=None
+    type_ids:Dict[str, int] = field(default_factory=dict)
+    """A Dict where for every given string there is an associated constant string PS object. constant because strings are immutable"""
+    _global_string_objs:Dict[str, ir.GlobalValue] = field(default_factory=dict)
+    
+    def get_string_const(self, string:str):
+        if string in self._global_string_objs:
+            return self._global_string_objs[string]
+        #take length before null termination to properly handle manual strings which may contain null chars (\x00)
+        string_length = len(string)
+        # ensure string is null terminated to be a proper c_str
+        if not string.endswith('\x00'):
+            null_terminated_string = string + '\x00'
+        else:
+            null_terminated_string = string
+            
+        #Build c string
+        string_bytes = null_terminated_string.encode('utf-8')
+        string_typ = ir.LiteralStructType([
+            ir.IntType(64),
+            ir.ArrayType(ir.IntType(8), len(string_bytes))
+        ])
+        #store constant value globally
+        string_obj = ir.GlobalVariable(module=self.module,
+                                       typ=string_typ,
+                                       name=f".__str_obj_{len(self._global_string_objs)}")
+        string_obj.initializer = ir.Constant(string_typ, [string_length, bytearray(string_bytes)])
+        #cache value to avoid saturating executable
+        self._global_string_objs[string] = string_obj
+        return string_obj
+    
+    def get_char_ptr_from_string(self, string:str):
+        """Adds a Global string with the given value (if none already exists) and returns a GEP pointer to the first character (char* c string style)
+
+        Args:
+            string (str): The python string to convert to a llvm c-style string
+
+        Returns:
+            GEPInstr: a GEP instruction pointer value to the c-string
+        """
+        string_obj = self.get_string_const(string)
+        assert isinstance(string_obj.type, ir.types._TypedPointerType)
+        string_typ = string_obj.type.pointee
+        zero = ir.Constant(ir.IntType(32), 0)
+        one = ir.Constant(ir.IntType(32), 1)
+        return self.builder.gep(string_obj, [zero, one, zero], inbounds=True, source_etype=string_typ)
+    
+    def get_method_symbol_name(self, class_name:str, method_identifier:str):
+        return f"__{class_name}.__{method_identifier}"
+    
+    def enter_scope(self, ref_vars:int=0):
+        """Enter a scope both in the GC and context scope manager"""
+        # scope manager enters scope
+        self.scopes.enter_scope()
+        # GC create scope
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
+        enter_scope_func = self.scopes.get_symbol(FUNC_GC_ENTER_SCOPE).func_ptr
+        assert enter_scope_func is not None
+        self.builder.call(enter_scope_func,
+                             [ir.Constant(size_t_type, ref_vars)])
+    
+    def leave_scope(self):            
+        """Leave a single scope both in the GC and context scope manager"""
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
+        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
+        assert leave_scope_func is not None
+        self.builder.call(leave_scope_func,
+                          #leave a single scope
+                          [ir.Constant(size_t_type, 1)])
+        self.scopes.leave_scope()
+    
+    def leave_func_scope_on_return(self):
+        """Leave all function specific scopes both in the GC and context scope manager"""
+        n_scopes_to_leave = self.scopes.current_function_scope_depth
+        
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
+        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
+        assert leave_scope_func is not None
+        self.builder.call(leave_scope_func,
+                          #leave a single scope
+                          [ir.Constant(size_t_type, n_scopes_to_leave)])
+        #context scope manager leaves a single scope to handle other code generation in parent (if/else case for example)
+        self.scopes.leave_scope()
+    
+    def leave_loop_scope_on_break(self):      
+        """Leave all scopes defined by the loop (including initializer in a for loop) both in the GC and context scope manager"""
+        n_scopes_to_leave = self.loopinfo[-1].current_loop_scope_depth
+        #create scope
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
+        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
+        assert leave_scope_func is not None
+        self.builder.call(leave_scope_func,
+                          #leave a single scope
+                          [ir.Constant(size_t_type, n_scopes_to_leave)])
+        #context scope manager leaves a single scope to handle other code generation in parent (if/else case for example)
+        self.scopes.leave_scope()
+    
+    def leave_loop_scope_on_continue(self):   
+        """Leave all scopes defined by the loop (excluding initializer in a for loop) both in the GC and context scope manager"""
+        n_scopes_to_leave = self.loopinfo[-1].current_loop_scope_depth
+        # do not leave scope containing initializer in for loop
+        n_scopes_to_leave -= self.loopinfo[-1].is_for_loop
+        #create scope
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
+        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
+        assert leave_scope_func is not None
+        self.builder.call(leave_scope_func,
+                          #leave a single scope
+                          [ir.Constant(size_t_type, n_scopes_to_leave)])
+        #context scope manager leaves a single scope to handle other code generation in parent (if/else case for example)
+        self.scopes.leave_scope()
+        
+    def add_root_to_gc(self, alloca:ir.NamedValue, type_:Typ, var_name:str):
+        """Adds variable root location to GC"""
+        if type_.is_reference_type:
+            if isinstance(type_, ArrayTyp):
+                if type_.element_typ.is_reference_type:
+                    type_id = REFERENCE_ARRAY_TYPE_ID
+                else:
+                    type_id = VALUE_ARRAY_TYPE_ID
+            else:
+                type_id = self.type_ids[type_.name]
+            
+            size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data) * 8)
+            register_root_func = self.scopes.get_symbol(FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE).func_ptr
+            assert register_root_func is not None
+            self.builder.call(register_root_func,
+                                 [alloca, #location of root in memory. (ptr to the held ref vars)
+                                  ir.Constant(size_t_type, type_id), #type id
+                                  self.get_char_ptr_from_string(var_name) #variable name TODO: remove this. It should be in the debug symbols!
+                                  ])
 
 class NodeType(Enum):
     """Enumeration of all possible node types in the parser tree"""
@@ -844,12 +1127,12 @@ class PWhileStatement(PStatement):
 @dataclass
 class PForStatement(PStatement):
     """For loop node"""
-    initializer: Union[PStatement, PNoop]
+    initializer: Union[PVariableDeclaration, PAssignment, PNoop]
     condition: Union[PExpression, PNoop]
     increment: Union[PStatement, PNoop]
     body: PBlock
 
-    def __init__(self, initializer: Union[PStatement, PNoop], condition: Union[PExpression, PNoop],
+    def __init__(self, initializer: Union[PVariableDeclaration, PAssignment, PNoop], condition: Union[PExpression, PNoop],
                  increment: Union[PStatement, PNoop], body: PBlock, lexeme: Lexeme):
         super().__init__(NodeType.FOR_STATEMENT, lexeme.pos)
         self.initializer = initializer

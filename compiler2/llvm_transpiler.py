@@ -6,19 +6,18 @@ import llvmlite
 llvmlite.ir_layer_typed_pointers_enabled = False
 llvmlite.opaque_pointers_enabled = True
 
-from typer import Typer, TypeClass, TypingError
+from typer import Typer, TypeClass, TypingError, CompilerWarning
 from parser import (PClass,PFunction,PProgram, Typ, ArrayTyp,
-                    PStatement, PVariableDeclaration,
-                    PLiteral)
-from typing import TextIO, List, Dict, Optional, Union
-from utils import CodeGenContext, Scopes, CompilerError, CompilerWarning
+                    PReturnStatement, PVariableDeclaration,
+                    PLiteral, CodeGenContext, Scopes,
+                    CompilerError)
+from typing import TextIO, Dict, Optional, Union
 from llvmlite import ir
 from warnings import warn
 from constants import *
 from llvmlite.binding import (initialize, initialize_native_target, 
                               initialize_native_asmprinter, PipelineTuningOptions,
-                              PassBuilder, Target, parse_assembly, parse_bitcode,
-                              ModuleRef)
+                              PassBuilder, Target, parse_assembly, parse_bitcode)
 
 
 class CodeGen:
