@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <inttypes.h>
 #include "gc.h"
 
 #define GC_After_N_Allocs 20
@@ -49,23 +50,31 @@ void __PS_EnterScope(size_t num_roots) {
     new_scope->capacity = num_roots;
 }
 
-/// @brief Tells the GC we're leaving the current scope. It will destroy the current scope and associated roots. The GC will be run if it deems relevant.
-void __PS_LeaveScope(void) {
-    if (__PS_scope_stack.count == 0) {
-        fprintf(stderr, "No active scope to leave: program has terminated\n");
+/// @brief Tells the GC we're leaving $depth scopes. It will destroy multiple scopes and associated roots. The GC will be run if it deems relevant.
+/// @param depth the number of scopes to destroy
+void __PS_LeaveScope(size_t depth) {
+    if (!depth)
+        return;
+    if (__PS_scope_stack.count < depth) {
+        fprintf(stderr,
+                "Attempting to leave %" PRIuPTR " scope but depth is only %" PRIuPTR" Error: Exiting\n",
+                depth,
+                __PS_scope_stack.count);
         exit(1);
     }
 
-    // Get the current scope
-    __PS_Scope* current_scope = &__PS_scope_stack.scopes[__PS_scope_stack.count - 1];
-
-    // Remove the last scope
+    // Remove the last depth scopes
+    __PS_Scope* current_scope;
     pthread_mutex_lock(&__PS_scope_stack.lock);
-    __PS_free(current_scope->roots);
+    for (int32_t i = 0; i < depth; ++i){
+        current_scope = &__PS_scope_stack.scopes[__PS_scope_stack.count - 1];
+        // clear current roots
+        __PS_free(current_scope->roots);
+        // Remove scope from stack
+        __PS_scope_stack.count--;
+    }
+    // Get the current scope
     pthread_mutex_unlock(&__PS_scope_stack.lock);
-
-    // Remove scope from stack
-    __PS_scope_stack.count--;
 
     //Collect garbage if necessary
     if (__PS_Collect_Garbage_Now_Heuristic())

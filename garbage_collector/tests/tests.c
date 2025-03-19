@@ -101,7 +101,7 @@ static void test_basic_allocation(void) {
     assert(simple->data == 42);
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage(); //and collect garbage
 
     assert (!header->marked); //ensure it was not! marked and thus GC-ed
@@ -152,7 +152,7 @@ static void test_linked_list(void) {
     }
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     // Trigger GC
     __PS_CollectGarbage();
     
@@ -203,7 +203,7 @@ static void test_cyclic_references(void) {
     assert (_get_header(obj3)->marked);
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
 
     //ensure it was not marked and thus GC-ed
@@ -259,7 +259,7 @@ static void test_complex_object_tree(void) {
     assert (_get_header(root->left->simple)->marked);
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     printf("Complex object tree tests passed\n");
@@ -298,7 +298,7 @@ static void test_unreachable_objects(void) {
     __PS_PrintHeapStats();
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     printf("Unreachable object collection tests passed\n");
@@ -329,7 +329,7 @@ static void test_objects_pointed_to_by_multiple_roots(void){
     assert (_get_header(root->right)->marked);
 
     //Unregister root (make root var "out of scope")
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
 
     // Check GC is correct: only "left" should be reachable
     __PS_CollectGarbage();
@@ -340,7 +340,7 @@ static void test_objects_pointed_to_by_multiple_roots(void){
     assert (! _get_header(root->right)->marked);
 
     //cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
 }
 
@@ -359,7 +359,7 @@ static void test_basic_scope_management(void) {
     __PS_CollectGarbage();
     assert(_get_header(obj)->marked);
     
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     // Object should be collected after scope exit
     assert(!_get_header(obj)->marked);
@@ -390,7 +390,7 @@ static void test_nested_scopes(void) {
     assert(_get_header(inner_obj)->marked);
     
     // Leave inner scope
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     // Inner object should be collected, outer survives
@@ -398,7 +398,7 @@ static void test_nested_scopes(void) {
     assert(_get_header(outer_obj)->marked);
     
     // Leave outer scope
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     // Both objects should be collected
@@ -426,7 +426,7 @@ static void test_scope_capacity(void) {
     assert(_get_header(obj1)->marked);
     assert(_get_header(obj2)->marked);
     
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     // Cleanup
     __PS_CollectGarbage();
     
@@ -456,7 +456,7 @@ static void test_scope_interactions(void) {
     assert(_get_header(inner)->marked);
     
     // Leave inner scope
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     // Inner object should be collected, shared survives
@@ -464,7 +464,7 @@ static void test_scope_interactions(void) {
     assert(_get_header(shared)->marked);
     
     // Leave outer scope
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     
     printf("Scope interactions tests passed\n");
 }
@@ -474,7 +474,7 @@ static void test_scope_edge_cases(void) {
     
     // Test entering scope with zero capacity
     __PS_EnterScope(0);
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     
     // Test multiple nested scopes
     for (int i = 0; i < 10; i++) {
@@ -486,7 +486,7 @@ static void test_scope_edge_cases(void) {
     
     // Leave all scopes
     for (int i = 0; i < 10; i++) {
-        __PS_LeaveScope();
+        __PS_LeaveScope(1);
     }
     
     // Test scope with multiple references to same object
@@ -501,7 +501,7 @@ static void test_scope_edge_cases(void) {
     __PS_CollectGarbage();
     assert(_get_header(obj)->marked);
     
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     printf("Scope edge cases tests passed\n");
@@ -545,7 +545,7 @@ static void test_value_array_allocation(void) {
     }
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     assert(!header->marked);
     
@@ -611,7 +611,7 @@ static void test_reference_array_allocation(void) {
     assert(!unlinked_header->marked);
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     // Verify everything is collected
@@ -656,7 +656,7 @@ static void test_array_edge_cases(void) {
     assert(ref_header->marked);
     
     // Cleanup
-    __PS_LeaveScope();
+    __PS_LeaveScope(1);
     __PS_CollectGarbage();
     
     printf("Array edge cases tests passed\n");

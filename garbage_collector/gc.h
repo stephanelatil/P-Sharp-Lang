@@ -73,7 +73,7 @@ void __PS_InitScopeStack(size_t max_scopes);
 void __PS_EnterScope(size_t num_roots);
 
 // Leave the current scope and unregister all its roots
-void __PS_LeaveScope(void);
+void __PS_LeaveScope(size_t depth);
 
 // Cleanup the scope stack
 void __PS_CleanupScopeStack(void);
