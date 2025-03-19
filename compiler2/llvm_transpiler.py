@@ -83,6 +83,17 @@ class CodeGen:
         context = CodeGenContext(target_data=self.target.target_data,
                                  module=self.module, scopes=Scopes(),
                                  type_map=type_map)
+        # Setup type_ids
+        type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
+        for typ, ir_type in context.type_map.items():
+            assert isinstance(typ, Typ)
+            if not isinstance(ir_type, ir.LiteralStructType):
+                continue
+            if not typ.is_reference_type or isinstance(typ, ArrayTyp) or typ.name in ['void','null']:
+                continue
+            context.type_ids[typ.name] = type_id
+            type_id += 1
+
         # Extra passes to types to convert all simple pointers to pointer to specific reference types
         for i in range(3):
             context.type_map = {
@@ -97,13 +108,16 @@ class CodeGen:
         # Compile all symbol declarations (classes & methods, functions and globals)
         # Note: no operations are run only code is generated, so globals are declared and defined with constant or default values. They will be defined with additional custom/calculated values in the main function
             # (functions/methods bodies are defined though)
-        self._compile_top_level_declarations(typed_abstract_syntax_tree, context)
+        self._declare_top_level_declarations(typed_abstract_syntax_tree, context)
+        self._define_top_level_declarations(typed_abstract_syntax_tree, context)
+        # Generate function to populate globals
+        globals_ref_type_count = self._generate_globals_populator(typed_abstract_syntax_tree, context)
         
         # Here should check if we're building a library.
         self._setup_exit_code_global(context, is_library=is_library)
         if not is_library:
             # generate code for main function
-            self._generate_main_function(typed_abstract_syntax_tree, context)
+            self._generate_main_function(typed_abstract_syntax_tree, context, globals_ref_type_count)
             # static-link the GC (very small so it's fine)
             module_ref = parse_assembly(str(context.module))
             with open(self._GC_LIB, "rb") as f:
@@ -113,8 +127,6 @@ class CodeGen:
         # If building a library, add a globals initializer function. and ignore all other statement
         else:
             # TODO set the globals/methods/classes to export and which to keep internally private
-            
-            # For all generated code library or not
             # Get ModuleRef
             module_ref = parse_assembly(str(context.module))
 
@@ -124,6 +136,17 @@ class CodeGen:
         pass_manager.run(module_ref, self.pass_builder)
         # Return ModuleRef object
         return module_ref
+    
+    def _define_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
+        """Generates the code within all functions and methods"""
+        
+        # This pass compiles the functions
+            # needed in 2 passes to ensure cyclic function calls work
+            # If f1() uses f2() and f2() uses f1(), we need to know the prototypes of both functions
+        self._compile_module_functions(ast, context)
+        
+        # Final Pass compiles all class methods
+        self._compile_module_class_methods(ast, context)
     
     def _setup_exit_code_global(self, context:CodeGenContext, is_library:bool=False):
         """Sets the default main return value to the given value
@@ -141,7 +164,7 @@ class CodeGen:
         if not is_library:
             global_var.initializer = ir.Constant(global_var.value_type, default_value)
         
-    def _generate_main_function(self, ast:PProgram, context:CodeGenContext):
+    def _generate_main_function(self, ast:PProgram, context:CodeGenContext, reference_type_globals_count:int=0):
         """Generates the main function context in the current module.
         It adds the P# garbage collector, calls hook functions if they are defined and adds user code to the main function.
 
@@ -165,7 +188,7 @@ class CodeGen:
         context.builder.position_at_end(user_main_func_code_block)
         
         # Generate the user code in the main function
-        self._generate_user_main_code(ast, context)
+        self._generate_user_main_code(ast, context, reference_type_globals_count)
         
         # Branch to exit if no explicit return is added
         #make sure use code block is terminated
@@ -180,6 +203,29 @@ class CodeGen:
         
         # out of main function
         context.global_exit_block = None
+        
+    def _generate_globals_populator(self, ast:PProgram, context:CodeGenContext):
+        """Generate function to populate the global variables"""
+        globals_ref_type_count = 0
+        func_type = ir.FunctionType(ir.VoidType(), [])
+        func = ir.Function(context.module, func_type, FUNC_POPULATE_GLOBALS)
+        context.scopes.declare_func(FUNC_POPULATE_GLOBALS, ir.VoidType(), func)
+        context.builder.position_at_start(func.append_basic_block(FUNC_POPULATE_GLOBALS+'_entry'))
+        
+        for statement in ast.statements:
+            if isinstance(statement, PVariableDeclaration) and statement.initial_value is not None:
+                # It's a global definition and initialize value
+                global_var = context.scopes.get_symbol(statement.name).alloca
+                assert global_var is not None
+                context.builder.store(statement.initial_value.generate_llvm(context),
+                                      global_var)
+                context.add_root_to_gc(global_var,
+                                       statement.typer_pass_var_type,
+                                       statement.name)
+                if statement.typer_pass_var_type.is_reference_type:
+                    globals_ref_type_count += 1
+        context.builder.ret_void()
+        return globals_ref_type_count
 
     def _generate_gc_init(self, context:CodeGenContext):
         """Generates function calls to initialize the garbage collector and adds init hook calls
@@ -197,10 +243,8 @@ class CodeGen:
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
         # void __PS_InitTypeRegistry(size_t initial_capacity)
         init_type_registry_func = context.scopes.get_symbol(FUNC_GC_INITIALIZE_TYPE_REGISTRY).func_ptr
-        # TODO: len(self.typer.known_types) includes value types and many arrays but having a bit extra space can be optimized later
         context.builder.call(init_type_registry_func,
-                             [ir.Constant(size_t_type,
-                                          len(self.typer.known_types))])
+                             [ir.Constant(size_t_type, max(context.type_ids.values()))])
         
         # Populate type registry
         register_type_func = context.scopes.get_symbol(FUNC_GC_REGISTER_TYPE).func_ptr
@@ -338,7 +382,7 @@ class CodeGen:
             for method in statement.methods:
                 method.generate_llvm(context)
     
-    def _compile_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
+    def _declare_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
         """This declares then compiles (in multiple passes) the functions, classes and global vars defined in the module
         It will later also include the imported symbols from other modules
 
@@ -353,36 +397,15 @@ class CodeGen:
         
         # Third pass creates global variables 
         self._declare_module_globals(ast, context)
-        
-        # Fourth pass compiles the functions
-            # needed in 2 passes to ensure cyclic function calls work
-            # If f1() uses f2() and f2() uses f1(), we need to know the prototypes of both functions
-        self._compile_module_functions(ast, context)
-        
-        # Fifth Pass compiles all class methods
-        self._compile_module_class_methods(ast, context)
 
-    def _generate_user_main_code(self, ast:PProgram, context:CodeGenContext):
+    def _generate_user_main_code(self, ast:PProgram, context:CodeGenContext, global_ref_var_count:int=0):
         """Generates user code in the main function"""
-        #Generate the values of the globals (they may be already set but it'll be optimized out)
+        main_func_stmt = None
+        #find main function and ensure only ClassDecl, VarDecl and FuncDecl statements are in the global scope
         for statement in ast.statements:
-            if isinstance(statement, PVariableDeclaration) and statement.initial_value is not None:
-                # It's a global definition and initialize value
-                global_var = context.scopes.get_symbol(statement.name).alloca
-                assert global_var is not None
-                context.builder.store(statement.initial_value.generate_llvm(context),
-                                      global_var)
-                continue
-            
-        for statement in ast.statements:
-            #ignore already defined functions
             if isinstance(statement, PFunction):
                 if statement.name == ENTRYPOINT_FUNCTION_NAME:
-                    # generate user code in main function
-                    # basic block already constructed so we don't need an extra
-                    statement.body.generate_llvm(context, build_basic_block=False)
-                    #all code generated just return
-                    return
+                    main_func_stmt = statement
                 continue
             elif isinstance(statement, (PClass, PVariableDeclaration)):
                 #skip classes or globals: Already done
@@ -393,6 +416,37 @@ class CodeGen:
                 raise CompilerError(f'Unexpected statement at location {statement.position}\n'+\
                                     'Cannot have statements (other than class, function or global definitions) in the global scope\n'+\
                                     'Please write your code inside the i32 main() function')
+
+        if main_func_stmt is not None:
+            #count the number of defined reference value variables in this scope
+            main_scope_ref_var_count = 0
+            for stmt in main_func_stmt.body.statements:
+                if isinstance(stmt, PVariableDeclaration) and stmt.typer_pass_var_type.is_reference_type:
+                    main_scope_ref_var_count += 1
+
+            #enter main function scope and build
+            context.enter_scope(main_scope_ref_var_count + global_ref_var_count)
+            # make sure to populate globals first and add them to the GC
+            populate_globals_func = context.scopes.get_symbol(FUNC_POPULATE_GLOBALS).func_ptr
+            assert populate_globals_func is not None
+            context.builder.call(populate_globals_func,[])
+            main_function_returned = False
+            for stmt in main_func_stmt.body.statements:
+                if main_function_returned:
+                    warn(f"Statement will be ignored as it is unreachable in {stmt.position}",
+                        CompilerWarning)
+                    continue
+                stmt.generate_llvm(context)
+                if isinstance(stmt, PReturnStatement):
+                    # return has already left the scope and terminated the current block
+                    main_function_returned = True
+            if not main_function_returned:
+                warn(f"No return defined for main function. Adding implicit return 0 in main function in {main_func_stmt.position}",
+                    CompilerWarning)
+            # do not need to exit scope here because the main function has explicit returns that handle it
+        else:
+            warn("No main function",
+                 CompilerWarning)
 
     def _init_builtin_functions_prototypes(self, context:CodeGenContext):
         """Adds builtin functions to the global scope"""

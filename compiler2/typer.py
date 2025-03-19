@@ -1185,6 +1185,7 @@ class Typer:
             
     def _cfg_check(self, program:Union[PProgram,PBlock]) -> None:
         """Check to ensure all functions have a valid return. Raises error if invalid otherwise returns None"""
+        #TODO here remove unreachable statements and raise warning
         for statement in program.statements:
             if isinstance(statement, (PFunction, PMethod)):
                 if not self._has_return(statement.body):

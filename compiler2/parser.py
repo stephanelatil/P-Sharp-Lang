@@ -582,8 +582,13 @@ class PFunction(PStatement):
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
         
+        param_ref_var_count = 0
+        for param in self.function_args:
+            if param.typer_pass_var_type.is_reference_type:
+                param_ref_var_count += 1
+
+        context.enter_scope(param_ref_var_count)
         # defined args in scoper:
-        context.scopes.enter_func_scope()
         assert len(self.function_args) == len(func.args)
         for param, arg_value in zip(self.function_args, func.args):
             # build alloca to a function argument
@@ -598,12 +603,14 @@ class PFunction(PStatement):
                                        param.typer_pass_var_type.get_llvm_value_type(context),
                                        arg_alloca
                                        )
+            if param.typer_pass_var_type.is_reference_type:
+                context.add_root_to_gc(arg_alloca,
+                                       param.typer_pass_var_type,
+                                       param.name)
         # run body statements
-        self.body.generate_llvm(context, build_basic_block=False)
-        # for stmt in self.body.statements:
-        #     stmt.generate_llvm(context)
-        
-        context.scopes.leave_func_scope()
+        self.body.generate_llvm(context)
+
+        # scope leaving handled by the return instruction (implicit for void methods)
 
 @dataclass    
 class PMethod(PFunction):
@@ -645,8 +652,13 @@ class PMethod(PFunction):
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
         
-        # defined args in scope (including implicit "self"):
-        context.scopes.enter_func_scope()
+        param_ref_var_count = 0
+        for param in self.function_args:
+            if param.typer_pass_var_type.is_reference_type:
+                param_ref_var_count += 1
+
+        context.enter_scope(param_ref_var_count)
+        # defined args in scoper:
         assert len(self.function_args) == len(func.args)
         for param, arg_value in zip(self.function_args, func.args):
             # build alloca to a function argument
@@ -661,12 +673,14 @@ class PMethod(PFunction):
                                        param.typer_pass_var_type.get_llvm_value_type(context),
                                        arg_alloca
                                        )
+            if param.typer_pass_var_type.is_reference_type:
+                context.add_root_to_gc(arg_alloca,
+                                       param.typer_pass_var_type,
+                                       param.name)
         # run body statements
-        # for stmt in self.body.statements:
-        #     stmt.generate_llvm(context)
-        self.body.generate_llvm(context, build_basic_block=False)
-        
-        context.scopes.leave_func_scope()
+        self.body.generate_llvm(context)
+
+        # scope leaving handled by the return instruction (implicit for void methods)
 
 @dataclass
 class PClass(PStatement):
@@ -732,7 +746,7 @@ class PBlock(PStatement):
         self.statements = statements
         self.block_properties = block_properties
     
-    def generate_llvm(self, context: CodeGenContext, build_basic_block:bool=True) -> None:
+    def generate_llvm(self, context: CodeGenContext) -> None:
         """Generates the llvm IR code for this PBlock
 
         Args:
@@ -741,20 +755,30 @@ class PBlock(PStatement):
             Also terminates the  current basic block and creates a new one to continue after this one. Defaults to True.
         """
         #TODO: Count total number of defined vars and Enter GC scope
-        if build_basic_block:
-            block_scope = context.builder.append_basic_block(f'block_scope_{self.position.index}_entry')
-            context.builder.branch(block_scope)
-            context.builder.position_at_end(block_scope)
-        context.scopes.enter_scope()
+        
+        #count the number of defined reference value variables in this scope
+        scope_ref_var_count = 0
+        for stmt in self.statements:
+            if isinstance(stmt, PVariableDeclaration) and stmt.typer_pass_var_type.is_reference_type:
+                scope_ref_var_count += 1
+        
+        #TODO: optimize this to only create a scope when ref-vars are present.
+            # need to make sure to count correctly when exiting a function scope from anywhere within a
+            # function or when leaving a loop (break/continue)!
+            
+        #create scope
+        context.enter_scope(scope_ref_var_count)
         for stmt in self.statements:
             stmt.generate_llvm(context)
-        context.scopes.leave_scope()
-        if build_basic_block:
-            after_block_scope = context.builder.append_basic_block(f'after_block_scope_{self.position.index}')
-            if isinstance(context.builder.block, ir.Block) and not context.builder.block.is_terminated:
-                context.builder.branch(after_block_scope)
-        
-        #TODO leave gc scope
+            assert isinstance(context.builder.block, ir.Block)
+            if context.builder.block.is_terminated:
+                #TODO: add warning here if it still has statements in terminated block
+                return
+            if isinstance(stmt, (PReturnStatement, PBreakStatement, PContinueStatement)):
+                #return has already left the scope and terminated the current block
+                return
+        #otherwise leave the current block
+        context.leave_scope()
 
 @dataclass
 class PVariableDeclaration(PStatement):
@@ -784,11 +808,13 @@ class PVariableDeclaration(PStatement):
             return False
         return self.name == value.name and self.var_type == value.var_type
     
-    def generate_llvm(self, context: CodeGenContext) -> None:
-        #TODO: register root here to GC
-        
+    def generate_llvm(self, context: CodeGenContext) -> None:        
         type_ = self.typer_pass_var_type.get_llvm_value_type(context)
         alloca = context.builder.alloca(type_,name=self.name)
+        
+        context.add_root_to_gc(alloca,
+                               self.typer_pass_var_type,
+                               self.name)
         
         if self.initial_value is None:
             init = self.typer_pass_var_type.default_llvm_value(context)
@@ -1078,12 +1104,12 @@ class PIfStatement(PStatement):
         if self.else_block is not None:
             with context.builder.if_else(self.condition.generate_llvm(context)) as (then, otherwise):
                 with then:
-                    self.then_block.generate_llvm(context, build_basic_block=False)
+                    self.then_block.generate_llvm(context)
                 with otherwise:
-                    self.else_block.generate_llvm(context, build_basic_block=False)
+                    self.else_block.generate_llvm(context)
         else:
             with context.builder.if_then(self.condition.generate_llvm(context)):
-                self.then_block.generate_llvm(context, build_basic_block=False)
+                self.then_block.generate_llvm(context)
                 
 
 @dataclass
@@ -1098,13 +1124,12 @@ class PWhileStatement(PStatement):
         self.body = body
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        context.scopes.enter_scope()
         # Create basic blocks for loop structure
         cond_block = context.builder.append_basic_block(f"w_cond_{self.condition.position.index}")
         body_block = context.builder.append_basic_block(f"w_body_{self.body.position.index}")
         after_block = context.builder.append_basic_block(f"w_after_{self.body.position.index}")
         #add info pointing to condition and end of loop for continue/break
-        context.loopinfo.append((cond_block,after_block))
+        context.loopinfo.append(LoopContext(cond_block,after_block, is_for_loop=False, current_loop_scope_depth=0))
 
         context.builder.branch(cond_block)
         # Generate condition in condition block
@@ -1114,15 +1139,14 @@ class PWhileStatement(PStatement):
 
         # Generate loop body in body block
         context.builder.position_at_end(body_block)
-        self.body.generate_llvm(context, False)
+        self.body.generate_llvm(context)
         # Branch back to condition block after body execution
         context.builder.branch(cond_block)
 
         # Set insertion point to after block for subsequent code
         context.builder.position_at_end(after_block)
         #pop loop info, we're leaving block
-        context.loopinfo.pop()        
-        context.scopes.leave_scope()
+        context.loopinfo.pop()
 
 @dataclass
 class PForStatement(PStatement):
@@ -1141,7 +1165,12 @@ class PForStatement(PStatement):
         self.body = body
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        context.scopes.enter_scope()
+        for_initializer_ref_vars = 0
+        if isinstance(self.initializer, PVariableDeclaration):
+            for_initializer_ref_vars = int(self.initializer.typer_pass_var_type.is_reference_type)
+        
+        context.enter_scope(for_initializer_ref_vars)
+        
         self.initializer.generate_llvm(context)
         # Create basic blocks for loop structure
         increment_block:ir.Block = context.builder.append_basic_block(f"for_inc_{self.condition.position.index}")
@@ -1149,7 +1178,8 @@ class PForStatement(PStatement):
         body_block:ir.Block = context.builder.append_basic_block(f"for_body_{self.body.position.index}")
         after_block:ir.Block = context.builder.append_basic_block(f"for_after_{self.body.position.index}")
         #add info pointing to condition and end of loop for continue/break
-        context.loopinfo.append((increment_block,after_block))
+        context.loopinfo.append(LoopContext(increment_block,after_block,
+                                            is_for_loop=True, current_loop_scope_depth=1))
         
         context.builder.branch(cond_block)
         # Generate condition in condition block
@@ -1159,7 +1189,7 @@ class PForStatement(PStatement):
 
         # Generate loop body in body block
         context.builder.position_at_end(body_block)
-        self.body.generate_llvm(context, False)
+        self.body.generate_llvm(context)
         assert isinstance(context.builder.block, ir.Block)
         if not context.builder.block.is_terminated:
             context.builder.branch(increment_block)
@@ -1173,7 +1203,8 @@ class PForStatement(PStatement):
         context.builder.position_at_end(after_block)
         #pop loop info, we're leaving block
         context.loopinfo.pop()
-        context.scopes.leave_scope()
+        #remove initializer scope
+        context.leave_scope()
 
 @dataclass
 class PReturnStatement(PStatement):
@@ -1193,14 +1224,19 @@ class PReturnStatement(PStatement):
             exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME).alloca
             assert exit_code is not None
             context.builder.store(self.value.generate_llvm(context), exit_code)
+            # leave all scopes not needed as GC cleanup will handle everything
+            # go to exit
             context.builder.branch(context.global_exit_block)
             return
         
-        elif isinstance(self.value, PVoid):
+            
+        if isinstance(self.value, PVoid):
+            context.leave_func_scope_on_return()
             context.builder.ret_void()
         else:
-            context.builder.ret(
-                self.value.generate_llvm(context))
+            ret_val = self.value.generate_llvm(context)
+            context.leave_func_scope_on_return()
+            context.builder.ret(ret_val)
     
     @staticmethod
     def implicit_return(position:Position):
@@ -1456,7 +1492,8 @@ class PBreakStatement(PStatement):
         super().__init__(NodeType.BREAK_STATEMENT, lexeme.pos)
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        condition_block,end_of_loop_block = context.loopinfo[-1]
+        end_of_loop_block = context.loopinfo[-1].end_of_loop_block
+        context.leave_loop_scope_on_break()
         context.builder.branch(end_of_loop_block)
 
 @dataclass
@@ -1467,8 +1504,9 @@ class PContinueStatement(PStatement):
         super().__init__(NodeType.CONTINUE_STATEMENT, lexeme.pos)
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        condition_block,end_of_loop_block = context.loopinfo[-1]
-        context.builder.branch(condition_block)
+        continue_loop_block = context.loopinfo[-1].continue_loop_block
+        context.leave_loop_scope_on_continue()
+        context.builder.branch(continue_loop_block)
 
 @dataclass
 class PAssertStatement(PStatement):
@@ -2484,6 +2522,7 @@ class Parser:
             self._expect(LexemeType.PUNCTUATION_SEMICOLON)
         else:
             initializer = self._parse_statement(block_properties)
+            assert isinstance(initializer, (PAssignment, PVariableDeclaration))
 
         # Condition (optional)
         if self._match(LexemeType.PUNCTUATION_SEMICOLON):

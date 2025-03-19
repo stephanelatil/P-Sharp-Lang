@@ -4,7 +4,7 @@ from typing import List, Type
 from llvm_transpiler import CodeGen
 from llvmlite import ir
 from llvmlite.binding import Target, parse_assembly, create_mcjit_compiler, ModuleRef
-from constants import ENTRYPOINT_FUNCTION_NAME
+from constants import ENTRYPOINT_FUNCTION_NAME, FUNC_POPULATE_GLOBALS
 import ctypes
 import math
 
@@ -79,7 +79,7 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
             with self.subTest(source=source):
                 module = self.generate_module(source)
                 global_ir = str(module)
-                main_ir = self.get_function_ir(module)
+                main_ir = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
                 self.assertIn(f"@{var_name} = global", global_ir)
                 self.assertIn("store", main_ir)
 
@@ -121,7 +121,7 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
         for source, alloc_func in test_cases:
             with self.subTest(source=source):
                 module = self.generate_module(source)
-                main_code = self.get_function_ir(module)
+                main_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
                 global_code = str(module)
                 # assert array var is globally known
                 self.assertIn("@arr = global ptr", global_code)
@@ -549,7 +549,7 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         i64 huge = large;    // i32 -> i64
         """
         module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
+        ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
         self.assertIn("sext", ir_code)
 
     def test_valid_float_promotions(self):
@@ -559,7 +559,7 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         f64 double = single;  // f32 -> f64
         """
         module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
+        ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
         self.assertIn("fpext", ir_code)
 
     def test_valid_integer_to_float_conversions(self):
@@ -572,7 +572,7 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         for source in test_cases:
             with self.subTest(source=source):
                 module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
+                ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
                 self.assertIn("sitofp", ir_code)
 
 class TestCodeGeneratorTypeCasting(CodeGenTestCase):
@@ -587,7 +587,7 @@ class TestCodeGeneratorTypeCasting(CodeGenTestCase):
         i8 tiny = (i8)small;      // i16 -> i8
         """
         module = self.generate_module(source)
-        ir_code = self.get_function_ir(module)
+        ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
         self.assertIn("trunc", ir_code)
 
     def test_valid_float_to_integer_casts(self):
@@ -604,7 +604,7 @@ class TestCodeGeneratorTypeCasting(CodeGenTestCase):
         for source in test_cases:
             with self.subTest(source=source):
                 module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
+                ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
                 self.assertIn("fptosi", ir_code)
 
 class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
@@ -635,7 +635,7 @@ class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
         for var_decl in test_cases:
             with self.subTest(source=var_decl):
                 module = self.generate_module(var_decl)
-                ir_code = self.get_function_ir(module)
+                ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
                 self.assertIn("xor", ir_code)
 
     def test_valid_increment_decrement(self):
@@ -1233,6 +1233,32 @@ class TestCodeGeneratorEdgeCases(CodeGenTestCase):
         expected = 42
         result = self.compile_and_run_main(source)
         self.assertEqual(result, expected)
+        
+class TestCodeGeneratorGCScope(CodeGenTestCase):
+    """"""
+
+    def test_scope_management_code_after_return(self):
+        source = """
+        i32 main(){
+            //enter scope
+            i32 x;
+            { //enter scope
+                i32 y;
+                { //enter scope
+                    i32 z = 0;
+                    { //enter scope
+                        //leave 4 scopes
+                        return 1;
+                    }// leave 1 scope
+                }// leave 1 scope
+            }// leave 1 scope
+        }// leave 1 scope
+        """
+        expected = 1
+        result = self.compile_and_run_main(source)
+        self.assertEqual(result, expected)
+        #count the number of enter/leave scopes
+        
 
 
 class TestCodeGeneratorLoopWithoutBraces(CodeGenTestCase):
