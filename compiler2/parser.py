@@ -63,7 +63,7 @@ class Typ:
                 return
         # Add default ToString method if it does not exist
         # Default ToString calls the builtin default
-        self.methods.append(PMethod("ToString",
+        method = PMethod("ToString",
                                       PType('string', Lexeme.default), 
                                       [],
                                       PBlock([
@@ -78,7 +78,8 @@ class Typ:
                                                     is_top_level=False,
                                                     in_function=True
                                           )),
-                                      Lexeme.default, is_builtin=True))
+                                      Lexeme.default, is_builtin=True)
+        self.methods.append(method)
     
     def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
         """Returns the llvm value-Type corresponding to the Typ. All reference types will return an ir.PointerType
@@ -228,7 +229,7 @@ class Scopes:
         
     @property
     def current_function_scope_depth(self):
-        depth = len(self.scopes) - 2 #2 are the global scopes: one with the global functions and another where the global vars are defined
+        depth = len(self.scopes) - 1 #1 is the global scope where the global functions and global vars are defined
         assert depth > 0
         return depth
 
@@ -359,55 +360,18 @@ class CodeGenContext:
         self.builder.call(enter_scope_func,
                              [ir.Constant(size_t_type, ref_vars)])
     
-    def leave_scope(self):            
-        """Leave a single scope both in the GC and context scope manager"""
+    def leave_scope(self, scopes_to_leave:int=1):            
+        """Leave N scopes both in the GC and a single one in the context scope manager.
+        The context scope if popped only once because we will continue to parse other statement in the parent block"""
+        if scopes_to_leave < 1:
+            return
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
         leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
         assert leave_scope_func is not None
         self.builder.call(leave_scope_func,
                           #leave a single scope
-                          [ir.Constant(size_t_type, 1)])
-        self.scopes.leave_scope()
-    
-    def leave_func_scope_on_return(self):
-        """Leave all function specific scopes both in the GC and context scope manager"""
-        n_scopes_to_leave = self.scopes.current_function_scope_depth
-        
-        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
-        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
-        assert leave_scope_func is not None
-        self.builder.call(leave_scope_func,
-                          #leave a single scope
-                          [ir.Constant(size_t_type, n_scopes_to_leave)])
-        #context scope manager leaves a single scope to handle other code generation in parent (if/else case for example)
-        self.scopes.leave_scope()
-    
-    def leave_loop_scope_on_break(self):      
-        """Leave all scopes defined by the loop (including initializer in a for loop) both in the GC and context scope manager"""
-        n_scopes_to_leave = self.loopinfo[-1].current_loop_scope_depth
-        #create scope
-        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
-        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
-        assert leave_scope_func is not None
-        self.builder.call(leave_scope_func,
-                          #leave a single scope
-                          [ir.Constant(size_t_type, n_scopes_to_leave)])
-        #context scope manager leaves a single scope to handle other code generation in parent (if/else case for example)
-        self.scopes.leave_scope()
-    
-    def leave_loop_scope_on_continue(self):   
-        """Leave all scopes defined by the loop (excluding initializer in a for loop) both in the GC and context scope manager"""
-        n_scopes_to_leave = self.loopinfo[-1].current_loop_scope_depth
-        # do not leave scope containing initializer in for loop
-        n_scopes_to_leave -= self.loopinfo[-1].is_for_loop
-        #create scope
-        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
-        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
-        assert leave_scope_func is not None
-        self.builder.call(leave_scope_func,
-                          #leave a single scope
-                          [ir.Constant(size_t_type, n_scopes_to_leave)])
-        #context scope manager leaves a single scope to handle other code generation in parent (if/else case for example)
+                          [ir.Constant(size_t_type, scopes_to_leave)])
+        #pop the scope we are currently leaving
         self.scopes.leave_scope()
         
     def add_root_to_gc(self, alloca:ir.NamedValue, type_:Typ, var_name:str):
@@ -491,6 +455,69 @@ class PStatement:
     """Base class for all AST nodes"""
     node_type: NodeType
     position: Position
+    
+    def __post_init__(self):
+        #add field to progress backwards though the tree
+        self._parent: Optional["PStatement"] = None
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        if False:
+            yield
+        return
+
+    @property
+    def parent(self) -> "PStatement":
+        """The parent element in the tree. Used to calculate the element's depth/scope depth"""
+        if self._parent is None:
+            assert isinstance(self, PProgram) #only PProgram does not have a parent
+            raise CompilerError("The top level PProgram node does not have a parent!")
+        return self._parent
+    
+    @property
+    def depth_from_next_loop(self) -> int:
+        """How many scopes deep this statement is from the above loop
+        a loop has a depth of 0. Any statement inside has a depth of 1 (or more if scoped within)
+        This is used to count how many scopes to leave when breaking/continuing from a loop"""
+        if isinstance(self, (PWhileStatement, PForStatement)):
+            return 0 #At the loop level
+            # Here it's still 0 even for a for loop which has an extra scope encompassing it
+            # because it leaves the for-scope at the first instruction at the loop exit block
+        elif isinstance(self, PBlock):
+            # In a block increase scope by 1 and look above
+            return self.parent.depth_from_next_loop + 1
+        return self.parent.depth_from_next_loop
+    
+    @property
+    def depth_from_next_function(self) -> int:
+        """How many scopes deep this statement is within a function
+        A statement in a function's top scope has a depth of 1 including its params
+        This is used to calculate how many scopes to leave when returning from a function"""
+        # TODO: populate this in every node and use to fix leaving scopes in functions
+        if isinstance(self, (PFunction)):
+            return 1 #At the Function level (1 scope for the parameters!)
+        elif isinstance(self, (PForStatement, PBlock)):
+            # In a block increase scope by 1 and look above
+            # (for) Loops also create an intermediate scope for the initializer
+            return self.parent.depth_from_next_function + 1
+        return self.parent.depth_from_next_function
+    
+    #TODO: Convert to method with checks with given depth
+        # that way you can allocate a GC scope larger than a single scope to avoid nesting too many
+        # use a heuristic to evaluate how deep to go.
+        # NB: will need to reevaluate how the "depth_from_next_XX" is calculated
+    
+    @property
+    def count_ref_vars_declared_in_scope(self):
+        """Counts the number of reference Variables are defined in the scope"""
+        return 0
+    
+    def _setup_parents(self):
+        if self._parent is not None:
+            return #speedup and prevents cycles
+        for child in self.children:
+            child._setup_parents()
+            child._parent = self
 
     def generate_llvm(self, context:CodeGenContext) -> None:
         raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
@@ -518,6 +545,7 @@ class PExpression(PStatement):
     """Base class for all expression nodes - nodes that produce a value"""
     
     def __post_init__(self):
+        super().__post_init__()
         self.expr_type:Optional[Typ] = None  # Will be set during typing pass
         self.is_compile_time_constant:bool = False
         self.is_lvalue = getattr(self, "is_lvalue", False)
@@ -539,6 +567,12 @@ class PNoop(PExpression):
 class PProgram(PStatement):
     """Root node of the program"""
     statements: List[PStatement]
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        for stmt in self.statements:
+            yield stmt
+        return
 
     def __init__(self, statements: List[PStatement], lexeme: Lexeme):
         super().__init__(NodeType.PROGRAM, lexeme.pos)
@@ -553,6 +587,23 @@ class PFunction(PStatement):
     body: 'PBlock'
     is_called: bool = False
     _return_typ_typed:Optional[Typ] = None
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        for stmt in (self.return_type, 
+                     *self.function_args,
+                     self.body):
+            yield stmt
+        return
+        
+    @property
+    def count_ref_vars_declared_in_scope(self) -> int:
+        """Returns the number of reference variables defined in the scope defined by this block"""
+        ref_vars = 0
+        for stmt in self.function_args:
+            if stmt.is_root_to_declare_to_gc:
+                ref_vars += 1
+        return ref_vars
     
     def __hash__(self) -> int:
         return hash(self.name) + hash(self.return_type) + sum([hash(func) for func in self.function_args])
@@ -573,6 +624,7 @@ class PFunction(PStatement):
         
     def generate_llvm(self, context: CodeGenContext) -> None:
         if not context.scopes.has_symbol(self.name):
+            assert False, "The function should be declared already"
             func_type = ir.FunctionType(self.return_typ_typed.get_llvm_value_type(context),
                                         [arg.typer_pass_var_type.get_llvm_value_type(context) for arg in self.function_args])
             func = ir.Function(context.module, func_type, name=self.name)
@@ -581,13 +633,8 @@ class PFunction(PStatement):
             assert func is not None
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
-        
-        param_ref_var_count = 0
-        for param in self.function_args:
-            if param.typer_pass_var_type.is_reference_type:
-                param_ref_var_count += 1
 
-        context.enter_scope(param_ref_var_count)
+        context.enter_scope(self.count_ref_vars_declared_in_scope)
         # defined args in scoper:
         assert len(self.function_args) == len(func.args)
         for param, arg_value in zip(self.function_args, func.args):
@@ -603,14 +650,28 @@ class PFunction(PStatement):
                                        param.typer_pass_var_type.get_llvm_value_type(context),
                                        arg_alloca
                                        )
-            if param.typer_pass_var_type.is_reference_type:
+            if param.is_root_to_declare_to_gc:
                 context.add_root_to_gc(arg_alloca,
                                        param.typer_pass_var_type,
                                        param.name)
         # run body statements
         self.body.generate_llvm(context)
+        
+        #ensure all block are properly terminated
+        for block in list(func.basic_blocks):
+            assert isinstance(block, ir.Block)
+            if not block.is_terminated:
+                with context.builder.goto_block(block):
+                    # add default return to ensure branch is terminated
+                    # will be optimized out if unreachable
+                    if func.function_type.return_type == ir.VoidType():
+                        context.builder.ret_void()
+                    else:
+                        context.builder.ret(self.return_typ_typed.default_llvm_value(context))
 
-        # scope leaving handled by the return instruction (implicit for void methods)
+        # GC scope leaving handled by the return instruction (implicit for void methods)
+        # but still need to go up a scope outside of the function block
+        context.scopes.leave_scope()
 
 @dataclass    
 class PMethod(PFunction):
@@ -643,6 +704,7 @@ class PMethod(PFunction):
     def generate_llvm(self, context: CodeGenContext) -> None:        
         method_name = context.get_method_symbol_name(self.class_type.name, self.name)
         if not context.scopes.has_symbol(method_name):
+            assert False, "This should not happen. Method should be declared already"
             func_type = ir.FunctionType(self.return_typ_typed.get_llvm_value_type(context),
                                         [arg.typer_pass_var_type.get_llvm_value_type(context) for arg in self.function_args])
             func = ir.Function(context.module, func_type, name=self.name)
@@ -651,13 +713,8 @@ class PMethod(PFunction):
             assert func is not None
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
-        
-        param_ref_var_count = 0
-        for param in self.function_args:
-            if param.typer_pass_var_type.is_reference_type:
-                param_ref_var_count += 1
 
-        context.enter_scope(param_ref_var_count)
+        context.enter_scope(self.count_ref_vars_declared_in_scope)
         # defined args in scoper:
         assert len(self.function_args) == len(func.args)
         for param, arg_value in zip(self.function_args, func.args):
@@ -695,6 +752,13 @@ class PClass(PStatement):
         if self._class_typ is None:
             raise TypingError('Class has not been typed yet')
         return self._class_typ
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        for stmt in (*self.fields, 
+                     *self.methods):
+            yield stmt
+        return
 
     def __init__(self, name: str, fields: List['PClassField'],
                  methods: List[PMethod], lexeme: Lexeme):
@@ -719,6 +783,13 @@ class PClassField(PStatement):
         if self._typer_pass_var_type is None:
             raise TypingError("Typer has not typed this node yet!")
         return self._typer_pass_var_type
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.var_type
+        if self.default_value is not None:
+            yield self.default_value
+        return
 
     def __init__(self, name: str, type: 'PType', is_public: bool, lexeme: Lexeme, default_value:Optional[PExpression]):
         super().__init__(NodeType.CLASS_PROPERTY, lexeme.pos)
@@ -745,40 +816,44 @@ class PBlock(PStatement):
         super().__init__(NodeType.BLOCK, lexeme.pos)
         self.statements = statements
         self.block_properties = block_properties
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        for stmt in self.statements:
+            yield stmt
+        return
+        
+    @property
+    def count_ref_vars_declared_in_scope(self) -> int:
+        """Returns the number of reference variables defined in the scope defined by this block"""
+        ref_vars = 0
+        for stmt in self.children:
+            if isinstance(stmt, PVariableDeclaration) and stmt.is_root_to_declare_to_gc:
+                ref_vars += 1
+        return ref_vars
     
-    def generate_llvm(self, context: CodeGenContext) -> None:
+    def generate_llvm(self, context: CodeGenContext, build_gc_scope=True) -> None:
         """Generates the llvm IR code for this PBlock
 
         Args:
             context (CodeGenContext): The context containing the current module
             build_basic_block (bool, optional): Whether to generate a new basic block for this PBlock.
             Also terminates the  current basic block and creates a new one to continue after this one. Defaults to True.
-        """
-        #TODO: Count total number of defined vars and Enter GC scope
-        
-        #count the number of defined reference value variables in this scope
-        scope_ref_var_count = 0
-        for stmt in self.statements:
-            if isinstance(stmt, PVariableDeclaration) and stmt.typer_pass_var_type.is_reference_type:
-                scope_ref_var_count += 1
-        
+        """        
         #TODO: optimize this to only create a scope when ref-vars are present.
             # need to make sure to count correctly when exiting a function scope from anywhere within a
             # function or when leaving a loop (break/continue)!
-            
         #create scope
-        context.enter_scope(scope_ref_var_count)
+        context.enter_scope(self.count_ref_vars_declared_in_scope)
         for stmt in self.statements:
             stmt.generate_llvm(context)
             assert isinstance(context.builder.block, ir.Block)
             if context.builder.block.is_terminated:
                 #TODO: add warning here if it still has statements in terminated block
-                return
-            if isinstance(stmt, (PReturnStatement, PBreakStatement, PContinueStatement)):
-                #return has already left the scope and terminated the current block
-                return
-        #otherwise leave the current block
-        context.leave_scope()
+                break
+        else:
+            #otherwise leave the current scope for the block if the block has not been terminated by a return, break or continue
+            context.leave_scope()
 
 @dataclass
 class PVariableDeclaration(PStatement):
@@ -793,6 +868,18 @@ class PVariableDeclaration(PStatement):
         if self._typer_pass_var_type is None:
             raise CompilerError('PVarDecl fas not been typed')
         return self._typer_pass_var_type
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.var_type
+        if self.initial_value is not None:
+            yield self.initial_value
+        return
+    
+    @property
+    def is_root_to_declare_to_gc(self) -> bool:
+        """Flag which says whether this variable declaration should be declared to the GC to track its objects"""
+        return self.typer_pass_var_type.is_reference_type
 
     def __init__(self, name: str, var_type: 'PType', initial_value: Optional[PExpression], lexeme: Lexeme):
         super().__init__(NodeType.VARIABLE_DECLARATION, lexeme.pos)
@@ -812,9 +899,10 @@ class PVariableDeclaration(PStatement):
         type_ = self.typer_pass_var_type.get_llvm_value_type(context)
         alloca = context.builder.alloca(type_,name=self.name)
         
-        context.add_root_to_gc(alloca,
-                               self.typer_pass_var_type,
-                               self.name)
+        if self.is_root_to_declare_to_gc:
+            context.add_root_to_gc(alloca,
+                                self.typer_pass_var_type,
+                                self.name)
         
         if self.initial_value is None:
             init = self.typer_pass_var_type.default_llvm_value(context)
@@ -835,6 +923,12 @@ class PAssignment(PExpression):
         self.target = target
         self.target.is_lvalue = True
         self.value = value
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.target
+        yield self.value
+        return
         
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to an assignment value"
@@ -858,6 +952,11 @@ class PAssignment(PExpression):
 class PDiscard(PStatement):
     """Discard an expression result"""
     expression:PExpression
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.expression
+        return
     
     def __init__(self, expression:PExpression, lexeme: Lexeme):
         super().__init__(NodeType.DISCARD, lexeme.pos)
@@ -881,6 +980,12 @@ class PBinaryOperation(PExpression):
         self.right = right
         # TODO : This value can be true, calculated at compile time and optimized out if left and right are compile time constants
         self.is_compile_time_constant = False
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.left
+        yield self.right
+        return
         
     def generate_and_short_circuit(self, left:ir.Value, context:CodeGenContext):
         # Create basic blocks for different paths
@@ -1025,13 +1130,17 @@ class PUnaryOperation(PExpression):
         self.operand = operand
         # TODO : This value can be true, calculated at compile time and optimized out if the operator is not inc/dec and the operand is const
         self.is_compile_time_constant = False
+        # TODO: This should always be false no?
         self.operand.is_lvalue = self.operation in (UnaryOperation.PRE_INCREMENT, UnaryOperation.PRE_DECREMENT,
                                                     UnaryOperation.POST_INCREMENT, UnaryOperation.POST_DECREMENT)
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.operand
+        return
 
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to an operation result"
-        # TODO expressions can be pointers or values. Add flag to explicitly deref ptrs (like allocas, index access, etc) or not
-        # TODO add property for PExpression if it's an lvalue (ptr to value) or not
         
         operand = self.operand.generate_llvm(context, get_ptr_to_expression=self.operand.is_lvalue)
         assert self.operand.expr_type is not None
@@ -1083,8 +1192,6 @@ class PUnaryOperation(PExpression):
             raise NotImplementedError()
         assert isinstance(ret_val, ir.NamedValue)
         return ret_val
-        #for increment/decrement need to get operant alloca or ptr
-            
 
 @dataclass
 class PIfStatement(PStatement):
@@ -1099,6 +1206,14 @@ class PIfStatement(PStatement):
         self.condition = condition
         self.then_block = then_block
         self.else_block = else_block
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.condition 
+        yield self.then_block
+        if self.else_block is not None:
+            yield self.else_block
+        return
     
     def generate_llvm(self, context: CodeGenContext) -> None:
         if self.else_block is not None:
@@ -1123,6 +1238,12 @@ class PWhileStatement(PStatement):
         self.condition = condition
         self.body = body
         
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.condition
+        yield self.body
+        return
+        
     def generate_llvm(self, context: CodeGenContext) -> None:
         # Create basic blocks for loop structure
         cond_block = context.builder.append_basic_block(f"w_cond_{self.condition.position.index}")
@@ -1140,6 +1261,12 @@ class PWhileStatement(PStatement):
         # Generate loop body in body block
         context.builder.position_at_end(body_block)
         self.body.generate_llvm(context)
+        
+        # make sure end of body is reachable:
+        assert isinstance(context.builder.block, ir.Block)
+        if context.builder.block.is_terminated:
+            context.loopinfo.pop()
+            return
         # Branch back to condition block after body execution
         context.builder.branch(cond_block)
 
@@ -1163,6 +1290,14 @@ class PForStatement(PStatement):
         self.condition = condition
         self.increment = increment
         self.body = body
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.initializer
+        yield self.condition
+        yield self.increment
+        yield self.body
+        return
         
     def generate_llvm(self, context: CodeGenContext) -> None:
         for_initializer_ref_vars = 0
@@ -1215,6 +1350,12 @@ class PReturnStatement(PStatement):
         super().__init__(NodeType.RETURN_STATEMENT, lexeme.pos)
         self.value = value or PVoid(lexeme)
         
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        if self.value is not None:
+            yield self.value
+        return
+        
     def generate_llvm(self, context: CodeGenContext) -> None:
         # if we are within the module's main function
         if context.global_exit_block is not None:
@@ -1224,18 +1365,17 @@ class PReturnStatement(PStatement):
             exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME).alloca
             assert exit_code is not None
             context.builder.store(self.value.generate_llvm(context), exit_code)
-            # leave all scopes not needed as GC cleanup will handle everything
+            # leave all scopes not needed as GC cleanup will handle destroying all scopes
             # go to exit
             context.builder.branch(context.global_exit_block)
             return
-        
             
         if isinstance(self.value, PVoid):
-            context.leave_func_scope_on_return()
+            context.leave_scope(self.depth_from_next_function)
             context.builder.ret_void()
         else:
             ret_val = self.value.generate_llvm(context)
-            context.leave_func_scope_on_return()
+            context.leave_scope(self.depth_from_next_function)
             context.builder.ret(ret_val)
     
     @staticmethod
@@ -1256,6 +1396,13 @@ class PFunctionCall(PExpression):
         self.arguments = arguments
         if function.name == 'main':
             raise CompilerError(f"Cannot call main function directly")
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        for stmt in (self.function, 
+                     *self.arguments):
+            yield stmt
+        return
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a function result"
@@ -1280,6 +1427,14 @@ class PMethodCall(PExpression):
         self.object = object
         self.method_name = method
         self.arguments = arguments
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        for stmt in (self.object,
+                     self.method_name, 
+                     *self.arguments):
+            yield stmt
+        return
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a function return value"
@@ -1295,7 +1450,7 @@ class PMethodCall(PExpression):
         
         #setup arguments
         args = [this] + [a.generate_llvm(context) for a in self.arguments]
-        method_name = context.get_method_symbol_name(self.object.expr_type.name, self.method_name)
+        method_name = context.get_method_symbol_name(self.object.expr_type.name, self.method_name.name)
         fun = context.scopes.get_symbol(method_name).func_ptr
         assert isinstance(fun, ir.Function)
         ret_val = context.builder.call(fun, args)
@@ -1381,6 +1536,12 @@ class PCast(PExpression):
         self.expression = expression
         # TODO : This value can be true, calculated at compile time and optimized out if inner expression is const
         self.is_compile_time_constant = False
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.target_type
+        yield self.expression
+        return
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a casted value"
@@ -1493,7 +1654,7 @@ class PBreakStatement(PStatement):
         
     def generate_llvm(self, context: CodeGenContext) -> None:
         end_of_loop_block = context.loopinfo[-1].end_of_loop_block
-        context.leave_loop_scope_on_break()
+        context.leave_scope(self.depth_from_next_loop)
         context.builder.branch(end_of_loop_block)
 
 @dataclass
@@ -1505,7 +1666,7 @@ class PContinueStatement(PStatement):
         
     def generate_llvm(self, context: CodeGenContext) -> None:
         continue_loop_block = context.loopinfo[-1].continue_loop_block
-        context.leave_loop_scope_on_continue()
+        context.leave_scope(self.depth_from_next_loop)
         context.builder.branch(continue_loop_block)
 
 @dataclass
@@ -1518,6 +1679,13 @@ class PAssertStatement(PStatement):
         super().__init__(NodeType.ASSERT_STATEMENT, lexeme.pos)
         self.condition = condition
         self.message = message
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.condition
+        if self.message is not None:
+            yield self.message
+        return
     
     def generate_llvm(self, context: CodeGenContext) -> None:
         condition_is_false = context.builder.not_(self.condition.generate_llvm(context))
@@ -1536,6 +1704,12 @@ class PDotAttribute(PExpression):
         super().__init__(NodeType.ATTRIBUTE, left.position)
         self.left = left
         self.right = right
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.left
+        yield self.right
+        return
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         # left**
@@ -1587,6 +1761,13 @@ class PTernaryOperation(PExpression):
         self.false_value = false_value
         # TODO : This value can be true, calculated at compile time and optimized out if condition and its result are compile time constants
         self.is_compile_time_constant = False
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.condition
+        yield self.true_value
+        yield self.false_value
+        return
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         return context.builder.select(
@@ -1610,6 +1791,11 @@ class PObjectInstantiation(PExpression):
         """
         super().__init__(NodeType.OBJECT_INSTANTIATION, lexeme.pos)
         self.class_type = class_type
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.class_type
+        return
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
@@ -1668,6 +1854,12 @@ class PArrayInstantiation(PExpression):
         super().__init__(NodeType.ARRAY_INSTANTIATION, lexeme.pos)
         self.element_type = element_type
         self.size = size
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.size
+        yield self.element_type
+        return
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get ptr to array reference"
@@ -1775,6 +1967,12 @@ class PArrayIndexing(PExpression):
         super().__init__(NodeType.ARRAY_ACCESS, lexeme.pos)
         self.array = array
         self.index = index
+        
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.array
+        yield self.index
+        return
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         #get type of array
@@ -1938,7 +2136,8 @@ class Parser:
         while self.current_lexeme and self.current_lexeme.type != LexemeType.EOF:
             statements.append(self._parse_statement(BlockProperties()))
 
-        return PProgram(statements, start_lexeme)
+        pprogram = PProgram(statements, start_lexeme)
+        return pprogram
 
     def _parse_object_instantiation(self) -> Union[PObjectInstantiation,PArrayInstantiation]:
         """Parse a class instantiation expression."""
