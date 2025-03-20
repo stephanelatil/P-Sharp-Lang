@@ -4,7 +4,8 @@ from typing import List, Type
 from llvm_transpiler import CodeGen
 from llvmlite import ir
 from llvmlite.binding import Target, parse_assembly, create_mcjit_compiler, ModuleRef
-from constants import ENTRYPOINT_FUNCTION_NAME, FUNC_POPULATE_GLOBALS
+from constants import (ENTRYPOINT_FUNCTION_NAME, FUNC_POPULATE_GLOBALS,
+                       FUNC_GC_ENTER_SCOPE, FUNC_GC_LEAVE_SCOPE)
 import ctypes
 import math
 
@@ -1235,11 +1236,13 @@ class TestCodeGeneratorEdgeCases(CodeGenTestCase):
         self.assertEqual(result, expected)
         
 class TestCodeGeneratorGCScope(CodeGenTestCase):
-    """"""
+    """Tests that the GC scopes are opened and all properly closed"""
 
     def test_scope_management_code_after_return(self):
         source = """
-        i32 main(){
+        i32 f()
+        //enter scope for params
+        {
             //enter scope
             i32 x;
             { //enter scope
@@ -1253,13 +1256,67 @@ class TestCodeGeneratorGCScope(CodeGenTestCase):
                 }// leave 1 scope
             }// leave 1 scope
         }// leave 1 scope
+        i32 main(){
+            return f();
+        }
         """
         expected = 1
         result = self.compile_and_run_main(source)
         self.assertEqual(result, expected)
         #count the number of enter/leave scopes
+        ir_code = self.get_function_ir(self.generate_module(source), "f")
+        self.assertEqual(ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}'), 5)
+        self.assertIn(f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 5)', ir_code)
         
-
+    def test_enter_as_many_scopes_as_we_leave(self):
+        main = """
+        i32 main(){
+            return 0;
+        }
+        """
+        test_cases = [
+        ("""
+        bool f()//enter param scope
+        {
+            //enter body scope
+            return false; //leave twice
+        }
+        """, 2, [2]),
+        ("""
+        f32 f()//enter param scope
+        {
+            //enter body scope
+            if (1 == 1) //enter if scope
+                return 0.0; //leave 3 scopes
+            return 1.0; //leave 2 scopes
+        }
+        """, 3, [2,3]),
+        ("""
+        bool f()//enter param scope
+        {
+            //enter body scope
+            if (true){ //enter if scope
+                for (;;) //enter for init scope
+                    //enter for body scope
+                    while (true) //enter while scope
+                        return true; //leave 6 scopes
+                        //leave 
+            }
+            else{ //enter else scope
+                return false; //leave 3 scopes
+            }
+            return false; //leave 2 scopes
+        }
+        """, 7, [2, 3, 6]),
+        ]
+        
+        for source, scope_enter_count, scope_leave_counts in test_cases:
+            with self.subTest(source=source):
+                mod = self.generate_module(source)
+                ir_code = self.get_function_ir(mod, 'f')
+                self.assertEqual(ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}'), scope_enter_count)
+                for leave_count in scope_leave_counts:
+                    self.assertIn(f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 {leave_count})', ir_code)
 
 class TestCodeGeneratorLoopWithoutBraces(CodeGenTestCase):
     """Test for-loops written without braces for a single statement body."""
