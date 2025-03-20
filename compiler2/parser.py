@@ -1272,10 +1272,10 @@ class PFunctionCall(PExpression):
 class PMethodCall(PExpression):
     """Method call node"""
     object: PExpression
-    method_name: str
+    method_name: "PIdentifier"
     arguments: List[PExpression]
 
-    def __init__(self, object: PExpression, method: str, arguments: List[PExpression], lexeme: Lexeme):
+    def __init__(self, object: PExpression, method: "PIdentifier", arguments: List[PExpression], lexeme: Lexeme):
         super().__init__(NodeType.METHOD_CALL, lexeme.pos)
         self.object = object
         self.method_name = method
@@ -2431,12 +2431,12 @@ class Parser:
 
         # If followed by parentheses, it's a method call
         if self._match(LexemeType.PUNCTUATION_OPENPAREN):
-            return self._parse_method_call(left, member_identifier.name)
+            return self._parse_method_call(left, member_identifier)
 
         # Otherwise it's a field access
         return PDotAttribute(left, member_identifier)
 
-    def _parse_method_call(self, object_expr: PExpression, method_name: str) -> PMethodCall:
+    def _parse_method_call(self, object_expr: PExpression, method_name: PIdentifier) -> PMethodCall:
         """Parse a method call including its arguments.
 
         Args:

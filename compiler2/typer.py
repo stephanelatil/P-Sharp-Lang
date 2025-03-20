@@ -424,11 +424,11 @@ class Typer:
             return self._ast
         self._ast = self.parser.parse()
         
-        self._scope_manager.define_function(PFunction(FUNC_DEFAULT_TOSTRING,PType('string', Position.default),
+        self._scope_manager.define_function(PFunction(FUNC_DEFAULT_TOSTRING, PType('string', Position.default),
                                                       [PVariableDeclaration('this', PType("__null", Lexeme.default), None, Lexeme.default)],
                                                       PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
         
-        self._scope_manager.define_function(PFunction(FUNC_PRINT,PType('i32', Position.default),
+        self._scope_manager.define_function(PFunction(FUNC_PRINT, PType('i32', Position.default),
                                                       [PVariableDeclaration('s', PType("string", Lexeme.default), None, Lexeme.default)],
                                                       PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
 
@@ -448,6 +448,8 @@ class Typer:
 
         self._print_warnings()
         self._cfg_check(self._ast)
+        # make tree traversable in both directions
+        self._ast._setup_parents()
         return self._ast
 
     def _check_unused_symbols(self):
@@ -1005,10 +1007,10 @@ class Typer:
         """Type checks a method call and returns its return type"""
         obj_type = self._type_expression(method_call.object)
         for method in obj_type.methods:
-            if method_call.method_name == method.name:
+            if method_call.method_name.name == method.name:
                 break
         else:
-            raise TypingError(f"Method {method_call.method_name} of type {obj_type} if unknown at location {method_call.position}")
+            raise TypingError(f"Method {method_call.method_name.name} of type {obj_type} if unknown at location {method_call.position}")
         
         method.is_called = True
         if len(method.explicit_arguments) != len(method_call.arguments):
