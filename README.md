@@ -2,7 +2,7 @@
 
 ## **NOTE:**
 
-**This project is currently being rewritten**. Some features are available and you can run P# code in *Interpreted* mode on the `interpreter` branch with the -i flag. It is extremely slow and is actively being rewritten on this branch
+**This project is currently being rewritten**. A first release is planned soon as most features are functional and simple programs execute correctly already. It is *possible* but not recommended to run code in interpreted mode (which is VERY slow and possibly broken), using `./compiler/main.py` with the -i flag. Waiting a few weeks for the rewritten version is preferred.
 
 <img src="assets/img/psharp_logo.png" alt="P# Logo" width="128"/>
 
@@ -12,7 +12,6 @@ P# is a programming language designed for developers who want the best of both w
 
 - [Introduction](#introduction)
 - [Key Features](#key-features)
-- [Important Note](#important-note)
 - [Quick Start](#quick-start)
 - [Language Syntax](#language-syntax)
 - [Memory Management](#memory-management)
@@ -24,11 +23,13 @@ P# is a programming language designed for developers who want the best of both w
 
 ## Introduction
 
-P# is the brainchild of a software developer who understand the nuances of both Python and C#. It combines the readability and ease of use of Python with C#'s performance and type system. This unique blend allows developers to write code that is both elegant and efficient, whether they're working on complex applications or quick scripting tasks. The goal is to build a language for embedded devices and bare metal without having to think about memory management. The GC will have a small performance overhead compared to rust or C.
+P# combines the readability and ease of use of Python with C#'s performance and type system. This unique blend allows developers to write code that is both elegant and efficient, whether they're working on complex applications or quick scripting tasks.
+
+The goal is to build a language for **embedded devices** and bare metal without having to think about memory management. The GC will have a small performance overhead compared to rust or C.
 
 **Note** that many features and some syntax quirks may change over time as this is still in early development.
 
-Notably the parser is being reworked from a Yacc parser to a custom parser to handle syntax sugar and reduction prioritization more robustly.
+Notably the parser is being reworked from a Yacc parser to a custom parser to handle syntax sugar and reduction prioritization more robustly. Everything else if being thoroughly reworked for a faster compiler and added features.
 
 ## Key Features
 
@@ -50,10 +51,6 @@ Developers can harness the power of existing C libraries by seamlessly linking t
 
 P# stands out as a scripting-friendly language by eliminating the need for a main class or function. This makes it perfect for quick scripts, automation tasks, and prototyping, reducing boilerplate code and streamlining the development process.
 
-## IMPORTANT NOTE
-
-At the moment the compiler is currently only functional until the Typing tree (`-C T` flag). Development is underway to convert the typing tree to a control graph then translating it to LLVM-IR where it will be compiled down to machine code using a backend.
-
 ## Quick Start
 
 To start using P#, follow these simple steps:
@@ -71,8 +68,10 @@ i32 main(){
 
 ### Compile and Run: Use the P# compiler to compile your program
 
+**Coming soon, tests pass 99%**
+
 ```sh
-python ./compiler/main.py -o output_executable your_program_source.psc
+python ./compiler2/main.py -o output_executable your_program_source.psc
 ```
 
 ### Run code
@@ -86,12 +85,32 @@ python ./compiler/main.py -o output_executable your_program_source.psc
 P#'s syntax draws inspiration from C#, Python (and Rust types) to provide a familiar environment for developers. Here's a quick example of variable declaration, function definition and function call:
 
 ```rust
+//classes with fields and methods
+class Fibonacci{
+    //Classes have fields
+    u64[] Cache = new u64[1000]; //Arrays
+
+    u64 Fib(u16 n){
+        //check cache
+        if (n < this.Cache.Length and this.Cache[n] != 0)
+            return this.Cache[n];
+        //base case
+        if (i <= 2)
+            return 1;
+        // calculate value (second call uses cache built by the first)
+        u64 result = this.Fib(n-1) + this.Fib(n-2);
+        if (n < this.Cache.Length)
+            this.Cache[n] = result;
+        return result;
+    }
+}
+
 // Variable declaration
 i32 x = 42;
 
 // Function definition
 i32 min(i32 a, i32 b) {
-    return a < b ? a : b;
+    return a < b ? a : b; //ternary operators
 }
 
 //function call
@@ -124,6 +143,8 @@ class Point {
 
 ## Integration with C Libraries
 
+*Coming soon (?)*
+
 P# will enable easy integration with C libraries to enhance functionality while keeping everything safe of memory leaks. Declare external functions using the `extern` keyword:
 
 ```c
@@ -133,7 +154,7 @@ extern i16 atos(char[] s);
 
 ## Scripting Capabilities
 
-Thanks to its lightweight nature and absence of main class/function requirements, P# excels as a scripting language. Perform quick tasks without unnecessary setup or classes.
+Thanks to its lightweight runtime (<50kb) and almost no nature and absence of main class requirements, P# excels as a scripting language. Perform quick tasks without unnecessary setup or classes.
 
 ## Contributing
 
