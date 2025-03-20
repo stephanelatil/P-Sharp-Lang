@@ -6,7 +6,7 @@
 #include <inttypes.h>
 #include "gc.h"
 
-#define GC_After_N_Allocs 20
+#define GC_RUN_HEURISTIC 20
 
 /// Global type registry
 static __PS_TypeRegistry __PS_type_registry = {0}; //initialize to 0
@@ -19,6 +19,7 @@ static void (*__PS_free)(void*) = free;
 static __PS_ObjectHeader* __PS_first_obj_header = NULL; //TODO add mutex for this element as well?
 static __PS_ScopeStack __PS_scope_stack = {0}; //the stack of roots
 static uint32_t __PS_partial_alloc_count = 0;
+static uint32_t __PS_roots_removed = 0;
 
 /// @brief Initializes the ScopeStack to handle root variables on the stack
 /// @param max_scope_depth The max scope depth before hitting the GC stack overflow limit (independent from the actual stack size)
@@ -32,7 +33,9 @@ void __PS_InitScopeStack(size_t max_scope_depth) {
 /// @brief Decides whether to run the garbage collector now or not, depending on some heuristic data obtained from the global scope vars
 /// @return true (1) if the heuristic decides to run the GC now else false (0)
 static inline bool __PS_Collect_Garbage_Now_Heuristic(void){
-    return __PS_partial_alloc_count >= GC_After_N_Allocs;
+    //TODO: This is a SHIT heuristic and should be fixed!
+    return __PS_partial_alloc_count >= GC_RUN_HEURISTIC ||
+           __PS_roots_removed >= GC_RUN_HEURISTIC >> 1;
 }
 
 /// @brief Tells the GC we're entering a new scope that will contain $num_roots variables
@@ -48,6 +51,10 @@ void __PS_EnterScope(size_t num_roots) {
     new_scope->roots = (__PS_Root*) __PS_malloc(sizeof(__PS_Root) * num_roots);
     new_scope->num_roots = 0;
     new_scope->capacity = num_roots;
+
+    //Collect garbage if necessary
+    if (__PS_Collect_Garbage_Now_Heuristic())
+        __PS_CollectGarbage();
 }
 
 /// @brief Tells the GC we're leaving $depth scopes. It will destroy multiple scopes and associated roots. The GC will be run if it deems relevant.
@@ -76,9 +83,8 @@ void __PS_LeaveScope(size_t depth) {
     // Get the current scope
     pthread_mutex_unlock(&__PS_scope_stack.lock);
 
-    //Collect garbage if necessary
-    if (__PS_Collect_Garbage_Now_Heuristic())
-        __PS_CollectGarbage();
+    //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // Do not collect garbage on scope exit as it could collect the item being returned from the function!
 }
 
 /// @brief Frees all remaining scopes and prepares for program termination
@@ -218,6 +224,10 @@ void* __PS_AllocateArray(int64_t size, size_t type_id){
 }
 
 void* __PS_AllocateValueArray(int8_t element_size, int64_t num_elements){
+    //Collect garbage if necessary
+    if (__PS_Collect_Garbage_Now_Heuristic())
+        __PS_CollectGarbage();
+
     // sizeof(int64_t) = allocated for the length of the array
     // element_size * num_elements = bytes to allocate for the array data
     int64_t size = sizeof(int64_t) + element_size * num_elements;
@@ -227,6 +237,10 @@ void* __PS_AllocateValueArray(int8_t element_size, int64_t num_elements){
 }
 
 void* __PS_AllocateRefArray(int64_t num_elements){
+    //Collect garbage if necessary
+    if (__PS_Collect_Garbage_Now_Heuristic())
+        __PS_CollectGarbage();
+
     // sizeof(int64_t) = allocated for the length of the array
     // sizeof(void*) * num_elements = bytes to allocate for the array data, where each element is a pointer to an object (thus a void*)
     int64_t size = sizeof(int64_t) + sizeof(void*) * num_elements;
