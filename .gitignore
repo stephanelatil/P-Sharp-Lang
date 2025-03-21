@@ -23,3 +23,6 @@ out.txt
 .vscode
 .venv
 .coverage
+
+#ignore personal coding tests and notes
+notes/
