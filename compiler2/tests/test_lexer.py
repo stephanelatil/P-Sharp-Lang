@@ -306,11 +306,11 @@ class LexerTests(TestCase):
         """Test string literals with various escape sequences."""
         test_cases = {
             '"Simple string"': '"Simple string"',
-            '"String with \\"quotes\\""': '"String with \\"quotes\\""',
-            '"String with \\n\\t\\r"': '"String with \\n\\t\\r"',
+            '"String with \\"quotes\\""': '"String with \"quotes\""',
+            '"String with \\n\\t\\r"': '"String with \n\t\r"',
             '"Unicode string ¡£©¶œβ"': '"Unicode string ¡£©¶œβ"',
             '"Strings\\0 with escape sequences \\\\ \\\" \\\' \\n\\r\\f\\b\\x50"':
-            '"Strings\\0 with escape sequences \\\\ \\\" \\\' \\n\\r\\f\\b\\x50"'
+            '"Strings\0 with escape sequences \\ \" \' \n\r\f\b\x50"'
         }
         for input_str, expected in test_cases.items():
             with self.subTest(input_str=input_str, excepted=expected):
@@ -323,20 +323,20 @@ class LexerTests(TestCase):
     def test_character_literals(self) -> None:
         """Test character literals including escape sequences."""
         test_cases = {
-            "'a'": LexemeType.NUMBER_CHAR,
-            "'\\n'": LexemeType.NUMBER_CHAR,
-            "'\\t'": LexemeType.NUMBER_CHAR,
-            "'\\''": LexemeType.NUMBER_CHAR,
-            "'\\\\'": LexemeType.NUMBER_CHAR,
-            "'\\x41'": LexemeType.NUMBER_CHAR  # Hex escape
+            ("'a'", LexemeType.NUMBER_CHAR, "'a'"),
+            ("'\\n'", LexemeType.NUMBER_CHAR, "'\n'"),
+            ("'\\t'", LexemeType.NUMBER_CHAR, "'\t'"),
+            ("'\\''", LexemeType.NUMBER_CHAR, "'''"),
+            ("'\\\\'", LexemeType.NUMBER_CHAR, "'\\'"),
+            ("'\\x41'", LexemeType.NUMBER_CHAR, "'\x41'") # Hex escape
         }
-        for input_str, expected_type in test_cases.items():
+        for input_str, expected_type, expected_char in test_cases:
             with self.subTest(input_str=input_str, expected_type=expected_type):
                 lexer = Lexer('test.ps', StringIO(input_str))
                 lexemes = list(lexer.lex())
                 self.assertEqual(len(lexemes), 1)  # Char
                 self.assertEqual(lexemes[0].type, expected_type)
-                self.assertEqual(lexemes[0].value, input_str)
+                self.assertEqual(lexemes[0].value, expected_char)
 
     def test_invalid_character_literals(self) -> None:
         """Test that invalid character literals raise appropriate errors."""

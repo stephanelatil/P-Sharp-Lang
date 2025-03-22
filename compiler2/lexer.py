@@ -1,6 +1,7 @@
 from enum import Enum, auto
 from collections import deque
 from typing import TextIO, Generator, Optional
+import codecs
 
 class Position:
     default:'Position'
@@ -222,7 +223,6 @@ class Lexer:
             'f16':LexemeType.KEYWORD_TYPE_FLOAT16,
             'f32':LexemeType.KEYWORD_TYPE_FLOAT32,
             'f64':LexemeType.KEYWORD_TYPE_FLOAT64,
-            'char':LexemeType.KEYWORD_TYPE_CHAR,
             'bool':LexemeType.KEYWORD_TYPE_BOOLEAN,
             'and':LexemeType.OPERATOR_BINARY_BOOL_AND,
             'or':LexemeType.OPERATOR_BINARY_BOOL_OR,
@@ -458,77 +458,25 @@ class Lexer:
         start_pos = self.stream.position()
         value = self.stream.advance()  # Opening quote
 
-        # Map of valid simple escape sequences
-        valid_escapes = {
-            'n': '\n',
-            'r': '\r',
-            't': '\t',
-            '\\': '\\',
-            '"': '"',
-            "'": "'",
-            'b': '\b',
-            'f': '\f',
-            'v': '\v',
-            '0': '\0'
-        }
-
         while True:
             char = self.stream.peek()
 
             if char is None or char == '\n':
                 raise LexerError("Unterminated string literal", start_pos, self.stream.position())
 
-            # Handle escape sequences
-            if char == '\\':
-                escape_start = self.stream.position()
-                value += self.stream.advance()  # Add the backslash
-
-                next_char = self.stream.peek()
-                if next_char is None:
-                    raise LexerError("Unterminated escape sequence", escape_start, self.stream.position())
-
-                # Handle hex escape sequence
-                if next_char == 'x':
-                    value += self.stream.advance()  # Add 'x'
-                    hex_digits = ''
-
-                    # Read exactly 2 hex digits
-                    for _ in range(2):
-                        digit = self.stream.peek()
-                        if digit is None or not (digit.isdigit() or digit.lower() in 'abcdef'):
-                            raise LexerError(
-                                "Invalid hex escape sequence - must be exactly 2 hex digits",
-                                escape_start,
-                                self.stream.position()
-                            )
-                        hex_digits += self.stream.advance()
-                    value += hex_digits
-                    continue
-
-                # Handle simple escape sequences
-                if next_char not in valid_escapes:
-                    raise LexerError(
-                        f"Invalid escape sequence '\\{next_char}'",
-                        escape_start,
-                        self.stream.position() + 1
-                    )
-
-                value += self.stream.advance()
-                continue
-
             # Handle string termination
             if char == '"':
                 value += self.stream.advance()
                 break
 
-            # Add regular character
-            value += self.stream.advance()
+            # Add character
+            value += self._lex_single_char_or_escape_sequence()
 
         return Lexeme(LexemeType.STRING_LITERAL, value, start_pos)
-
-    def _lex_char(self) -> Lexeme:
+    
+    def _lex_single_char_or_escape_sequence(self):
         start_pos = self.stream.position()
-        value = self.stream.advance()  # Opening quote
+        value = ""
 
         char = self.stream.peek()
         if char is None:
@@ -546,10 +494,19 @@ class Lexer:
                     if char is None or not (char.isdigit() or char.lower() in 'abcdef'):
                         raise LexerError("Invalid hex escape sequence in character literal", start_pos)
                     value += self.stream.advance()
-            else: # Handle other escape sequences
+            elif char in "'\"\\abfnrtv0": # Handle other escape sequences
                 value += self.stream.advance()
+            else:
+                raise LexerError("Unknown escape sequence", start_pos, self.stream.position()+1)
+            return codecs.decode(value, 'unicode-escape')
         else:
-            value += self.stream.advance()
+            return self.stream.advance()
+
+    def _lex_char(self) -> Lexeme:
+        start_pos = self.stream.position()
+        value = self.stream.advance()  # Opening quote
+
+        value += self._lex_single_char_or_escape_sequence()
 
         # Expect closing quote
         char = self.stream.peek()
