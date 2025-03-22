@@ -1,0 +1,20 @@
+#!/bin/bash
+
+MAIN_LOCATION=./compiler2/main.py
+
+LLC_LOCATION="${LLC_LOCATION:-llc}"
+CLANG_LOCATION="${CLANG_LOCATION:-clang}"
+
+if ! command -v ${LLC_LOCATION} 2>&1 >/dev/null
+then
+    echo "${LLC_LOCATION} could not be found. Set the LLC_LOCATION variable to point to your installed llc - LLVM static compiler location"
+    exit 1
+fi
+
+if ! command -v ${CLANG_LOCATION} 2>&1 >/dev/null
+then
+    echo "${CLANG_LOCATION} could not be found. Set the CLANG_LOCATION variable to point to your installed clang compiler"
+    exit 1
+fi
+
+LLC_LOCATION="${LLC_LOCATION}" CLANG_LOCATION="${CLANG_LOCATION}" python3 ${MAIN_LOCATION} "$@"
