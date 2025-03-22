@@ -17,11 +17,13 @@ from warnings import warn
 from constants import *
 from llvmlite.binding import (initialize, initialize_native_target, 
                               initialize_native_asmprinter, PipelineTuningOptions,
-                              PassBuilder, Target, parse_assembly, parse_bitcode)
+                              PassBuilder, Target, parse_assembly, parse_bitcode,
+                              ModuleRef)
+from pathlib import Path
 
 
 class CodeGen:
-    _GC_LIB='../garbage_collector/ps_re.bc'
+    _GC_LIB=str(Path(Path(__file__).parent.parent, 'garbage_collector/ps_re.bc'))
     BUILTINS_TYPE_MAP: Dict[str, Union[ir.IntType,
                                        ir.HalfType,
                                        ir.FloatType,
@@ -67,9 +69,9 @@ class CodeGen:
         self.pass_builder = PassBuilder(self.target, opts)
     
     
-    def compile_module(self, filename:str, file:TextIO, is_library:bool=False):
+    def compile_module(self, filename:str, file:TextIO, is_library:bool=False) -> ModuleRef:
         # Initializes module & typer
-        self.module = ir.Module(name=filename+".o")
+        self.module = ir.Module(name=filename.removesuffix('.psc'))
         self.module.triple = Target.from_default_triple().triple
         self.typer = Typer(filename, file)
         # Lex, Parse and Type code
@@ -135,6 +137,7 @@ class CodeGen:
         pass_manager.add_verifier()
         pass_manager.run(module_ref, self.pass_builder)
         # Return ModuleRef object
+        module_ref.name = filename.removesuffix(".psc") #TODO: here change when namespaces are generated
         return module_ref
     
     def _define_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
@@ -509,6 +512,7 @@ class CodeGen:
             raise TypingError(f'Unable to get IR Type for value type {typ}')
         
         type_info = self.typer.get_type_info(typ)
+        assert type_info.type_class in (TypeClass.CLASS, TypeClass.ARRAY, TypeClass.STRING)
         
         if type_info.type_class == TypeClass.CLASS:
             field_types = [
@@ -518,7 +522,7 @@ class CodeGen:
             return ir.LiteralStructType(field_types)
             
         
-        if type_info.type_class == TypeClass.ARRAY:
+        elif type_info.type_class == TypeClass.ARRAY:
             assert isinstance(typ, ArrayTyp)
             #return a generic array struct (contains an int and a pointer to the array)
             return ir.LiteralStructType([
@@ -530,12 +534,11 @@ class CodeGen:
                     0) #arbitrary size
             ])
 
-        if type_info.type_class == TypeClass.STRING:
+        else:
+            assert type_info.type_class == TypeClass.STRING:
             return ir.LiteralStructType([
                 ir.IntType(64), #the string length
                 ir.ArrayType(
                     ir.IntType(8), #a char (strings are basically just char arrays)
                     0) #arbitrary size
             ])
-        
-        raise TypingError(f"Unsupported type: {typ.name}")
