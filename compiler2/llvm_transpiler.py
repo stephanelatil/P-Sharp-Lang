@@ -535,7 +535,7 @@ class CodeGen:
             ])
 
         else:
-            assert type_info.type_class == TypeClass.STRING:
+            assert type_info.type_class == TypeClass.STRING
             return ir.LiteralStructType([
                 ir.IntType(64), #the string length
                 ir.ArrayType(
