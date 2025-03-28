@@ -45,7 +45,7 @@ class CodeGen:
             'bool': ir.IntType(1)
         }
     
-    def __init__(self, speed_opt:int=0, size_opt:int=0, use_warnings:bool=False) -> None:
+    def __init__(self, optimization:Union[int,str]=0, use_warnings:bool=False) -> None:
         
         #required for code generation (no cross-compile yet, needs initialize_all* for that)
         initialize()
@@ -61,11 +61,16 @@ class CodeGen:
             codemodel='jitdefault',
             jit=False,
         )
-        opts = PipelineTuningOptions(speed_opt, size_opt)
-        opts.loop_unrolling = speed_opt >= 1
-        opts.loop_interleaving = speed_opt >= 2
-        opts.loop_vectorization = speed_opt >=2
-        opts.slp_vectorization = speed_opt >=3
+
+        if isinstance(optimization, str):
+            optimization = 2 
+            opts = PipelineTuningOptions(optimization, size_level=2)
+        else:
+            opts = PipelineTuningOptions(optimization)
+        opts.loop_unrolling = optimization >= 1
+        opts.loop_interleaving = optimization >= 2
+        opts.loop_vectorization = optimization >=2
+        opts.slp_vectorization = optimization >=3
         self.pass_builder = PassBuilder(self.target, opts)
     
     
@@ -124,6 +129,10 @@ class CodeGen:
             module_ref = parse_assembly(str(context.module))
             with open(self._GC_LIB, "rb") as f:
                 gc_module = parse_bitcode(f.read())
+                # TODO: Once namespaces are added:
+                    # Rename runtime C symbols to be included by adding them to a private namespace
+                    # Same for adding tostring and other methods for ref values
+                    # c.f. https://stackoverflow.com/questions/30990032/change-name-of-llvm-function
                 module_ref.link_in(gc_module)
 
         # If building a library, add a globals initializer function. and ignore all other statement
