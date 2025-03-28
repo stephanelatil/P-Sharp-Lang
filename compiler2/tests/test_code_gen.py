@@ -247,6 +247,21 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         self.assertIn("i32", ir_code)
         res = self.compile_and_run_main(source)
         self.assertEqual(res, 3+5)
+        
+    def test_valid_ToString_calls(self):
+        test_cases = [
+            ("i32 main() { string s = true.ToString(); return (i32) s.Length; }", 4),
+            ("i32 main() { string s = (123).ToString(); return (i32) s.Length; }", 3),
+            ("i32 main() { string s = (3.1415).ToString(); return (i32) s.Length; }", 6),
+            ("i32 main() { string s = \"hello\".ToString(); return (i32) s.Length; }", 5),
+            ("i32 main() { string s = 'a'.ToString(); return (i32) s.Length; }", 1)
+        ]
+        
+        for source, expected_value in test_cases:
+            with self.subTest(source=source):
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, expected_value)
+                
 
     def test_valid_method_chaining(self):
         """Test valid method chaining"""

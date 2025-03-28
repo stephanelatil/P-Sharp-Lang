@@ -755,6 +755,30 @@ class TestTyperMethodCalls(TestCase):
         assert method_call.expr_type is not None
         self.assertEqual(method_call.object.expr_type, self.typer.known_types['Calculator'])
         self.assertEqual(method_call.expr_type, self.typer.known_types['i32'])
+        
+    def test_valid_ToString_calls(self):
+        test_cases = [
+            "string s = true.ToString();",
+            "string s = (123).ToString();",
+            "string s = (3.1415).ToString();",
+            "string s = \"hello\".ToString();",
+            "string s = 'a'.ToString();"
+        ]
+        
+        for source in test_cases:
+            with self.subTest(source=source):
+                prog = self.parse_and_type(source)
+                var_decl = prog.statements[0]
+                self.assertIsInstance(var_decl, PVariableDeclaration)
+                assert isinstance(var_decl, PVariableDeclaration)
+                assert var_decl.initial_value is not None
+                method_call = var_decl.initial_value
+                self.assertIsInstance(method_call, PMethodCall)
+                assert isinstance(method_call, PMethodCall)
+                self.assertEqual(len(method_call.arguments), 0)
+                self.assertEqual(method_call.method_name.name, 'ToString')
+                self.assertIsNotNone(method_call.expr_type)
+                self.assertEqual(method_call.expr_type, self.typer.known_types['string'])
 
     def test_valid_method_chaining(self):
         """Test valid method chaining"""
@@ -1212,6 +1236,17 @@ class TestTyperTypeCasting(TestCase):
         "i32 medium = (i32)((i64)12345);  // i64 -> i32",
         "i16 small = (i16)123;  // i32 -> i16",
         "i8 tiny = (i8)1;      // i16 -> i8"
+        ]
+        
+        for source in test_cases:
+            with self.subTest(source=source):
+                self.parse_and_type(source)
+                
+    def test_implicit_casts(self):
+        test_cases = [
+        "i64 large = 42;",
+        "f64 large = 42;",
+        "f32 large = 42;",
         ]
         
         for source in test_cases:
