@@ -2,7 +2,7 @@
 
 ## **NOTE:**
 
-**This project is currently being rewritten**. A first release is planned soon as most features are functional and simple programs execute correctly already. It is *possible* but not recommended to run code in interpreted mode (which is VERY slow and possibly broken), using `./compiler/main.py` with the -i flag. Waiting a few weeks for the rewritten version is preferred.
+**This project is currently being rewritten**. A beta is available and functional. A first release is planned soon as most features are functional-ish and simple programs execute correctly already.
 
 <img src="assets/img/psharp_logo.png" alt="P# Logo" width="128"/>
 
@@ -55,7 +55,7 @@ P# stands out as a scripting-friendly language by eliminating the need for a mai
 
 To start using P#, follow these simple steps:
 
-1. **Installation**: Download and install the P# compiler from the github page [github.com/TheD0ubleT/P-Sharp-Lang](https://github.com/TheD0ubleT/P-Sharp-Lang).
+1. **Installation**: Download the P# compiler by cloning the github repo [github.com/TheD0ubleT/P-Sharp-Lang](https://github.com/TheD0ubleT/P-Sharp-Lang).
 
 2. **Hello, World!**: Write your first P# program by printing "Hello, World!" to the console:
 
@@ -68,10 +68,8 @@ i32 main(){
 
 ### Compile and Run: Use the P# compiler to compile your program
 
-**Coming soon, tests pass 99%**
-
 ```sh
-python ./compiler2/main.py -o output_executable your_program_source.psc
+pscc -o output_executable your_program_source.psc
 ```
 
 ### Run code
@@ -87,23 +85,27 @@ P#'s syntax draws inspiration from C#, Python (and Rust types) to provide a fami
 ```rust
 //classes with fields and methods
 class Fibonacci{
+    u64 ArrLen = (u64)100;
     //Classes have fields
-    u64[] Cache = new u64[1000]; //Arrays
+    u64[] Cache = new u64[100]; 
 
-    u64 Fib(u16 n){
+    // Methods
+    u64 Fib(i32 n){
         //check cache
-        if (n < this.Cache.Length and this.Cache[n] != 0)
+        if (n < this.ArrLen and this.Cache[n] != 0)
             return this.Cache[n];
         //base case
-        if (i <= 2)
-            return 1;
+        if (n <= 1)
+            return (u64) n;
         // calculate value (second call uses cache built by the first)
         u64 result = this.Fib(n-1) + this.Fib(n-2);
-        if (n < this.Cache.Length)
+        //cache result
+        if (n < this.ArrLen)
             this.Cache[n] = result;
         return result;
     }
 }
+
 
 // Variable declaration
 i32 x = 42;
@@ -113,8 +115,13 @@ i32 min(i32 a, i32 b) {
     return a < b ? a : b; //ternary operators
 }
 
-//function call
-print(min(x, 1337));
+i32 main(){
+    // new handles allocation and garbage collection
+    Fibonacci f = new Fibonacci();
+
+    //function calls & casts
+    return (i32) f.Fib(10);
+}
 ```
 
 ## Memory Management
@@ -130,10 +137,12 @@ class Point {
     f32 x;
     f32 y;
 
+    /* Currently constructors are not yet supported
     Point(f32 x, f32 y) {
         this.x = x;
         this.y = y;
     }
+    */
 
     f32 squareNorm(){
         return x * x + y * y;
