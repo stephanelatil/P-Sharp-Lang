@@ -28,6 +28,12 @@ Need simpler functions and to more clearly define a code flow path for compiling
 1. Run optimization passes
 1. Output all code to a file (or pass to clang/compiler) to output .ll .bc or .o depending on params
 
+## [X] Add negative indexing for arrays
+
+Like in python, when you have an array `i32[] arr = new i32[10]`. Indexing it with a negative value is identical to indexing it from the end. 
+
+`arr[-1]` is equivalent to `arr[arr.Length - 1]` or for any `N > 0` then `arr[-N] == arr[arr.Length - N]`
+
 ## [ ] Add a proper compiler executable (or main.py) file with documentation, cli args etc.
 
 ## [ ] Add debug symbols in LLVM IR generation with metadata
@@ -38,9 +44,15 @@ This will help with program debugging. They should be added if a flag is given t
 
 ## [ ] Add Warnings and flags for any and all potentials issues
 
-## [ ] Add "interpreter" to run compiled llvm code `main` function using ctypes
+## [ ] Add Properties getters (and setters) for fields with new keywords?
 
-## [ ] `override` operator to override __PS_* methods (will be replaced with namespaces)
+Will be able to use properties to get quick calculations for simple inlined methods like getting an array's length or a flag on a particular element (i.e. `someStack.IsEmpty` is a calculated value check on each call. Properties instead of methods)
+
+## [ ] Add `extend` keyword to add new methods to existing types
+
+## [ ] Add "interpreter" to run compiled llvm code `main` function using ctypes ?
+
+## [ ] Add `override` operator to override __PS_* methods (will be replaced with namespaces)
 
 Should add the possibility to add specific functions to run before/after GC init and before/after program shutdown a bit like adding an `atexit` hook.
 
@@ -49,6 +61,13 @@ It will allow to override specific language internal functions for specific use 
 ## [ ] Errors and ability to throw them instead of immediate crash
 
 ## [ ] Try/catch (finally) once errors are enabled
+
+## [ ] Add Abstract keyword and/or interfaces
+
+This will need a complete redesign of method-fetching/calling. Polymorphism adds overhead and it is in discussion what should be added:
+    - Multiple inheritance, like in c# (or worse like in python with the MRO issues)
+    - If classes can only inherit from one abstract class and not non-abstract classes (and are abstract classes allowed to define methods or only declare them?). This will simplify greatly the v-table lookup. With/without interface support?
+    - Only allow interfaces. Classes can only inherit interfaces which all only have a methods declarations?
 
 ## [ ] Add explicit alignments in llvm IR code generation?
 
