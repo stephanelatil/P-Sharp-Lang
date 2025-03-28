@@ -1574,21 +1574,21 @@ class PCast(PExpression):
             if original_type_info.type_class in [TypeClass.INTEGER]:
                 if original_type_info.is_signed:
                     val = context.builder.sitofp(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
                 else:
                     val = context.builder.uitofp(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
             elif original_type_info.type_class == TypeClass.FLOAT:
                 if original_type_info.bit_width > target_type_info.bit_width:
                     #truncate
                     val = context.builder.fptrunc(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
                 else: #increase size of FP
                     val = context.builder.fpext(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
             else:
                 raise TypingError(f"Cannot Cast from {original_type} to {target_type}")
@@ -1598,30 +1598,30 @@ class PCast(PExpression):
                 if original_type_info.bit_width < target_type_info.bit_width: #cast to larger int
                     if original_type_info.is_signed:
                         val = context.builder.sext(expr, target_type.get_llvm_value_type(context))
-                        assert isinstance(val, ir.instructions.CastInstr)
+                        assert isinstance(val, ir.NamedValue)
                         return val
                     else:
                         val = context.builder.zext(expr, target_type.get_llvm_value_type(context))
-                        assert isinstance(val, ir.instructions.CastInstr)
+                        assert isinstance(val, ir.NamedValue)
                         return val
                 elif original_type_info.bit_width > target_type_info.bit_width:
                     val = context.builder.trunc(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
                 else:
                     #sign to unsigned or vice versa
                     val = context.builder.bitcast(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
             elif original_type_info.type_class == TypeClass.FLOAT:
                 #float to int
                 if target_type_info.is_signed:
                     val = context.builder.fptosi(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
                 else:
                     val = context.builder.fptoui(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.instructions.CastInstr)
+                    assert isinstance(val, ir.NamedValue)
                     return val
         elif target_type_info.type_class == TypeClass.BOOLEAN:
             #do zero check

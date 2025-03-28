@@ -339,7 +339,7 @@ class TypingConversionError(Exception):
         self.to_type = to_type
         self.node = node
         super().__init__(
-            f"Cannot convert from {from_type} to {to_type} at {node.position.line}:{node.position.column}"
+            f"Cannot convert from {from_type} to {to_type} at {node.position}"
         )
 
 class Typer:
@@ -552,7 +552,7 @@ class Typer:
         to_info = self.get_type_info(to_type)
 
         # Only handle numeric types
-        if not (self.is_numeric_type(from_type) and self.is_numeric_type(to_type)):
+        if not (self.is_numeric_type(from_info) and self.is_numeric_type(to_info)):
             return False
         
         if from_type == to_type:
@@ -863,7 +863,7 @@ class Typer:
         symbol.is_assigned = True
         expr_type = self._type_expression(var_decl.initial_value)
         if not self.check_types_match(var_type, expr_type):
-            raise TypingConversionError(var_type, expr_type, var_decl)
+            raise TypingConversionError(expr_type, var_type, var_decl)
         if expr_type != var_type:
             var_decl.initial_value = self._add_implicit_cast(
                                             var_decl.initial_value, var_type)
