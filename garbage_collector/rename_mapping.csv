@@ -1,0 +1,14 @@
+__PS_BoolToString,__bool__.ToString
+__PS_CharToString,__char__.ToString
+__PS_I8ToString,__i8__.ToString
+__PS_U8ToString,__u8__.ToString
+__PS_I16oString,__i16__.ToString
+__PS_U16ToString,__u16__.ToString
+__PS_I32oString,__i32__.ToString
+__PS_U32ToString,__u32__.ToString
+__PS_I64oString,__i64__.ToString
+__PS_U64ToString,__u64__.ToString
+__PS_F16ToString,__f16__.ToString
+__PS_F32oString,__f32__.ToString
+__PS_F64ToString,__f64__.ToString
+__PS_StringToString,__string__.ToString
