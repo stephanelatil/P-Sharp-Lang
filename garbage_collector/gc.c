@@ -201,7 +201,7 @@ size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name
     return __PS_type_registry.count++;
 }
 
-void* __PS_AllocateArray(int64_t size, size_t type_id){
+void* __PS_AllocateArray(ARRAY_LEN_TYPE size, size_t type_id){
     // Calculate total size needed including header
     size_t aligned_size = (sizeof(__PS_ObjectHeader) + size + sizeof(void*)) & ~(sizeof(void*)-1);
 
@@ -223,28 +223,28 @@ void* __PS_AllocateArray(int64_t size, size_t type_id){
     return data;
 }
 
-void* __PS_AllocateValueArray(int8_t element_size, int64_t num_elements){
+void* __PS_AllocateValueArray(int8_t element_size, ARRAY_LEN_TYPE num_elements){
     //Collect garbage if necessary
     if (__PS_Collect_Garbage_Now_Heuristic())
         __PS_CollectGarbage();
 
-    // sizeof(int64_t) = allocated for the length of the array
+    // sizeof(ARRAY_LEN_TYPE) = allocated for the length of the array
     // element_size * num_elements = bytes to allocate for the array data
-    int64_t size = sizeof(int64_t) + element_size * num_elements;
-    int64_t* arr_ptr = (int64_t*) __PS_AllocateArray(size, VALUE_ARRAY_TYPE_ID);
+    ARRAY_LEN_TYPE size = sizeof(ARRAY_LEN_TYPE) + element_size * num_elements;
+    ARRAY_LEN_TYPE* arr_ptr = (ARRAY_LEN_TYPE*) __PS_AllocateArray(size, VALUE_ARRAY_TYPE_ID);
     arr_ptr[0] = num_elements;
     return (void*)arr_ptr;
 }
 
-void* __PS_AllocateRefArray(int64_t num_elements){
+void* __PS_AllocateRefArray(ARRAY_LEN_TYPE num_elements){
     //Collect garbage if necessary
     if (__PS_Collect_Garbage_Now_Heuristic())
         __PS_CollectGarbage();
 
-    // sizeof(int64_t) = allocated for the length of the array
+    // sizeof(ARRAY_LEN_TYPE) = allocated for the length of the array
     // sizeof(void*) * num_elements = bytes to allocate for the array data, where each element is a pointer to an object (thus a void*)
-    int64_t size = sizeof(int64_t) + sizeof(void*) * num_elements;
-    int64_t* arr_ptr = (int64_t*) __PS_AllocateArray(size, REFERENCE_ARRAY_TYPE_ID);
+    ARRAY_LEN_TYPE size = sizeof(ARRAY_LEN_TYPE) + sizeof(void*) * num_elements;
+    ARRAY_LEN_TYPE* arr_ptr = (ARRAY_LEN_TYPE*) __PS_AllocateArray(size, REFERENCE_ARRAY_TYPE_ID);
     arr_ptr[0] = num_elements;
     return (void*)arr_ptr;
 }
@@ -304,9 +304,9 @@ static void __PS_MarkObject(void* obj) {
         return;
     
     if (header->type->id == REFERENCE_ARRAY_TYPE_ID){
-        void** array_elements = (void**)(obj+sizeof(int64_t)); //skip first element which is the size of the array
-        int64_t num_elements = *((int64_t*) obj);
-        for (int64_t i = 0; i < num_elements; ++i)
+        void** array_elements = (void**)(obj+sizeof(ARRAY_LEN_TYPE)); //skip first element which is the size of the array
+        ARRAY_LEN_TYPE num_elements = *((ARRAY_LEN_TYPE*) obj);
+        for (ARRAY_LEN_TYPE i = 0; i < num_elements; ++i)
             __PS_MarkObject(array_elements[i]);//mark object in array
         return;
     }
