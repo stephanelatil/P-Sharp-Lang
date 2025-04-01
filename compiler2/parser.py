@@ -1441,13 +1441,14 @@ class PMethodCall(PExpression):
         assert self.object.expr_type is not None
         # TODO: get method function pointer from a v-table
         this = self.object.generate_llvm(context, False)
-        # null_check on "this"
-        null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
-        assert null_check_func is not None
-        context.builder.call(null_check_func, [this, context.get_char_ptr_from_string(self.position.filename),
-                                               ir.Constant(ir.IntType(32), self.position.line),
-                                               ir.Constant(ir.IntType(32), self.position.column)])
-        
+        # null_check on "this" ONLY if it's a reference type
+        if self.object.expr_type.is_reference_type:
+            null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
+            assert null_check_func is not None
+            context.builder.call(null_check_func, [this, context.get_char_ptr_from_string(self.position.filename),
+                                                ir.Constant(ir.IntType(32), self.position.line),
+                                                ir.Constant(ir.IntType(32), self.position.column)])
+
         #setup arguments
         args = [this] + [a.generate_llvm(context) for a in self.arguments]
         method_name = context.get_method_symbol_name(self.object.expr_type.name, self.method_name.name)
