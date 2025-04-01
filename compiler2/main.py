@@ -13,7 +13,7 @@ def compile_file(filename: Path, output: str, is_library: bool, optimization_lev
                  use_warnings: bool, debug_symbols:bool, emit: str):
     with filename.open('r') as fileIO:
         codegen = CodeGen(optimization_level, use_warnings)
-        module_ref = codegen.compile_module(filename.name, fileIO, is_library)
+        module_ref = codegen.compile_module(filename, fileIO, is_library)
         llc_flags = ['-relocation-model=pic']
         clang_flags= [] 
         if debug_symbols:

@@ -8,6 +8,7 @@ from constants import (ENTRYPOINT_FUNCTION_NAME, FUNC_POPULATE_GLOBALS,
                        FUNC_GC_ENTER_SCOPE, FUNC_GC_LEAVE_SCOPE)
 import ctypes
 import math
+from pathlib import Path
 
 def create_execution_engine():
     """
@@ -31,7 +32,7 @@ class CodeGenTestCase(TestCase):
     def generate_module(self, source: str) -> ModuleRef:
         """Helper method to generate LLVM IR from source code"""
         gen = CodeGen()
-        return gen.compile_module('test.cs', StringIO(source))
+        return gen.compile_module(Path('/tmp/test.cs'), StringIO(source))
     
     def get_function_ir(self, module:ModuleRef, func_name:str='main'):
         func = module.get_function(func_name)

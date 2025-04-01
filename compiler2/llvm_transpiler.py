@@ -74,8 +74,9 @@ class CodeGen:
         self.pass_builder = PassBuilder(self.target, opts)
     
     
-    def compile_module(self, filename:str, file:TextIO, is_library:bool=False) -> ModuleRef:
+    def compile_module(self, filepath:Path, file:TextIO, is_library:bool=False) -> ModuleRef:
         # Initializes module & typer
+        filename = filepath.name
         self.module = ir.Module(name=filename.removesuffix('.psc'))
         self.module.triple = Target.from_default_triple().triple
         self.typer = Typer(filename, file)
