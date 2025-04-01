@@ -48,77 +48,77 @@ void* __PS_CharToString(uint8_t c){
 
 void* __PS_I8ToString(int8_t number){
     int max_size = 5;
-    char cstr[max_size] = {0,0,0,0,0}; //biggest possible is "-100" 4 chars + null byte
+    char cstr[max_size]; //biggest possible is "-100" 4 chars + null byte
     snprintf(cstr, max_size, "%" PRId8, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_U8ToString(uint8_t number){
     int max_size = 4;
-    char cstr[max_size] = {0}; //biggest possible is "100" 3 chars + null byte
+    char cstr[max_size]; //biggest possible is "100" 3 chars + null byte
     snprintf(cstr, max_size, "%" PRIu8, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_I16oString(int16_t number){
     int max_size = 7;
-    char cstr[max_size] = {0}; //biggest possible is "-10000" 6 chars + null byte
+    char cstr[max_size]; //biggest possible is "-10000" 6 chars + null byte
     snprintf(cstr, max_size, "%" PRId16, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_U16ToString(uint16_t number){
     int max_size = 6;
-    char cstr[max_size] = {0}; //biggest possible is "10000" 5 chars + null byte
+    char cstr[max_size]; //biggest possible is "10000" 5 chars + null byte
     snprintf(cstr, max_size, "%" PRIu16, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_I32oString(int32_t number){
     int max_size = 12;
-    char cstr[max_size] = {0}; //biggest possible is "-1000000000" 11 chars + null byte
+    char cstr[max_size]; //biggest possible is "-1000000000" 11 chars + null byte
     snprintf(cstr, max_size, "%" PRId32, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_U32ToString(uint32_t number){
     int max_size = 11;
-    char cstr[max_size] = {0}; //biggest possible is "1000000000" 10 chars + null byte
+    char cstr[max_size]; //biggest possible is "1000000000" 10 chars + null byte
     snprintf(cstr, max_size, "%" PRIu32, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_I64oString(int64_t number){
     int max_size = 22;
-    char cstr[max_size] = {0}; //biggest possible is "-10000000000000000000" 21 chars + null byte
+    char cstr[max_size]; //biggest possible is "-10000000000000000000" 21 chars + null byte
     snprintf(cstr, max_size, "%" PRId64, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_U64ToString(uint64_t number){
     int max_size = 21;
-    char cstr[max_size] = {0}; //biggest possible is "10000000000000000000" 20 chars + null byte
+    char cstr[max_size]; //biggest possible is "10000000000000000000" 20 chars + null byte
     snprintf(cstr, max_size, "%" PRIu64, number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_F16ToString(_Float16 number){
     int max_size = 12;
-    char cstr[max_size] = {0}; //biggest possible is "3.14159e+10" 11 chars + null byte
-    snprintf(cstr, max_size, "%g", number);
+    char cstr[max_size]; //biggest possible is "3.14159e+10" 11 chars + null byte
+    snprintf(cstr, max_size, "%f", number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_F32oString(_Float32 number){
     int max_size = 13;
-    char cstr[max_size] = {0}; //biggest possible is "3.14159e+100" 12 chars + null byte
+    char cstr[max_size]; //biggest possible is "3.14159e+100" 12 chars + null byte
     snprintf(cstr, max_size, "%g", number);
     return __PS_cstr_to_string(cstr);
 }
 
 void* __PS_F64ToString(_Float64 number){
     int max_size = 14;
-    char cstr[max_size] = {0}; //biggest possible is "3.14159e+1000" 13 chars + null byte
+    char cstr[max_size]; //biggest possible is "3.14159e+1000" 13 chars + null byte
     snprintf(cstr, max_size, "%g", number);
     return __PS_cstr_to_string(cstr);
 }
