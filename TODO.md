@@ -34,7 +34,35 @@ Like in python, when you have an array `i32[] arr = new i32[10]`. Indexing it wi
 
 `arr[-1]` is equivalent to `arr[arr.Length - 1]` or for any `N > 0` then `arr[-N] == arr[arr.Length - N]`
 
-## [ ] Add a proper compiler executable (or main.py) file with documentation, cli args etc.
+## [-] Add a proper compiler executable (or main.py) file with documentation, cli args etc.
+
+## [ ] Fix type IDs for libraries
+
+Currently type IDs are set when initializing the GC. Which means that when compiling libraries, types don't have type IDs! When allocating a new object, the `CodeGenContext` has no type id for the type and it will thus fail. 
+
+For info, at the time of writing a TypeInfo struct:
+```c
+struct __PS_TypeInfo {
+    size_t id;                 // Unique type ID
+    size_t size;               // Total size of object's data (excluding header) in bytes
+    size_t num_pointers;       // Number of pointer fields (all at start of data)
+    const char* type_name;     // Name of type (for debugging)
+};
+```
+
+Solutions to this include:
+
+- Setting a type_id to the hash of `Namespace.__Types__.type_name`. Using 64 bits for the hash minimizes collisions (but does not eliminate them, especially for large projects!) and requires all types of the library to be exposed in the `.o` file is some way. Also types only used internally so the GC knows how to allocated them.
+
+This does keep the info for the `name`, `size` and `number_of_pointers` available, ensuring the total executable size is minimized as we don't have to duplicate the default `ToString()` method for all types. A single default one can be used and just copy the name from the type_info reference.
+
+- Setting the type_id to a hash (similar to above) but we only need 45 bits (or more/less?), with the remaining 19 used for type size data: (8 for number of pointers and 11 for type size). This limits a type size to having 255 pointers (reference types as fields) and a total size (sum of of all fields value-types) <= 2048 bytes.
+
+This eliminates the need of exposing all types and enables a type to just have it's size/num_pointers exposed in its 64bit int. It still needs to expose the type_info of all types not only used internally.
+
+- If we eliminate the need to have the type name and ID we can use the 64bit number to host all the needed info. 12 bits for the number of pointers (`2^12-1 = 4095` which is plenty for a single type) and 16 bits for the size (`2^16-1 = 65535` bytes for the sum of the size of all fields value. Should be fine). That leaves 36 bytes for any other info or reduce it to 32 bit for compatibility with embedded systems.
+
+This does add the need for a default `ToString` method for every individual type (optimized out if unused when linked and optimized).
 
 ## [ ] Add debug symbols in LLVM IR generation with metadata
 
