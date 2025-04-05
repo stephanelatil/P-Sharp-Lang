@@ -1510,7 +1510,7 @@ class TestTyperUsageWarnings(TestCase):
         """
         self.parse_and_type(source)
         self.assertEqual(len(self.typer.warnings), 1)
-        self.assertIn("Class property 'unusedProp' is never used", str(self.typer.warnings[0]))
+        self.assertIn("Class property 'unusedProp' is never assigned", str(self.typer.warnings[0]))
 
     def test_unused_class_method_warning(self):
         source = """

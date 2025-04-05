@@ -587,6 +587,7 @@ class PFunction(PStatement):
     body: 'PBlock'
     is_called: bool = False
     _return_typ_typed:Optional[Typ] = None
+    is_builtin:bool=False
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -615,12 +616,13 @@ class PFunction(PStatement):
         return self._return_typ_typed
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
-                 body: 'PBlock', lexeme: Lexeme):
+                 body: 'PBlock', lexeme: Lexeme, is_builtin:bool=False):
         super().__init__(NodeType.FUNCTION, lexeme.pos)
         self.name = name
         self.return_type = return_type
         self.function_args = parameters
         self.body = body
+        self.is_builtin = is_builtin
         
     def generate_llvm(self, context: CodeGenContext) -> None:
         if not context.scopes.has_symbol(self.name):
@@ -676,12 +678,10 @@ class PFunction(PStatement):
 @dataclass    
 class PMethod(PFunction):
     _class_type:Optional[Typ]=None
-    is_builtin:bool=False
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
                  body: 'PBlock', lexeme: Lexeme, is_builtin:bool = False):
-        super().__init__(name, return_type, parameters, body, lexeme)
-        self.is_builtin = is_builtin
+        super().__init__(name, return_type, parameters, body, lexeme, is_builtin=is_builtin)
         
     @property
     def explicit_arguments(self):
@@ -777,6 +777,7 @@ class PClassField(PStatement):
     _typer_pass_var_type: Optional[Typ] = None
     is_assigned: bool = False
     is_read: bool = False
+    is_builtin: bool = False
     
     @property
     def typer_pass_var_type(self) -> Typ:
@@ -791,12 +792,14 @@ class PClassField(PStatement):
             yield self.default_value
         return
 
-    def __init__(self, name: str, type: 'PType', is_public: bool, lexeme: Lexeme, default_value:Optional[PExpression]):
+    def __init__(self, name: str, type: 'PType', is_public: bool, lexeme: Lexeme, default_value:Optional[PExpression],
+                 is_builtin:bool = False):
         super().__init__(NodeType.CLASS_PROPERTY, lexeme.pos)
         self.name = name
         self.var_type = type
         self.is_public = is_public
         self.default_value = default_value
+        self.is_builtin = is_builtin
         
     def __hash__(self) -> int:
         return hash(self.name) + hash(self.var_type)

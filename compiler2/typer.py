@@ -33,7 +33,8 @@ def create_property(name: str, type_str: str) -> PClassField:
         type=PType(type_str, Lexeme.default),
         is_public=True,
         lexeme=Lexeme.default,
-        default_value=None
+        default_value=None,
+        is_builtin=True
     )
 
 def create_method(name: str, return_type: str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
@@ -46,7 +47,8 @@ def create_method(name: str, return_type: str, params: List[tuple[str, str]], bu
         body=PBlock([], Lexeme.default,
                     block_properties=BlockProperties(is_class=True, is_top_level=False,
                                                      in_function=True, block_vars=parameters)),
-        lexeme=Lexeme.default
+        lexeme=Lexeme.default,
+        is_builtin=builtin
     )
 
 # Define the built-in types with their methods and properties
@@ -462,7 +464,7 @@ class Typer:
                 ))
         # Check functions
         for func in self.all_functions:
-            if func.position is Position.default:
+            if func.is_builtin:
                 continue #ignore builtin or imported functions
             if not func.is_called and func.name != 'main':  # Exclude main if present
                 self.warnings.append(CompilerWarning(
@@ -471,13 +473,20 @@ class Typer:
                 ))
         # Check class properties and methods
         for prop in self.all_class_properties:
-            if not prop.is_read and not prop.is_assigned:
+            if prop.is_builtin:
+                continue
+            if not prop.is_assigned:
                 self.warnings.append(CompilerWarning(
-                    f"Class property '{prop.name}' is never used",
+                    f"Class property '{prop.name}' is never assigned",
+                    prop.position
+                ))
+            elif not prop.is_public and not prop.is_read:
+                self.warnings.append(CompilerWarning(
+                    f"Private class property '{prop.name}' is never read",
                     prop.position
                 ))
         for method in self.all_class_methods:
-            if method.position is Position.default:
+            if method.is_builtin:
                 continue #ignore unused builtins
             if not method.is_called:
                 self.warnings.append(CompilerWarning(
@@ -817,6 +826,10 @@ class Typer:
                                                                self._in_class,
                                                                None,
                                                                Lexeme.default))
+        else: # function not a method
+            if not function.is_builtin:
+                #ignore checks on builtins
+                self.all_functions.append(function)
         
         for arg in function.function_args:
             self._type_statement(arg)
@@ -824,6 +837,10 @@ class Typer:
             assert not symbol.is_function
             # Function args are always assigned
             symbol.is_assigned = True
+            if function.is_builtin:
+                #ignore checks on builtins
+                # TODO: Do the same on imported, maybe consider builtin = imported?
+                symbol.is_read = True
         
         self.expected_return_type = self._type_ptype(function.return_type)
         function._return_typ_typed = self.expected_return_type
