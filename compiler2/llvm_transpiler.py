@@ -18,7 +18,7 @@ from constants import *
 from llvmlite.binding import (initialize, initialize_native_target, 
                               initialize_native_asmprinter, PipelineTuningOptions,
                               PassBuilder, Target, parse_assembly, parse_bitcode,
-                              ModuleRef)
+                              ModuleRef, TypeRef, TypeKind)
 from pathlib import Path
 
 
@@ -463,39 +463,47 @@ class CodeGen:
 
     def _init_builtin_functions_prototypes(self, context:CodeGenContext):
         """Adds builtin functions to the global scope"""
-        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
-        i64_type = ir.IntType(64)
-        char_ptr = ir.PointerType()
-        void_ptr = ir.PointerType()
-        void = ir.VoidType()
         
-        for name, func_type in [
-                            (FUNC_GC_INITIALIZE_ROOT_VARIABLE_TRACKING, ir.FunctionType(void,[])),
-                            (FUNC_GC_ENTER_SCOPE, ir.FunctionType(void,[size_t_type])),
-                            (FUNC_GC_LEAVE_SCOPE, ir.FunctionType(void,[])),
-                            (FUNC_GC_PRINT_HEAP_STATS, ir.FunctionType(void,[])),
-                            (FUNC_GC_RUN_GARBAGE_COLLECTOR, ir.FunctionType(void,[])),
-                            (FUNC_GC_CLEANUP_BEFORE_PROGRAM_SHUTDOWN, ir.FunctionType(void,[])),
-                            (FUNC_GC_ALLOCATE_OBJECT, ir.FunctionType(void_ptr,[size_t_type])),
-                            (FUNC_GC_ALLOCATE_VALUE_ARRAY, ir.FunctionType(void_ptr,[ir.IntType(8),i64_type])),
-                            (FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY, ir.FunctionType(void_ptr,[i64_type])),
-                            (FUNC_GC_REGISTER_TYPE, ir.FunctionType(size_t_type,[size_t_type, size_t_type, char_ptr])),
-                            (FUNC_GC_INITIALIZE_TYPE_REGISTRY, ir.FunctionType(void,[size_t_type])),
-                            (FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE, ir.FunctionType(void,[void_ptr, size_t_type, char_ptr])),
-                            (FUNC_DEFAULT_TOSTRING, ir.FunctionType(void_ptr,[void_ptr])),
-#(void* array, int8_t element_size_in_bytes, int64_t index, char* filename, int32_t position_line, int32_t position_column){
-                            (FUNC_GET_ARRAY_ELEMENT_PTR, ir.FunctionType(void_ptr,[void_ptr, ir.IntType(8), ir.IntType(64),
-                                                                                   char_ptr, ir.IntType(32), ir.IntType(32)])),
-                            (FUNC_NULL_REF_CHECK, ir.FunctionType(void,[void_ptr, char_ptr, ir.IntType(32), ir.IntType(32)])),
-                            (FUNC_PRINT, ir.FunctionType(ir.IntType(32), [void_ptr])),
-                            ]:
-            func = ir.Function(context.module, func_type, name)
-            context.scopes.declare_func(name, func_type.return_type, func)
+        def typeref_to_type(typeref:TypeRef) -> ir.Type:
+            assert typeref.type_kind in (TypeKind.integer, TypeKind.float,
+                                         TypeKind.half, TypeKind.double,
+                                         TypeKind.pointer, TypeKind.void)
+            if typeref.type_kind == TypeKind.integer:
+                return ir.IntType(typeref.type_width)
+            elif typeref.type_kind == TypeKind.void:
+                return ir.VoidType()
+            elif typeref.type_kind == TypeKind.pointer:
+                return ir.PointerType()
+            elif typeref.type_kind == TypeKind.float:
+                return ir.FloatType()
+            elif typeref.type_kind == TypeKind.double:
+                return ir.DoubleType()
+            elif typeref.type_kind == TypeKind.half:
+                return ir.HalfType()
+            else:
+                raise CompilerError(f"Cannot convert TypeRef kind {typeref.type_kind} to Type")
+        
+        # Retrieve and declare builtins from the runtime
+        with open(self._GC_LIB, 'rb') as runtime_bc:
+            runtime_mod = parse_bitcode(runtime_bc.read())
+        for runtime_func in runtime_mod.functions:
+            #convert TypeRef to Type
+            element_types = [typeref_to_type(typeref) for typeref in runtime_func.global_value_type.elements]
+            return_type = element_types.pop(0)
             
-        fprintf = ir.Function(context.module, ir.FunctionType(ir.IntType(32),[ir.IntType(32), ir.PointerType()], True), "fprintf")
-        exit_func = ir.Function(context.module, ir.FunctionType(ir.VoidType(),[ir.IntType(32)]), "exit")
-        context.scopes.declare_func("fprintf", ir.IntType(32), fprintf)
-        context.scopes.declare_func("exit", ir.VoidType(), exit_func)
+            func_type = ir.FunctionType(return_type, element_types)
+            
+            func = ir.Function(context.module,
+                               func_type,
+                               runtime_func.name)
+            context.scopes.declare_func(name=runtime_func.name,
+                                        return_type=func.return_value.type,
+                                        function_ptr=func)
+            
+        return
+        # functions like malloc calloc etc. are also already declared!
+        # context.scopes.declare_func("fprintf", ir.IntType(32), fprintf)
+        # context.scopes.declare_func("exit", ir.VoidType(), exit_func)
 
     def get_llvm_struct(self, typ: Typ, context:Optional[CodeGenContext]) -> Union[ir.IntType,
                                                    ir.HalfType,
