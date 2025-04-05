@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Union, TextIO
 from dataclasses import dataclass, field
 from io import StringIO
+from copy import deepcopy
 from lexer import Lexeme, Lexer, Position
 from operations import BinaryOperation, UnaryOperation
 from parser import (TypeClass, TypeInfo, TYPE_INFO, TypingError,
@@ -39,10 +40,16 @@ def create_property(name: str, type_str: str) -> PClassField:
 
 def create_method(name: str, return_type: str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
     """Helper function to create a method"""
-    parameters = [PVariableDeclaration(n, PType(t, Lexeme.default), None, Lexeme.default) for t, n in params]
+    def typestring_to_ptype(typestring:str) -> PType:
+        if typestring.endswith('[]'):
+            return PArrayType(typestring_to_ptype(typestring[:-2]), Lexeme.default)
+        return PType(typestring, Lexeme.default)
+    
+    
+    parameters = [PVariableDeclaration(n, typestring_to_ptype(t), None, Lexeme.default) for t, n in params]
     return PMethod(
         name=name,
-        return_type=PType(return_type, Lexeme.default),
+        return_type=typestring_to_ptype(return_type),
         parameters=parameters,
         body=PBlock([], Lexeme.default,
                     block_properties=BlockProperties(is_class=True, is_top_level=False,
@@ -181,7 +188,7 @@ _builtin_types: Dict[str, Typ] = {
         ],
         fields=[
             create_property("Length", "u64"),
-            create_property("__c_string", "null") # a pointer to the start of the c_string
+            create_property("__c_string", "__null") # a pointer to the start of the c_string
         ]
     ),
 
@@ -350,7 +357,7 @@ class Typer:
     """Handles type checking and returns a Typed AST"""
     def __init__(self, filename:str, file:TextIO):
         self.parser = Parser(Lexer(filename, file))
-        self.known_types = _builtin_types.copy()
+        self.known_types = deepcopy(_builtin_types)
         self._in_class:Optional[PType] = None
         self.expected_return_type:Optional[Typ] = None
         self._scope_manager = ScopeManager()
@@ -434,6 +441,16 @@ class Typer:
                                                       [PVariableDeclaration('s', PType("string", Lexeme.default), None, Lexeme.default)],
                                                       PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
 
+        #type builtin methods
+        for typ in list(self.known_types.values()):
+            if typ.name in ['void', 'null']:
+                continue
+            #make sure to say whe class we're in
+            self._in_class = self._ptype_from_typ(typ)
+            for elem in [*typ.fields, *typ.methods]:
+                self._type_statement(elem)
+        self._in_class = None
+        
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
             if isinstance(statement, PClass):
@@ -815,10 +832,8 @@ class Typer:
     def _type_function(self, function: PFunction|PMethod) -> None:
         """Type checks a function definition"""
         self._scope_manager.enter_function_scope()
-        if not isinstance(function, PMethod):
-            self.all_functions.append(function)
-        else: #method not function
-            assert self._in_class is not None #if method: ensure we're in a function!
+        if isinstance(function, PMethod):
+            assert self._in_class is not None #if method: ensure we're in a class!
             function._class_type = self._type_ptype(self._in_class)
             #add implicit "this" argument. Do not include for static methods!
             function.function_args.insert(0,
