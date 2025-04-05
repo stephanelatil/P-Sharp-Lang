@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-set -v -e
+set -e
 
 GC_FILENAME=gc
 UTILS_FILENAME=ps_utils
