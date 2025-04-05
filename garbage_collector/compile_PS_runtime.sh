@@ -4,7 +4,7 @@ set -e
 GC_FILENAME=gc
 UTILS_FILENAME=ps_utils
 COMBINED_FILENAME=ps_re
-RENAME_PASS_PY=rename_pass
+RENAME_PASS_PY=rename_pass.py
 RENAME_MAPPING_CSV=rename_mapping.csv
 FLAGS=-Wall
 
