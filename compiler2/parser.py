@@ -1409,13 +1409,15 @@ class PFunctionCall(PExpression):
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a function result"
-        # get ptrs to all arguments
-        args = [a.generate_llvm(context) for a in self.arguments]
         # get function pointer
         fun = self.function.generate_llvm(context)
         assert isinstance(fun, ir.Function)
+        # get ptrs to all arguments
+        args = [context.builder.bitcast(arg.generate_llvm(context),expected_arg.type) 
+                for arg, expected_arg in zip(self.arguments, fun.args)]
+        assert isinstance(fun, ir.Function)
         #call function
-        ret_val = context.builder.call(fun,args)        
+        ret_val = context.builder.call(fun, args)        
         return ret_val
 
 @dataclass
@@ -1452,10 +1454,13 @@ class PMethodCall(PExpression):
                                                 ir.Constant(ir.IntType(32), self.position.line),
                                                 ir.Constant(ir.IntType(32), self.position.column)])
 
-        #setup arguments
-        args = [this] + [a.generate_llvm(context) for a in self.arguments]
         method_name = context.get_method_symbol_name(self.object.expr_type.name, self.method_name.name)
         fun = context.scopes.get_symbol(method_name).func_ptr
+        assert isinstance(fun, ir.Function)
+        #setup arguments
+        args = [this] + [a.generate_llvm(context) for a in self.arguments]
+        args = [context.builder.bitcast(arg,expected_arg.type) 
+                for arg, expected_arg in zip(args, fun.args)]
         assert isinstance(fun, ir.Function)
         ret_val = context.builder.call(fun, args)
         return ret_val
