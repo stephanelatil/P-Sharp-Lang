@@ -55,13 +55,16 @@ P# stands out as a scripting-friendly language by eliminating the need for a mai
 
 To start using P#, follow these simple steps:
 
-1. **Installation**: Download the P# compiler by cloning the github repo [github.com/TheD0ubleT/P-Sharp-Lang](https://github.com/TheD0ubleT/P-Sharp-Lang).
+1. **Installation**: 
+    - Download the P# compiler by cloning the github repo [github.com/TheD0ubleT/P-Sharp-Lang](https://github.com/TheD0ubleT/P-Sharp-Lang)<br/><br/>
+    - Install the llvm & clang toolchain (>=llvm-15 and >=clang-15). Install using `sudo apt install llvm clang -y`<br/><br/>
+    - Install python requirements with `python3 -m venv .venv && . .venv/bin/activate && python3 -m pip install -r requirements.txt`. <br/>**Note** that to use the compiler you need to have python linked to the venv here currently! Make sure to use the `. .venv/bin/activate` command when compiling from a new shell!
 
 2. **Hello, World!**: Write your first P# program by printing "Hello, World!" to the console:
 
 ```rust
 i32 main(){
-    print("Hello, World!");
+    print("Hello, World!\n");
     return 0;
 }
 ```
@@ -80,7 +83,7 @@ pscc -o output_executable your_program_source.psc
 
 ## Language Syntax
 
-P#'s syntax draws inspiration from C#, Python (and Rust types) to provide a familiar environment for developers. Here's a quick example of variable declaration, function definition and function call:
+P#'s syntax draws inspiration from C#, Python (and Rust types) to provide a familiar environment for developers. Here's a quick example of variable, function and class definitions as well as their use:
 
 ```rust
 //classes with fields and methods
@@ -107,20 +110,27 @@ class Fibonacci{
 }
 
 
-// Variable declaration
-i32 x = 42;
+// Global variable declaration
+i32 x = 10;
 
 // Function definition
 i32 min(i32 a, i32 b) {
     return a < b ? a : b; //ternary operators
-}
+} //raises warning for unused function
 
 i32 main(){
-    // new handles allocation and garbage collection
+    // new handles object allocation
     Fibonacci f = new Fibonacci();
 
-    //function calls & casts
-    return (i32) f.Fib(10);
+    //function calls & casts & global variable access
+    i32 result = (i32) f.Fib(x);
+    // method calls on value types
+    string stringResult = result.ToString();
+    // builtin print method
+    print(stringResult);
+    //return codes
+    return 0;
+    //garbage collection
 }
 ```
 
