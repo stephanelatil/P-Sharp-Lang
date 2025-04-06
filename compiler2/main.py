@@ -5,12 +5,17 @@ from tempfile import TemporaryDirectory
 from llvm_transpiler import CodeGen
 from typing import Union
 from os import environ
+import sys
+#avoid including full traceback in the exception messages
+sys.tracebacklimit = -1
 
 LLC_LOCATION=environ.get('LLC_LOCATION', 'llc')
 CLANG_LOCATION=environ.get('CLANG_LOCATION', 'clang')
 
 def compile_file(filename: Path, output: str, is_library: bool, optimization_level: Union[int, str],
                  use_warnings: bool, debug_symbols:bool, emit: str):
+    if filename == Path(output):
+        raise FileExistsError("Cannot use the same file for input and output!")
     with filename.open('r') as fileIO:
         codegen = CodeGen(optimization_level, use_warnings)
         module_ref = codegen.compile_module(filename, fileIO, is_library)
@@ -63,7 +68,6 @@ def compile_file(filename: Path, output: str, is_library: bool, optimization_lev
         
         else:
             raise ArgumentError(None, f"Unknown format to emit to '{emit}'")
-            
 
 def file_check(filepath:str) -> Path:
     path = Path(filepath)
@@ -85,11 +89,17 @@ def main():
     parser = ArgumentParser(description="P# Compiler for .psc files")
     parser.add_argument("input", type=file_check, help="Input .psc source file")
     parser.add_argument("-o", "--output", type=str, default="a.out", help="Output file name")
-    parser.add_argument("--lib", action="store_true", help="Compile as a library (omit main function, and GC) (Unstable, use at our own risk!)")
+    parser.add_argument("--lib", action="store_true", help="Compile as a library (omit main function, and GC) (Unstable for now, use at your own risk!)")
     parser.add_argument("-O", type=opt_level, choices=[*range(0, 4),'s'], default=0, help="Optimization level (0-3) or optimize for size -Os", dest="O")
-    parser.add_argument("-g", action='store_true', dest='debug_symbols', default=False, help="Add debug symbols (Currently not enabled)")
+    parser.add_argument("-g", action='store_true', dest='debug_symbols', default=False, help="Add debug symbols (Currently not available)")
     parser.add_argument("-w", "--warnings", action="store_true", default=False, help="Enable warnings (only some available for now)")
-    parser.add_argument("--emit", type=str, choices=["ir", "bc", 'asm', "obj", "exe"], default="exe", help="Select output type")
+    parser.add_argument("--emit", type=str, choices=["ir", "bc", 'asm', "obj", "exe"], default="exe",
+                        help="""Select output type (default exe):
+                        ir : builds to LLVM Intermediate Representation and outputs a human readable .ll file
+                        bc : builds to LLVM Intermediate Representation and outputs a machine readable bitcode .bc file
+                        asm: builds to assembly representation for the current architecture
+                        obj: builds to an object file for the current architecture
+                        exe: builds to an executable elf""")
     
     args = parser.parse_args()    
     compile_file(args.input, args.output, args.lib, args.O, args.warnings, args.debug_symbols, args.emit)
