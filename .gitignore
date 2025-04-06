@@ -26,3 +26,6 @@ out.txt
 
 #ignore personal coding tests and notes
 notes/
+
+# Keep bitcode-compiled runtime env
+!garbage_collector/ps_re.bc
