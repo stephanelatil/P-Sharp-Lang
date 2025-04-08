@@ -393,6 +393,8 @@ class CodeGen:
             if not isinstance(statement, PClass):
                 continue
             for method in statement.methods:
+                if method.is_builtin:
+                    continue
                 method.generate_llvm(context)
     
     def _declare_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
