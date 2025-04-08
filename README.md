@@ -6,7 +6,9 @@
 
 <img src="assets/img/psharp_logo.png" alt="P# Logo" width="128"/>
 
-P# is a programming language designed for developers who want the best of both worlds: the simplicity and expressiveness of Python, combined with the power and performance of C#. With a focus on static typing, efficient memory management, and seamless integration with C libraries, P# opens up new possibilities for building high-performance applications and scripting tasks.
+P# is a embedded programming language designed for developers who want the best of both worlds: the simplicity and expressiveness of Python, combined with the power and performance of C#. With a focus on static typing, efficient memory management, and seamless integration with C libraries, P# opens up new possibilities for building high-performance embedded systems.
+
+**NOTE:** Currently the language can only be compiled for Linux. Bare metal support for Arduino and other systems will be added as the language evolves
 
 ## Table of Contents
 
@@ -59,6 +61,7 @@ To start using P#, follow these simple steps:
     - Download the P# compiler by cloning the github repo [github.com/TheD0ubleT/P-Sharp-Lang](https://github.com/TheD0ubleT/P-Sharp-Lang)<br/><br/>
     - Install the llvm & clang toolchain (>=llvm-15 and >=clang-15). Install using `sudo apt install llvm clang -y`<br/><br/>
     - Install python requirements with `python3 -m venv .venv && . .venv/bin/activate && python3 -m pip install -r requirements.txt`. <br/>**Note** that to use the compiler you need to have python linked to the venv here currently! Make sure to use the `. .venv/bin/activate` command when compiling from a new shell!
+    - Make sure `pscc` is executable with `chmod +x pscc`
 
 2. **Hello, World!**: Write your first P# program by printing "Hello, World!" to the console:
 
