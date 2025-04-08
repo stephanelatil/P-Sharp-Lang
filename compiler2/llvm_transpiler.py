@@ -501,11 +501,6 @@ class CodeGen:
             context.scopes.declare_func(name=runtime_func.name,
                                         return_type=func.return_value.type,
                                         function_ptr=func)
-            
-        return
-        # functions like malloc calloc etc. are also already declared!
-        # context.scopes.declare_func("fprintf", ir.IntType(32), fprintf)
-        # context.scopes.declare_func("exit", ir.VoidType(), exit_func)
 
     def get_llvm_struct(self, typ: Typ, context:Optional[CodeGenContext]) -> Union[ir.IntType,
                                                    ir.HalfType,
