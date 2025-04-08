@@ -541,14 +541,13 @@ class PStatement:
         raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
     
     def exit_with_error(self, context:CodeGenContext, error_code:int=1, error_message:str="Error "):
-        printf = context.scopes.get_symbol("fprintf").func_ptr
+        printf = context.scopes.get_symbol("printf").func_ptr
         assert printf is not None
         exit_func = context.scopes.get_symbol("exit").func_ptr
         assert exit_func is not None
         error_message += f" in file %s at line %d:%d\n"
         error_message_c_str_with_format = context.get_char_ptr_from_string(error_message)
         context.builder.call(printf, [
-            ir.Constant(ir.IntType(32), 2), #stderr
             error_message_c_str_with_format,
             context.get_char_ptr_from_string(self.position.filename), # filename
             ir.Constant(ir.IntType(32), self.position.line), # line number
@@ -2807,7 +2806,7 @@ class Parser:
     def _parse_assert_statement(self) -> PAssertStatement:
         """Parse an assert statement"""
         assert_lexeme = self._expect(LexemeType.KEYWORD_CONTROL_ASSERT)
-        self._expect(LexemeType.PUNCTUATION_OPENPAREN)
+        # self._expect(LexemeType.PUNCTUATION_OPENPAREN)
         condition = self._parse_expression()
 
         message = None
@@ -2816,7 +2815,7 @@ class Parser:
             message = self._parse_expression()
             assert isinstance(message, PLiteral)
 
-        self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
+        # self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
         self._expect(LexemeType.PUNCTUATION_SEMICOLON)
         return PAssertStatement(condition, message, assert_lexeme)
 
