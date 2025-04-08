@@ -38,7 +38,7 @@ def create_property(name: str, type_str: str) -> PClassField:
         is_builtin=True
     )
 
-def create_method(name: str, return_type: str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
+def create_method(name: str, return_type: str, class_typ:str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
     """Helper function to create a method"""
     def typestring_to_ptype(typestring:str) -> PType:
         if typestring.endswith('[]'):
@@ -50,6 +50,7 @@ def create_method(name: str, return_type: str, params: List[tuple[str, str]], bu
     return PMethod(
         name=name,
         return_type=typestring_to_ptype(return_type),
+        class_type=typestring_to_ptype(class_typ),
         parameters=parameters,
         body=PBlock([], Lexeme.default,
                     block_properties=BlockProperties(is_class=True, is_top_level=False,
@@ -64,8 +65,8 @@ _builtin_types: Dict[str, Typ] = {
     "i8": Typ(
         name="i8",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "i8", [("string", "s")])
+            create_method("ToString", "string", "i8", []),
+            create_method("Parse", "i8", "i8", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -73,8 +74,8 @@ _builtin_types: Dict[str, Typ] = {
     "i16": Typ(
         name="i16",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "i16", [("string", "s")])
+            create_method("ToString", "i16", "string", []),
+            create_method("Parse", "i16", "i16", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -82,8 +83,8 @@ _builtin_types: Dict[str, Typ] = {
     "i32": Typ(
         name="i32",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "i32", [("string", "s")])
+            create_method("ToString", "string", "i32", []),
+            create_method("Parse", "i32", "i32", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -91,8 +92,8 @@ _builtin_types: Dict[str, Typ] = {
     "i64": Typ(
         name="i64",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "i64", [("string", "s")])
+            create_method("ToString", "string", "i64", []),
+            create_method("Parse", "i64", "i64", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -100,8 +101,8 @@ _builtin_types: Dict[str, Typ] = {
     "u8": Typ(
         name="u8",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "u8", [("string", "s")])
+            create_method("ToString", "string", "u8", []),
+            create_method("Parse", "u8", "u8", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -109,8 +110,8 @@ _builtin_types: Dict[str, Typ] = {
     "u16": Typ(
         name="u16",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "u16", [("string", "s")])
+            create_method("ToString", "string", "u16", []),
+            create_method("Parse", "u16", "u16", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -118,8 +119,8 @@ _builtin_types: Dict[str, Typ] = {
     "u32": Typ(
         name="u32",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "u32", [("string", "s")])
+            create_method("ToString", "string", "u32", []),
+            create_method("Parse", "u32", "u32", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -127,8 +128,8 @@ _builtin_types: Dict[str, Typ] = {
     "u64": Typ(
         name="u64",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "u64", [("string", "s")])
+            create_method("ToString", "string", "u64", []),
+            create_method("Parse", "u64", "u64", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -136,11 +137,11 @@ _builtin_types: Dict[str, Typ] = {
     "f16": Typ(
         name="f16",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "f16", [("string", "s")]),
-            create_method("Round", "f16", []),
-            create_method("Floor", "f16", []),
-            create_method("Ceiling", "f16", [])
+            create_method("ToString", "string", "f16", []),
+            create_method("Parse", "f16", "f16", [("string", "s")]),
+            create_method("Round", "f16", "f16", []),
+            create_method("Floor", "f16", "f16", []),
+            create_method("Ceiling", "f16", "f16", [])
         ],
         fields=[],
         is_reference_type=False
@@ -148,11 +149,11 @@ _builtin_types: Dict[str, Typ] = {
     "f32": Typ(
         name="f32",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "f32", [("string", "s")]),
-            create_method("Round", "f32", []),
-            create_method("Floor", "f32", []),
-            create_method("Ceiling", "f32", [])
+            create_method("ToString", "string", "f32", []),
+            create_method("Parse", "f32", "f32", [("string", "s")]),
+            create_method("Round", "f32", "f32", []),
+            create_method("Floor", "f32", "f32", []),
+            create_method("Ceiling", "f32", "f32", [])
         ],
         fields=[],
         is_reference_type=False
@@ -160,11 +161,11 @@ _builtin_types: Dict[str, Typ] = {
     "f64": Typ(
         name="f64",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "f64", [("string", "s")]),
-            create_method("Round", "f64", []),
-            create_method("Floor", "f64", []),
-            create_method("Ceiling", "f64", [])
+            create_method("ToString", "string", "f64", []),
+            create_method("Parse", "f64", "f64", [("string", "s")]),
+            create_method("Round", "f64", "f64", []),
+            create_method("Floor", "f64", "f64", []),
+            create_method("Ceiling", "f64", "f64", [])
         ],
         fields=[],
         is_reference_type=False
@@ -174,17 +175,16 @@ _builtin_types: Dict[str, Typ] = {
     "string": Typ(
         name="string",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Length", "i32", []),
-            create_method("Substring", "string", [("i32", "start"), ("i32", "length")]),
-            create_method("ToUpper", "string", []),
-            create_method("ToLower", "string", []),
-            create_method("Trim", "string", []),
-            create_method("Replace", "string", [("string", "old"), ("string", "new")]),
-            create_method("Split", "string[]", [("string", "separator")]),
-            create_method("Contains", "bool", [("string", "value")]),
-            create_method("StartsWith", "bool", [("string", "value")]),
-            create_method("EndsWith", "bool", [("string", "value")])
+            create_method("ToString", "string", "string", []),
+            create_method("Substring", "string", "string", [("i32", "start"), ("i32", "length")]),
+            create_method("ToUpper", "string", "string", []),
+            create_method("ToLower", "string", "string", []),
+            create_method("Trim", "string", "string", []),
+            create_method("Replace", "string", "string", [("string", "old"), ("string", "new")]),
+            create_method("Split", "string[]", "string", [("string", "separator")]),
+            create_method("Contains", "bool", "string", [("string", "value")]),
+            create_method("StartsWith", "bool", "string", [("string", "value")]),
+            create_method("EndsWith", "bool", "string", [("string", "value")])
         ],
         fields=[
             create_property("Length", "u64"),
@@ -196,8 +196,8 @@ _builtin_types: Dict[str, Typ] = {
     "bool": Typ(
         name="bool",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("Parse", "bool", [("string", "s")])
+            create_method("ToString", "string", "bool", []),
+            create_method("Parse", "bool", "bool", [("string", "s")])
         ],
         fields=[],
         is_reference_type=False
@@ -207,12 +207,12 @@ _builtin_types: Dict[str, Typ] = {
     "char": Typ(
         name="char",
         methods=[
-            create_method("ToString", "string", []),
-            create_method("IsDigit", "bool", []),
-            create_method("IsLetter", "bool", []),
-            create_method("IsWhitespace", "bool", []),
-            create_method("ToUpper", "char", []),
-            create_method("ToLower", "char", [])
+            create_method("ToString", "string", "char", []),
+            create_method("IsDigit", "bool", "char", []),
+            create_method("IsLetter", "bool", "char", []),
+            create_method("IsWhitespace", "bool", "char", []),
+            create_method("ToUpper", "char", "char", []),
+            create_method("ToLower", "char", "char", [])
         ],
         fields=[],
         is_reference_type=False

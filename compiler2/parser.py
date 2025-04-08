@@ -64,21 +64,22 @@ class Typ:
         # Add default ToString method if it does not exist
         # Default ToString calls the builtin default
         method = PMethod("ToString",
-                                      PType('string', Lexeme.default), 
-                                      [],
-                                      PBlock([
-                                          PReturnStatement(
-                                              PFunctionCall(
-                                                  PIdentifier(FUNC_DEFAULT_TOSTRING, Lexeme.default),
-                                                  [PThis(Lexeme.default)],
-                                                  Lexeme.default
-                                              ),
-                                              Lexeme.default)
-                                          ], Lexeme.default, BlockProperties(
-                                                    is_top_level=False,
-                                                    in_function=True
-                                          )),
-                                      Lexeme.default, is_builtin=True)
+                         PType('string', Lexeme.default),
+                         PType(self.name, Lexeme.default),
+                         [],
+                         PBlock([
+                             PReturnStatement(
+                                 PFunctionCall(
+                                     PIdentifier(FUNC_DEFAULT_TOSTRING, Lexeme.default),
+                                     [PThis(Lexeme.default)],
+                                     Lexeme.default
+                                 ),
+                                 Lexeme.default)
+                             ], Lexeme.default, BlockProperties(
+                                     is_top_level=False,
+                                     in_function=True
+                             )),
+                         Lexeme.default, is_builtin=True)
         self.methods.append(method)
     
     def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
@@ -130,6 +131,23 @@ class ArrayTyp(Typ):
                          methods=methods,
                          fields=fields,
                          is_reference_type=True)
+    
+    def __post_init__(self):
+        """Adds .Length field and other methods"""
+        super().__post_init__()
+        for field in self.fields:
+            if field.name == "Length":
+                return
+        # Add default Length method if it does not exist
+        # Default Length calls the builtin default
+        field = PClassField("Length",
+                            PType('u64', Lexeme.default), 
+                            lexeme=Lexeme.default,
+                            is_public=True,
+                            is_builtin=True,
+                            default_value=None)
+        #it's the only field of an array! (others are the actual array elements)
+        self.fields = [field]
     
     def __hash__(self) -> int:
         return super().__hash__()
@@ -679,9 +697,15 @@ class PFunction(PStatement):
 class PMethod(PFunction):
     _class_type:Optional[Typ]=None
 
-    def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
+    def __init__(self, name: str, return_type: 'PType', class_type:'PType',
+                 parameters: List['PVariableDeclaration'],
                  body: 'PBlock', lexeme: Lexeme, is_builtin:bool = False):
         super().__init__(name, return_type, parameters, body, lexeme, is_builtin=is_builtin)
+        
+        # Add implicit "this" argument
+        # TODO: Do not include for static methods!
+        self.function_args.insert(0, PVariableDeclaration('this', class_type,
+                                                          None, class_type.position))
         
     @property
     def explicit_arguments(self):
@@ -884,8 +908,8 @@ class PVariableDeclaration(PStatement):
         """Flag which says whether this variable declaration should be declared to the GC to track its objects"""
         return self.typer_pass_var_type.is_reference_type
 
-    def __init__(self, name: str, var_type: 'PType', initial_value: Optional[PExpression], lexeme: Lexeme):
-        super().__init__(NodeType.VARIABLE_DECLARATION, lexeme.pos)
+    def __init__(self, name: str, var_type: 'PType', initial_value: Optional[PExpression], lexeme_pos: Union[Lexeme, Position]):
+        super().__init__(NodeType.VARIABLE_DECLARATION, lexeme_pos.pos if isinstance(lexeme_pos, Lexeme) else lexeme_pos)
         self.name = name
         self.var_type = var_type
         self.initial_value = initial_value
@@ -2799,7 +2823,7 @@ class Parser:
     def _parse_class_definition(self, block_properties:BlockProperties) -> PClass:
         """Parse a class definition"""
         class_lexeme = self._expect(LexemeType.KEYWORD_OBJECT_CLASS)
-        name = self._expect(LexemeType.IDENTIFIER).value
+        class_name_lexeme = self._expect(LexemeType.IDENTIFIER)
 
         self._expect(LexemeType.PUNCTUATION_OPENBRACE)
         fields: List[PClassField] = []
@@ -2820,9 +2844,8 @@ class Parser:
                                                               block_properties.copy_with(is_class=True,
                                                                                          in_function=True))
                     methods.append(
-                        PMethod(method.name, method.return_type,
-                                method.function_args, method.body, name_lexeme)
-                    )
+                        PMethod(method.name, method.return_type, PType(class_name_lexeme.value, class_name_lexeme),
+                                method.function_args, method.body, name_lexeme))
                 else:
                     # Property
                     is_public = True  # TODO: Handle visibility modifiers
@@ -2843,7 +2866,7 @@ class Parser:
                     int(p.var_type.type_string in ['bool', 'char', 'i8', 'u8', 'i16', 'u16', 'f16', 
                                                     'i32', 'u32', 'f32', 'i64', 'u64', 'f64'])
             )
-        return PClass(name, fields, methods, class_lexeme)
+        return PClass(class_name_lexeme.value, fields, methods, class_lexeme)
 
     def _parse_ternary_operation(self, condition) -> PTernaryOperation:
         """Parse a ternary operation (condition ? true_value : false_value)"""
