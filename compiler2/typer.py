@@ -1215,15 +1215,14 @@ class Typer:
 
     def _type_assert_statement(self, assert_stmt: PAssertStatement) -> None:
         """Type checks an assert statement"""
-        raise NotImplementedError("Assert not implemented yet")
-        # condition_type = self._type_expression(assert_stmt.condition)
-        # if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
-        #     raise TypingError(f"An assertion expression must be a boolean. Are you missing a cast? {assert_stmt.condition.position}")
+        condition_type = self._type_expression(assert_stmt.condition)
+        if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
+            raise TypingError(f"An assertion expression must be a boolean. Are you missing a cast? {assert_stmt.condition.position}")
         
-        # if assert_stmt.message is not None:
-        #     message_type = self._type_expression(assert_stmt.message)
-        #     if self.get_type_info(message_type).type_class != TypeClass.STRING:
-        #         raise TypingError(f"An assertion message must be a string!")
+        if assert_stmt.message is not None:
+            message_type = self._type_expression(assert_stmt.message)
+            if self.get_type_info(message_type).type_class != TypeClass.STRING:
+                raise TypingError(f"An assertion message must be a string!")
             
     def _cfg_check(self, program:Union[PProgram,PBlock]) -> None:
         """Check to ensure all functions have a valid return. Raises error if invalid otherwise returns None"""
