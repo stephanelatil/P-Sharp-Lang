@@ -247,22 +247,7 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         self.assertIn("call", ir_code)
         self.assertIn("i32", ir_code)
         res = self.compile_and_run_main(source)
-        self.assertEqual(res, 3+5)
-        
-    def test_valid_ToString_calls(self):
-        test_cases = [
-            ("i32 main() { string s = true.ToString(); return (i32) s.Length; }", 4),
-            ("i32 main() { string s = (123).ToString(); return (i32) s.Length; }", 3),
-            ("i32 main() { string s = (3.1415).ToString(); return (i32) s.Length; }", 6),
-            ("i32 main() { string s = \"hello\".ToString(); return (i32) s.Length; }", 5),
-            ("i32 main() { string s = 'a'.ToString(); return (i32) s.Length; }", 1)
-        ]
-        
-        for source, expected_value in test_cases:
-            with self.subTest(source=source):
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, expected_value)
-                
+        self.assertEqual(res, 3+5)                
 
     def test_valid_method_chaining(self):
         """Test valid method chaining"""
@@ -284,6 +269,39 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         """
         result = self.compile_and_run_main(source)
         self.assertEqual(result, 1 + 2 + 3)
+        
+
+class TestCodeGeneratorBuiltins(CodeGenTestCase):
+    """Test builtin methods and fields"""
+    
+    def test_valid_ToString_calls_and_string_Length_access(self):
+        test_cases = [
+            ("i32 main() { string s = true.ToString(); return (i32) s.Length; }", 4),
+            ("i32 main() { string s = (123).ToString(); return (i32) s.Length; }", 3),
+            ("i32 main() { string s = (3.1415).ToString(); return (i32) s.Length; }", 6),
+            ("i32 main() { string s = \"hello\".ToString(); return (i32) s.Length; }", 5),
+            ("i32 main() { string s = 'a'.ToString(); return (i32) s.Length; }", 1)
+        ]
+        
+        for source, expected_value in test_cases:
+            with self.subTest(source=source):
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, expected_value)
+    
+    def test_valid_array_Length_field_access(self):
+        test_cases = [
+            ("i32 main() { i32[] arr = new i32[4]; return (i32) arr.Length; }", 4),
+            ("i32 main() { i32[] arr = new i32[0]; return (i32) arr.Length; }", 0),
+            ("i32 main() { bool[] arr = new bool[5]; return (i32) arr.Length; }", 5),
+            ("i32 main() { string[] arr = new string[100]; return (i32) arr.Length; }", 100),
+            ("""class A{}
+             i32 main() { A[] arr = new A[10]; return (i32) arr.Length; }""", 10),
+        ]
+        
+        for source, expected_value in test_cases:
+            with self.subTest(source=source):
+                res = self.compile_and_run_main(source)
+                self.assertEqual(res, expected_value)
 
 class TestCodeGeneratorArrayOperations(CodeGenTestCase):
     """Test array operations and indexing"""
