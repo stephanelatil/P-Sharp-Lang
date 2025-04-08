@@ -297,6 +297,8 @@ class ScopeManager:
     def enter_function_scope(self):
         self._function_scope_stack.append(self.current_scope)
         global_scope = self.current_scope
+        while global_scope.parent is not None:
+            global_scope = global_scope.parent
         self.current_scope = Scope(parent=global_scope)
 
     def enter_scope(self) -> None:
@@ -816,61 +818,67 @@ class Typer:
         for method in class_def.methods:
             self.all_class_methods.append(method)
             self._type_function(method)
+        self._in_class = None
 
     def _type_ptype(self, ptype:PType) -> Typ:
         """Type checks a class definition and returns its type"""
-        if isinstance(ptype, PArrayType):
-            base = ptype.base_type
-            if base.type_string not in self.known_types:
-                raise UnknownTypeError(base)
-            self.known_types[ptype.type_string] = ArrayTyp(self._type_ptype(ptype.element_type))
+        if ptype.type_string in self.known_types:
             return self.known_types[ptype.type_string]
-        if not ptype.type_string in self.known_types:
+        elif isinstance(ptype, PArrayType):
+            arrTyp = ArrayTyp(self._type_ptype(ptype.element_type))
+            self.known_types[ptype.type_string] = arrTyp
+            #store tmp class location fo type builtins (TODO: should be done another way, typing it somewhere else)
+            tmp_class = self._in_class
+            self._in_class = ptype
+            for field in arrTyp.fields:
+                self._type_class_property(field)
+            for method in arrTyp.methods:
+                self._type_function(method)
+            #return to prev state
+            self._in_class = tmp_class
+            return arrTyp
+        else:
             raise UnknownTypeError(ptype)
-        return self.known_types[ptype.type_string]
 
-    def _type_function(self, function: PFunction|PMethod) -> None:
+    def _type_function(self, func: PFunction|PMethod) -> None:
         """Type checks a function definition"""
         self._scope_manager.enter_function_scope()
-        if isinstance(function, PMethod):
+        if isinstance(func, PMethod):
             assert self._in_class is not None #if method: ensure we're in a class!
-            function._class_type = self._type_ptype(self._in_class)
-            #add implicit "this" argument. Do not include for static methods!
-            function.function_args.insert(0,
-                                          PVariableDeclaration('this',
-                                                               self._in_class,
-                                                               None,
-                                                               Lexeme.default))
+            func._class_type = self._type_ptype(self._in_class)
         else: # function not a method
-            if not function.is_builtin:
+            if not func.is_builtin:
                 #ignore checks on builtins
-                self.all_functions.append(function)
+                self.all_functions.append(func)
         
-        for arg in function.function_args:
-            self._type_statement(arg)
+        for arg in func.function_args:
+            self._type_variable_declaration(arg)
             symbol = self._scope_manager.lookup(arg.name, arg)
             assert not symbol.is_function
             # Function args are always assigned
             symbol.is_assigned = True
-            if function.is_builtin:
+            if func.is_builtin:
                 #ignore checks on builtins
                 # TODO: Do the same on imported, maybe consider builtin = imported?
                 symbol.is_read = True
         
-        self.expected_return_type = self._type_ptype(function.return_type)
-        function._return_typ_typed = self.expected_return_type
-        self._type_block(function.body)
-        
-        #add implicit return at the end of a void function if there isn't one already
-        if self.get_type_info(self.expected_return_type).type_class == TypeClass.VOID:
-            if len(function.body.statements) == 0:
-                function.body.statements.append(
-                    PReturnStatement.implicit_return(function.body.position))
-            if not isinstance(function.body.statements[-1], PReturnStatement):
-                function.body.statements.append(
-                    PReturnStatement.implicit_return(
-                        function.body.statements[-1].position))
-        self.expected_return_type = None
+        func._return_typ_typed = self._type_ptype(func.return_type)
+        if not func.is_builtin:
+            self.expected_return_type = func._return_typ_typed 
+            #ignore body for builtin functions (just a declaration)
+            self._type_block(func.body)
+
+            #add implicit return at the end of a void function if there isn't one already
+            if self.get_type_info(self.expected_return_type).type_class == TypeClass.VOID:
+                if len(func.body.statements) == 0:
+                    func.body.statements.append(
+                        PReturnStatement.implicit_return(func.body.position))
+                if not isinstance(func.body.statements[-1], PReturnStatement):
+                    func.body.statements.append(
+                        PReturnStatement.implicit_return(
+                            func.body.statements[-1].position))
+            self.expected_return_type = None
+            
         self._scope_manager.exit_function_scope()
         
 
