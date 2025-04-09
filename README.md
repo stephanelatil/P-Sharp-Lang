@@ -1,14 +1,10 @@
 # P# Programming Language
 
-## **NOTE:**
-
-**This project is currently being rewritten**. A beta is available and functional. A first release is planned soon as most features are functional-ish and simple programs execute correctly already.
-
 <img src="assets/img/psharp_logo.png" alt="P# Logo" width="128"/>
 
 P# is a embedded programming language designed for developers who want the best of both worlds: the simplicity and expressiveness of Python, combined with the power and performance of C#. With a focus on static typing, efficient memory management, and seamless integration with C libraries, P# opens up new possibilities for building high-performance embedded systems.
 
-**NOTE:** Currently the language can only be compiled for Linux. Bare metal support for Arduino and other systems will be added as the language evolves
+**NOTE:** Currently the language can only be compiled for Linux. Bare metal support for Arduino and other systems will be added as the language evolves, as well as other planned features (c.f. the [TODO](./TODO.md))
 
 ## Table of Contents
 
