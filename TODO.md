@@ -36,6 +36,20 @@ Like in python, when you have an array `i32[] arr = new i32[10]`. Indexing it wi
 
 ## [-] Add a proper compiler executable (or main.py) file with documentation, cli args etc.
 
+## [ ] Add `unsafe` context allowing for interacting directly with pointers, arrays without runtime checks etc.
+
+This should allow you to build HAL drivers or build wrappers to C libs more easily and directly in P# instead of in C to then need linking and possible function name translation.
+
+This should have:
+
+- Direct access to allocator methods (alloc-object and alloc-arrays)
+- Direct access to some registers (not frame/stack pointers)
+- Direct pointer access, dereference
+- Unchecked type casts
+- Array access without bounds checks
+- Placing objects on the stack for quick access (no malloc/free)
+- Access to c-functions
+
 ## [ ] Fix type IDs for libraries
 
 Currently type IDs are set when initializing the GC. Which means that when compiling libraries, types don't have type IDs! When allocating a new object, the `CodeGenContext` has no type id for the type and it will thus fail. 
@@ -68,7 +82,15 @@ This does add the need for a default `ToString` method for every individual type
 
 This will help with program debugging. They should be added if a flag is given to the compiler
 
+## [ ] Don't stop compiler on first Lexer/Parser/Typer error but keep going with assumptions to print as many errors together as possible
+
 ## [ ] Add (mandatory) namespaces to avoid linker conflicts with other libs
+
+This will simplify the separation of builtins (and functions used for internal use). Everything will be inside a namespace (including builtins, using a namespace starting with `__PS_`)
+
+If a user does not state a namespace il should use the `Default` namespace. This will raise a warning and should not be allowed for libraries!
+
+This can simplify importing of code as well: just import a namespace and you het access to its types & functions (not marked internal). 
 
 ## [ ] Add Warnings and flags for any and all potentials issues
 
@@ -107,6 +129,10 @@ This is still in debate whether it's useful. It can save memory (and may have sl
 
 **Note to self:** This feature is necessary in cases to handle network packets or protocols with bit-flags for example when packing then to be written/read. It should be a simple add but be *very careful* to add alignment specifiers in the LLVM IR generation
 
+## [ ] Integer binary literals (and octal?)
+
+Being able to have binary literals like `0b110` which will simplify embedded and low level development. Should be a quick add in the Lexer!
+
 ## [ ] Integer and Float literal suffixes to denote the expected size
 
 Currently all integer literals (except chars) are i32. If I want to define a literal unsigned, or smaller int you have to cast it. Or defining a literal i64 (bigger than the 32bit max value) results in a truncated value. 
@@ -121,6 +147,8 @@ Custom allocator to optimize allocation of objects. Here we use malloc for every
 
 A solution could be to pre-allocate n classes of a type and keep unused ones in a collection somewhere. Directly return a pointer to it when one is requested. Only call malloc when the collection is empty.
 
+This will be very useful when working in embedded contexts. It will also maybe need some static analysis passes to see how to optimize the GC as much as possible.
+
 ## [ ] Object wrapper to convert from and to c structs 
 
 c -> P# : It needs the structure definition to define an appropriate Class prototype with the same fields. It needs to be recursive for the properties!
@@ -131,11 +159,11 @@ Similar to C but more complex du to the c++ class system.
 
 ## [-] String object implementation & methods
 
-Currently missing the string specific methods
+Currently missing some string specific methods
 
 ## [ ] Default builtin functions like print
 
-Print is already defined, Cf. "print" function. But it will have to be modified when using new namespace implementation
+Print is already defined, Cf. "print" function. But it will have to be modified when using new namespace implementation. All other methods should be implemented as well like value type methods and (parse etc.) and 
 
 ## [ ] Array splicing?
 
@@ -160,10 +188,6 @@ Currently constructors set all non-instantiated fields to 0 or null and uses the
 ## [ ] Add `readonly` keyword 
 
 Only allows class fields to be set in the class constructor (and?) or as a field default value when creating the class
-
-## [ ] Add `property` keyword to have a read-only property method (like in python)
-
-Properties can be used to return constants or computed values (like the current Length) field on a 
 
 ## [ ] Possible native CUDA integration (cf. llvm and cuda integration?)
 

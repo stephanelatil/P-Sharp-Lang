@@ -85,51 +85,66 @@ pscc -o output_executable your_program_source.psc
 P#'s syntax draws inspiration from C#, Python (and Rust types) to provide a familiar environment for developers. Here's a quick example of variable, function and class definitions as well as their use:
 
 ```rust
-//classes with fields and methods
+// Global variable declaration
+i32 CACHE_SIZE = 10;
+
 class Fibonacci{
-    u64 ArrLen = (u64)100;
-    //Classes have fields
-    u64[] Cache = new u64[100]; 
+    // field default values
+    // garbage collected arrays
+    u64[] Cache = new u64[CACHE_SIZE]; 
 
     // Methods
     u64 Fib(i32 n){
-        //check cache
-        if (n < this.ArrLen and this.Cache[n] != 0)
-            return this.Cache[n];
         //base case
         if (n <= 1)
             return (u64) n;
+        //check cache
+        if (n < this.Cache.Length and this.Cache[n] != 0)
+            return this.Cache[n];
         // calculate value (second call uses cache built by the first)
         u64 result = this.Fib(n-1) + this.Fib(n-2);
         //cache result
-        if (n < this.ArrLen)
+        if (n < this.Cache.Length)
             this.Cache[n] = result;
         return result;
     }
 }
 
-
-// Global variable declaration
-i32 x = 10;
-
 // Function definition
-i32 min(i32 a, i32 b) {
+i32 Min(i32 a, i32 b) {
     return a < b ? a : b; //ternary operators
 } //raises warning for unused function
 
+
+//recursive fucntion
+i32 Sum(i32[] values, i32 i){
+    if (i >= values.Length)
+        // Runtime would crash if attempting to access buffer out of bounds
+        return 0;
+    //negative indexing
+    return values[-1-start] + Sum(values, i + i);
+}
+
+void IsNotZeroAssertion(i32 number){
+    //Assertions with error messages (also includes filename, line number and column)
+    assert number != 0, "Number is Zero!";
+}
+
 i32 main(){
-    // new handles object allocation
+    // "new" keyword handles object allocation
     Fibonacci f = new Fibonacci();
 
-    //function calls & casts & global variable access
-    i32 result = (i32) f.Fib(x);
+    //function calls & casts
+    i32 result = (i32) f.Fib(10);
     // method calls on value types
+    IsNotZeroAssertion(result);
+    // Builtin string type
     string stringResult = result.ToString();
-    // builtin print method
+    // built-in print method (only accepts strings at the moment)
     print(stringResult);
     //return codes
     return 0;
-    //garbage collection
+    //Auto garbage collection
 }
 ```
 
