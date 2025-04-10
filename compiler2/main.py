@@ -1,29 +1,38 @@
-from argparse import ArgumentParser, ArgumentError
+from argparse import ArgumentParser, ArgumentError, Namespace
 from subprocess import Popen, PIPE
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from llvm_transpiler import CodeGen
 from typing import Union
 from os import environ
+from shutil import move
+from warnings import filterwarnings
+from tempfile import TemporaryDirectory
 import sys
 #avoid including full traceback in the exception messages
-sys.tracebacklimit = -1
+# sys.tracebacklimit = -1
 
-LLC_LOCATION=environ.get('LLC_LOCATION', 'llc')
-CLANG_LOCATION=environ.get('CLANG_LOCATION', 'clang')
+LLVM_VERSION = environ.get("LLVM_VERSION", "")
+assert LLVM_VERSION in ("", "-15", "-16", "-17", "-18", "-19"), "The only currently supported llvm versions are 15 to 19"
+
+LLC = 'llc' + LLVM_VERSION
+LLVM_LINK = 'llvm-link' + LLVM_VERSION
+LLVM_DIS = 'llvm-dis' + LLVM_VERSION
+CLANG = 'clang' + LLVM_VERSION
 
 def compile_file(filename: Path, output: str, is_library: bool, optimization_level: Union[int, str],
                  use_warnings: bool, debug_symbols:bool, emit: str):
     if filename == Path(output):
         raise FileExistsError("Cannot use the same file for input and output!")
-    with filename.open('r') as fileIO:
-        codegen = CodeGen(optimization_level, use_warnings)
-        module_ref = codegen.compile_module(filename, fileIO, is_library)
+    with filename.open('r') as fileIO, TemporaryDirectory() as tmpdir:
+        codegen = CodeGen(optimization_level, use_warnings, debug_symbols)
+        module_location = codegen.compile_module(filename, fileIO,
+                                                 output_dir=tmpdir, is_library=is_library,
+                                                 llvm_version=LLVM_VERSION)
         llc_flags = ['-relocation-model=pic']
         clang_flags= [] 
         if debug_symbols:
             llc_flags.append('--emit-call-site-info')
-            # llc_flags.append('--debug-entry-values')
             clang_flags.append('-g')
         
         if optimization_level == 's':
@@ -31,40 +40,33 @@ def compile_file(filename: Path, output: str, is_library: bool, optimization_lev
         else:
             opt_flags = [f'-O{optimization_level}']
         
-        if emit == "ir":
-            ll_file = output if output.endswith(".ll") else output + ".ll"
-            with open(ll_file, 'w') as out:
-                out.write(str(module_ref))
-        
-        elif emit == "bc":
+        if emit == "bc":
             bc_file = output if output.endswith(".bc") else output + ".bc"
-            with open(bc_file, "wb") as f:
-                f.write(module_ref.as_bitcode())
+            move(module_location, str(Path(bc_file).resolve()))
+        
+        elif emit == "ir":
+            ll_file = output if output.endswith(".ll") else output + ".ll"
+            proc = Popen([LLVM_DIS, '-o', ll_file, str(module_location.resolve().absolute())])
+            proc.wait()
         
         elif emit == "asm":
             llc_flags.append('-filetype=asm')
             asm_file = output if output.endswith(".s") else output + ".s"
-            proc = Popen([LLC_LOCATION, "-o", asm_file, '-'] + llc_flags + opt_flags,
-                    stdin=PIPE)
-            proc.communicate(module_ref.as_bitcode())
+            proc = Popen([LLC, "-o", asm_file, str(module_location.resolve().absolute()),
+                          *llc_flags,*opt_flags])
+            proc.wait()
         
         elif emit == "obj":
             llc_flags.append("-filetype=obj")
             obj_file = output if output.endswith(".o") else output + ".o"
-            proc = Popen([LLC_LOCATION, "-o", obj_file, '-'] + llc_flags + opt_flags,
-                    stdin=PIPE)
-            proc.communicate(module_ref.as_bitcode())
+            proc = Popen([LLC, "-o", obj_file, str(module_location.resolve().absolute()),
+                          *llc_flags,*opt_flags])
+            proc.wait()
             
         elif emit == 'exe':
-            llc_flags.append("-filetype=obj")
-            exe_file = output if output.endswith("") else output + ""
-            with TemporaryDirectory() as tmpdir:
-                obj_filename = str(Path(tmpdir, 'built_obj.o'))
-                bc_to_o_proc = Popen([LLC_LOCATION, "-o", obj_filename, '-', *llc_flags, *opt_flags],
-                                    stdin=PIPE)
-                bc_to_o_proc.communicate(module_ref.as_bitcode())
-                o_to_exe_proc = Popen([CLANG_LOCATION, "-o", exe_file, obj_filename, *clang_flags, *opt_flags])
-                o_to_exe_proc.communicate()
+            exe_file = output or "a.out"
+            o_to_exe_proc = Popen([CLANG, "-o", exe_file, module_location, *clang_flags, *opt_flags])
+            o_to_exe_proc.wait()
         
         else:
             raise ArgumentError(None, f"Unknown format to emit to '{emit}'")

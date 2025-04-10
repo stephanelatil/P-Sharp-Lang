@@ -2,19 +2,34 @@
 
 MAIN_LOCATION=./compiler2/main.py
 
-LLC_LOCATION="${LLC_LOCATION:-llc}"
-CLANG_LOCATION="${CLANG_LOCATION:-clang}"
+LLC_LOCATION="llc${LLVM_VERSION}"
+LLVM_LINK_LOCATION="llvm-link${LLVM_VERSION}"
+LLVM_DIS_LOCATION="llvm-dis${LLVM_VERSION}"
+LLC_LOCATION="llc${LLVM_VERSION}"
+CLANG_LOCATION="clang${LLVM_VERSION}"
 
 if ! command -v ${LLC_LOCATION} 2>&1 >/dev/null
 then
-    echo "${LLC_LOCATION} could not be found. Set the LLC_LOCATION variable to point to your installed llc - LLVM static compiler location"
+    echo "${LLC_LOCATION} could not be found. Make sure the llvm toolchain is installed and supply the correct version (e.g. LLVM_VERSION='-19')"
+    exit 1
+fi
+
+if ! command -v ${LLVM_LINK_LOCATION} 2>&1 >/dev/null
+then
+    echo "${LLVM_LINK_LOCATION} could not be found. Make sure the llvm toolchain is installed and supply the correct version (e.g. LLVM_VERSION='-19')"
+    exit 1
+fi
+
+if ! command -v ${LLVM_DIS_LOCATION} 2>&1 >/dev/null
+then
+    echo "${LLVM_DIS_LOCATION} could not be found. Make sure the llvm toolchain is installed and supply the correct version (e.g. LLVM_VERSION='-19')"
     exit 1
 fi
 
 if ! command -v ${CLANG_LOCATION} 2>&1 >/dev/null
 then
-    echo "${CLANG_LOCATION} could not be found. Set the CLANG_LOCATION variable to point to your installed clang compiler"
+    echo "${LLC_LOCATION} could not be found. Make sure the clang toolchain is installed and supply the correct version (e.g. LLVM_VERSION='-19')"
     exit 1
 fi
 
-LLC_LOCATION="${LLC_LOCATION}" CLANG_LOCATION="${CLANG_LOCATION}" python3 -OO ${MAIN_LOCATION} "$@"
+LLVM_VERSION="${LLVM_VERSION}" python3 ${MAIN_LOCATION} "$@"

@@ -11,7 +11,8 @@ from parser import (PClass,PFunction,PProgram, Typ, ArrayTyp,
                     PReturnStatement, PVariableDeclaration,
                     PLiteral, CodeGenContext, Scopes,
                     CompilerError)
-from typing import TextIO, Dict, Optional, Union
+from subprocess import Popen, PIPE
+from typing import TextIO, Dict, Optional, Union, Literal
 from llvmlite import ir
 from warnings import warn
 from constants import *
@@ -23,7 +24,7 @@ from pathlib import Path
 
 
 class CodeGen:
-    _GC_LIB=str(Path(Path(__file__).parent.parent, 'garbage_collector/ps_re.bc'))
+    _RUNTIME_LIB=str(Path(Path(__file__).parent.parent, 'garbage_collector/ps_re.bc'))
     BUILTINS_TYPE_MAP: Dict[str, Union[ir.IntType,
                                        ir.HalfType,
                                        ir.FloatType,
@@ -45,7 +46,9 @@ class CodeGen:
             'bool': ir.IntType(1)
         }
     
-    def __init__(self, optimization:Union[int,str]=0, use_warnings:bool=False) -> None:
+    def __init__(self, optimization:Union[int,str]=0,
+                 use_warnings:bool=False,
+                 debug_symbols:bool=False) -> None:
         
         #required for code generation (no cross-compile yet, needs initialize_all* for that)
         initialize()
@@ -74,7 +77,22 @@ class CodeGen:
         self.pass_builder = PassBuilder(self.target, opts)
     
     
-    def compile_module(self, filepath:Path, file:TextIO, is_library:bool=False) -> ModuleRef:
+    def compile_module(self, filepath:Path, file:TextIO,
+                       output_dir:str, is_library:bool=False,
+                       llvm_version:Literal["", "-15", "-16", "-17", "-18", "-19"]="") -> Path:
+        """Compiles the module to llvm-ir,
+        then uses llvm-link to link the runtime with the compiled module if it's not a library
+
+        Args:
+            filepath (Path): The input file path
+            file (TextIO): The readable buffer to the file contents
+            output_dir (str): The dir where to place the compiled and linked llvm-bc file
+            is_library (bool, optional): Whether to compile the module as a library. Defaults to False.
+            llvm_version (Literal["", "-15", "-16", "-17", "-18", "-19"], optional): The llvm executables suffix. Defaults to "" where the default llvm-link and llvm-as are used
+
+        Returns:
+            Path: The filepath to the compiled and linked module
+        """
         # Initializes module & typer
         filename = filepath.name
         self.module = ir.Module(name=filename.removesuffix('.psc'))
@@ -123,32 +141,24 @@ class CodeGen:
         
         # Here should check if we're building a library.
         self._setup_exit_code_global(context, is_library=is_library)
+        
+        bc_out = "module_out.bc"
         if not is_library:
             # generate code for main function
             self._generate_main_function(typed_abstract_syntax_tree, context, globals_ref_type_count)
-            # static-link the GC (very small so it's fine)
-            module_ref = parse_assembly(str(context.module))
-            with open(self._GC_LIB, "rb") as f:
-                gc_module = parse_bitcode(f.read())
-                # TODO: Once namespaces are added:
-                    # Rename runtime C symbols to be included by adding them to a private namespace
-                    # Same for adding tostring and other methods for ref values
-                    # c.f. https://stackoverflow.com/questions/30990032/change-name-of-llvm-function
-                module_ref.link_in(gc_module)
+            proc = Popen(["llvm-link"+llvm_version, '--suppress-warnings', '-o', bc_out, self._RUNTIME_LIB, '-'],
+                         cwd=output_dir, stdin=PIPE)
+            proc.communicate(str(context.module).encode())
 
         # If building a library, add a globals initializer function. and ignore all other statement
         else:
             # TODO set the globals/methods/classes to export and which to keep internally private
-            # Get ModuleRef
-            module_ref = parse_assembly(str(context.module))
+            # compile write to file and return path to it
+            proc = Popen(["llvm-as"+llvm_version, "-o", bc_out, "-"],
+                         stdin=PIPE, cwd=output_dir)
+            proc.communicate(str(context.module).encode())
 
-        # Run optimization passes and verifier
-        pass_manager = self.pass_builder.getModulePassManager()
-        pass_manager.add_verifier()
-        pass_manager.run(module_ref, self.pass_builder)
-        # Return ModuleRef object
-        module_ref.name = filename.removesuffix(".psc") #TODO: here change when namespaces are generated
-        return module_ref
+        return Path(output_dir, bc_out)
     
     def _define_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
         """Generates the code within all functions and methods"""
@@ -486,7 +496,7 @@ class CodeGen:
                 raise CompilerError(f"Cannot convert TypeRef kind {typeref.type_kind} to Type")
         
         # Retrieve and declare builtins from the runtime
-        with open(self._GC_LIB, 'rb') as runtime_bc:
+        with open(self._RUNTIME_LIB, 'rb') as runtime_bc:
             runtime_mod = parse_bitcode(runtime_bc.read())
         for runtime_func in runtime_mod.functions:
             #convert TypeRef to Type
