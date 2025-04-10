@@ -117,12 +117,10 @@ i32 Min(i32 a, i32 b) {
 
 
 //recursive fucntion
-i32 Sum(i32[] values, i32 i){
-    if (i >= values.Length)
-        // Runtime would crash if attempting to access buffer out of bounds
-        return 0;
-    //negative indexing
-    return values[-1-start] + Sum(values, i + i);
+i32 Factorial(i32 n){
+    if (n <=1)
+        return 1;
+    return n * Factorial(n-1);
 }
 
 void IsNotZeroAssertion(i32 number){
