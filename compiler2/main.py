@@ -85,8 +85,11 @@ def opt_level(val:str):
         return int(val)
     raise ArgumentError(None, "Optimization level should be 0, 1, 2, 3 or s")
 
-def main():    
-    parser = ArgumentParser(description="P# Compiler for .psc files")
+def setup_warnings(args:Namespace):
+    #TODO here use filterwarnings function to filter out most warnings or allow others
+    pass
+
+def setup_argparse(parser:ArgumentParser):
     parser.add_argument("input", type=file_check, help="Input .psc source file")
     parser.add_argument("-o", "--output", type=str, default="a.out", help="Output file name")
     parser.add_argument("--lib", action="store_true", help="Compile as a library (omit main function, and GC) (Unstable for now, use at your own risk!)")
@@ -100,8 +103,12 @@ def main():
                         asm: builds to assembly representation for the current architecture
                         obj: builds to an object file for the current architecture
                         exe: builds to an executable elf""")
-    
-    args = parser.parse_args()    
+
+def main():    
+    parser = ArgumentParser(description="P# Compiler for .psc files")
+    setup_argparse(parser)
+    args = parser.parse_args() 
+       
     compile_file(args.input, args.output, args.lib, args.O, args.warnings, args.debug_symbols, args.emit)
     
 if __name__ == "__main__":

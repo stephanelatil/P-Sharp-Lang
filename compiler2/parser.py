@@ -6,6 +6,10 @@ from lexer import Lexer, LexemeType, Lexeme, Position
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
 from llvmlite import ir, binding
 from constants import *
+from warnings import warn
+
+class ParserWarning(Warning):
+    pass
 
 class LexemeStream:
     def __init__(self, lexmes:Generator[Lexeme, None, None], filename:str):
@@ -511,7 +515,6 @@ class PStatement:
         """How many scopes deep this statement is within a function
         A statement in a function's top scope has a depth of 1 including its params
         This is used to calculate how many scopes to leave when returning from a function"""
-        # TODO: populate this in every node and use to fix leaving scopes in functions
         if isinstance(self, (PFunction)):
             return 1 #At the Function level (1 scope for the parameters!)
         elif isinstance(self, (PForStatement, PBlock)):
