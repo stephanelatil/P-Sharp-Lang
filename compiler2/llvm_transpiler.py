@@ -46,8 +46,7 @@ class CodeGen:
             'bool': ir.IntType(1)
         }
     
-    def __init__(self, optimization:Union[int,str]=0,
-                 use_warnings:bool=False,
+    def __init__(self, use_warnings:bool=False,
                  debug_symbols:bool=False) -> None:
         
         #required for code generation (no cross-compile yet, needs initialize_all* for that)
@@ -64,17 +63,6 @@ class CodeGen:
             codemodel='jitdefault',
             jit=False,
         )
-
-        if isinstance(optimization, str):
-            optimization = 2 
-            opts = PipelineTuningOptions(optimization, size_level=2)
-        else:
-            opts = PipelineTuningOptions(optimization)
-        opts.loop_unrolling = optimization >= 1
-        opts.loop_interleaving = optimization >= 2
-        opts.loop_vectorization = optimization >=2
-        opts.slp_vectorization = optimization >=3
-        self.pass_builder = PassBuilder(self.target, opts)
     
     
     def compile_module(self, filepath:Path, file:TextIO,

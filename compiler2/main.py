@@ -25,7 +25,7 @@ def compile_file(filename: Path, output: str, is_library: bool, optimization_lev
     if filename == Path(output):
         raise FileExistsError("Cannot use the same file for input and output!")
     with filename.open('r') as fileIO, TemporaryDirectory() as tmpdir:
-        codegen = CodeGen(optimization_level, use_warnings, debug_symbols)
+        codegen = CodeGen(use_warnings, debug_symbols)
         module_location = codegen.compile_module(filename, fileIO,
                                                  output_dir=tmpdir, is_library=is_library,
                                                  llvm_version=LLVM_VERSION)
@@ -34,11 +34,8 @@ def compile_file(filename: Path, output: str, is_library: bool, optimization_lev
         if debug_symbols:
             llc_flags.append('--emit-call-site-info')
             clang_flags.append('-g')
-        
-        if optimization_level == 's':
-            opt_flags = [f'-O2']
-        else:
-            opt_flags = [f'-O{optimization_level}']
+
+        opt_flags = [f'-O{optimization_level}']
         
         if emit == "bc":
             bc_file = output if output.endswith(".bc") else output + ".bc"
