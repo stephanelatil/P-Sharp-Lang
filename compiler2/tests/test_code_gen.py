@@ -1,9 +1,11 @@
 from unittest import TestCase
 from io import StringIO
 from typing import List, Type
+from tempfile import TemporaryDirectory
 from llvm_transpiler import CodeGen
 from llvmlite import ir
-from llvmlite.binding import Target, parse_assembly, create_mcjit_compiler, ModuleRef
+from llvmlite.binding import (Target, parse_assembly, create_mcjit_compiler,
+                              ModuleRef, parse_bitcode)
 from constants import (ENTRYPOINT_FUNCTION_NAME, FUNC_POPULATE_GLOBALS,
                        FUNC_GC_ENTER_SCOPE, FUNC_GC_LEAVE_SCOPE)
 import ctypes
@@ -32,7 +34,13 @@ class CodeGenTestCase(TestCase):
     def generate_module(self, source: str) -> ModuleRef:
         """Helper method to generate LLVM IR from source code"""
         gen = CodeGen()
-        return gen.compile_module(Path('/tmp/test.cs'), StringIO(source))
+        with TemporaryDirectory() as tmpdir:
+            output_bc = gen.compile_module(Path('/tmp/test.cs'),
+                                           StringIO(source),
+                                           output_dir=tmpdir,
+                                           llvm_version='-15')
+            with open(output_bc, 'rb') as bc:
+                return parse_bitcode(bc.read())
     
     def get_function_ir(self, module:ModuleRef, func_name:str='main'):
         func = module.get_function(func_name)
