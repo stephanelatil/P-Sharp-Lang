@@ -1,4 +1,3 @@
 autopep8
-llvmlite
-numpy
+llvmlite>=0.44.0
 coverage
