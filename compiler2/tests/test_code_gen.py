@@ -222,7 +222,6 @@ class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
         module = self.generate_module(source)
         self.get_function_ir(module, "__Rectangle.__GetArea")
         self.get_function_ir(module, "__Rectangle.__SetSize")
-        self.get_function_ir(module, "__Rectangle.__ToString")
 
 class TestCodeGeneratorMethodCalls(CodeGenTestCase):
     """Test method calls and method chaining"""
@@ -241,7 +240,6 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         }
         """
         module = self.generate_module(source)
-        ir_code = self.get_function_ir(module, "__Calculator.__ToString")
         ir_code = self.get_function_ir(module, "__Calculator.__Add")
         ir_code = self.get_function_ir(module)
         self.assertIn("call", ir_code)

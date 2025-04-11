@@ -16,7 +16,7 @@ from parser import (TypeClass, TypeInfo, TYPE_INFO, TypingError,
                     PTernaryOperation, PThis,PVariableDeclaration, 
                     PWhileStatement, PDiscard, PVoid, Typ, ArrayTyp,
                     BlockProperties)
-from constants import FUNC_DEFAULT_TOSTRING, FUNC_PRINT
+from constants import FUNC_PRINT
 
 
 @dataclass
@@ -64,128 +64,139 @@ _builtin_types: Dict[str, Typ] = {
     # Numeric types
     "i8": Typ(
         name="i8",
-        methods=[
-            create_method("ToString", "string", "i8", []),
-            create_method("Parse", "i8", "i8", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "i8", []),
+            "Parse":create_method("Parse", "i8", "i8", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "i16": Typ(
         name="i16",
-        methods=[
-            create_method("ToString", "i16", "string", []),
-            create_method("Parse", "i16", "i16", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "i16", "string", []),
+            "Parse":create_method("Parse", "i16", "i16", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "i32": Typ(
         name="i32",
-        methods=[
-            create_method("ToString", "string", "i32", []),
-            create_method("Parse", "i32", "i32", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "i32", []),
+            "Parse":create_method("Parse", "i32", "i32", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "i64": Typ(
         name="i64",
-        methods=[
-            create_method("ToString", "string", "i64", []),
-            create_method("Parse", "i64", "i64", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "i64", []),
+            "Parse":create_method("Parse", "i64", "i64", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "u8": Typ(
         name="u8",
-        methods=[
-            create_method("ToString", "string", "u8", []),
-            create_method("Parse", "u8", "u8", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "u8", []),
+            "Parse":create_method("Parse", "u8", "u8", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "u16": Typ(
         name="u16",
-        methods=[
-            create_method("ToString", "string", "u16", []),
-            create_method("Parse", "u16", "u16", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "u16", []),
+            "Parse":create_method("Parse", "u16", "u16", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "u32": Typ(
         name="u32",
-        methods=[
-            create_method("ToString", "string", "u32", []),
-            create_method("Parse", "u32", "u32", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "u32", []),
+            "Parse":create_method("Parse", "u32", "u32", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "u64": Typ(
         name="u64",
-        methods=[
-            create_method("ToString", "string", "u64", []),
-            create_method("Parse", "u64", "u64", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "u64", []),
+            "Parse":create_method("Parse", "u64", "u64", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "f16": Typ(
         name="f16",
-        methods=[
-            create_method("ToString", "string", "f16", []),
-            create_method("Parse", "f16", "f16", [("string", "s")]),
-            create_method("Round", "f16", "f16", []),
-            create_method("Floor", "f16", "f16", []),
-            create_method("Ceiling", "f16", "f16", [])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "f16", []),
+            "Parse":create_method("Parse", "f16", "f16", [("string", "s")]),
+            "Round":create_method("Round", "f16", "f16", []),
+            "Floor":create_method("Floor", "f16", "f16", []),
+            "Ceiling":create_method("Ceiling", "f16", "f16", [])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "f32": Typ(
         name="f32",
-        methods=[
-            create_method("ToString", "string", "f32", []),
-            create_method("Parse", "f32", "f32", [("string", "s")]),
-            create_method("Round", "f32", "f32", []),
-            create_method("Floor", "f32", "f32", []),
-            create_method("Ceiling", "f32", "f32", [])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "f32", []),
+            "Parse":create_method("Parse", "f32", "f32", [("string", "s")]),
+            "Round":create_method("Round", "f32", "f32", []),
+            "Floor":create_method("Floor", "f32", "f32", []),
+            "Ceiling":create_method("Ceiling", "f32", "f32", [])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
     "f64": Typ(
         name="f64",
-        methods=[
-            create_method("ToString", "string", "f64", []),
-            create_method("Parse", "f64", "f64", [("string", "s")]),
-            create_method("Round", "f64", "f64", []),
-            create_method("Floor", "f64", "f64", []),
-            create_method("Ceiling", "f64", "f64", [])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "f64", []),
+            "Parse":create_method("Parse", "f64", "f64", [("string", "s")]),
+            "Round":create_method("Round", "f64", "f64", []),
+            "Floor":create_method("Floor", "f64", "f64", []),
+            "Ceiling":create_method("Ceiling", "f64", "f64", [])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
 
     # String type
     "string": Typ(
         name="string",
-        methods=[
-            create_method("ToString", "string", "string", []),
-            create_method("Substring", "string", "string", [("i32", "start"), ("i32", "length")]),
-            create_method("ToUpper", "string", "string", []),
-            create_method("ToLower", "string", "string", []),
-            create_method("Trim", "string", "string", []),
-            create_method("Replace", "string", "string", [("string", "old"), ("string", "new")]),
-            create_method("Split", "string[]", "string", [("string", "separator")]),
-            create_method("Contains", "bool", "string", [("string", "value")]),
-            create_method("StartsWith", "bool", "string", [("string", "value")]),
-            create_method("EndsWith", "bool", "string", [("string", "value")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "string", []),
+            "Substring":create_method("Substring", "string", "string", [("i32", "start"), ("i32", "length")]),
+            "ToUpper":create_method("ToUpper", "string", "string", []),
+            "ToLower":create_method("ToLower", "string", "string", []),
+            "Trim":create_method("Trim", "string", "string", []),
+            "Replace":create_method("Replace", "string", "string", [("string", "old"), ("string", "new")]),
+            "Split":create_method("Split", "string[]", "string", [("string", "separator")]),
+            "Contains":create_method("Contains", "bool", "string", [("string", "value")]),
+            "StartsWith":create_method("StartsWith", "bool", "string", [("string", "value")]),
+            "EndsWith":create_method("EndsWith", "bool", "string", [("string", "value")])
+        },
         fields=[
             create_property("Length", "u64"),
             create_property("__c_string", "__null") # a pointer to the start of the c_string
@@ -195,30 +206,32 @@ _builtin_types: Dict[str, Typ] = {
     # Boolean type
     "bool": Typ(
         name="bool",
-        methods=[
-            create_method("ToString", "string", "bool", []),
-            create_method("Parse", "bool", "bool", [("string", "s")])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "bool", []),
+            "Parse":create_method("Parse", "bool", "bool", [("string", "s")])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
 
     # Character type
     "char": Typ(
         name="char",
-        methods=[
-            create_method("ToString", "string", "char", []),
-            create_method("IsDigit", "bool", "char", []),
-            create_method("IsLetter", "bool", "char", []),
-            create_method("IsWhitespace", "bool", "char", []),
-            create_method("ToUpper", "char", "char", []),
-            create_method("ToLower", "char", "char", [])
-        ],
+        methods={
+            "ToString":create_method("ToString", "string", "char", []),
+            "IsDigit":create_method("IsDigit", "bool", "char", []),
+            "IsLetter":create_method("IsLetter", "bool", "char", []),
+            "IsWhitespace":create_method("IsWhitespace", "bool", "char", []),
+            "ToUpper":create_method("ToUpper", "char", "char", []),
+            "ToLower":create_method("ToLower", "char", "char", [])
+        },
         fields=[],
-        is_reference_type=False
+        is_reference_type=False,
+        is_builtin=True
     ),
-    'void': Typ('void', [],[], True),
-    '__null': Typ('null', [], [], True)
+    'void': Typ('void', {}, [], True, is_builtin=True),
+    '__null': Typ('null', {}, [], True, is_builtin=True)
 }
 
 @dataclass
@@ -435,10 +448,6 @@ class Typer:
             return self._ast
         self._ast = self.parser.parse()
         
-        self._scope_manager.define_function(PFunction(FUNC_DEFAULT_TOSTRING, PType('string', Position.default),
-                                                      [PVariableDeclaration('this', PType("__null", Lexeme.default), None, Lexeme.default)],
-                                                      PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
-        
         self._scope_manager.define_function(PFunction(FUNC_PRINT, PType('i32', Position.default),
                                                       [PVariableDeclaration('s', PType("string", Lexeme.default), None, Lexeme.default)],
                                                       PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
@@ -449,14 +458,16 @@ class Typer:
                 continue
             #make sure to say whe class we're in
             self._in_class = self._ptype_from_typ(typ)
-            for elem in [*typ.fields, *typ.methods]:
+            for elem in [*typ.fields, *typ.methods.values()]:
                 self._type_statement(elem)
         self._in_class = None
         
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
             if isinstance(statement, PClass):
-                self.known_types[statement.name] = Typ(statement.name, statement.methods, statement.fields)
+                self.known_types[statement.name] = Typ(statement.name, 
+                                                       {m.name:m for m in statement.methods},
+                                                       statement.fields)
             elif isinstance(statement, PFunction):
                 self._scope_manager.define_function(statement)
             continue
@@ -832,7 +843,7 @@ class Typer:
             self._in_class = ptype
             for field in arrTyp.fields:
                 self._type_class_property(field)
-            for method in arrTyp.methods:
+            for method in arrTyp.methods.values():
                 self._type_function(method)
             #return to prev state
             self._in_class = tmp_class
@@ -1046,12 +1057,9 @@ class Typer:
     def _type_method_call(self, method_call: PMethodCall) -> Typ:
         """Type checks a method call and returns its return type"""
         obj_type = self._type_expression(method_call.object)
-        for method in obj_type.methods:
-            if method_call.method_name.name == method.name:
-                break
-        else:
+        if not method_call.method_name.name in obj_type.methods:
             raise TypingError(f"Method {method_call.method_name.name} of type {obj_type} if unknown at location {method_call.position}")
-        
+        method = obj_type.methods[method_call.method_name.name]
         method.is_called = True
         if len(method.explicit_arguments) != len(method_call.arguments):
             raise TypingError(f"The function expects {len(method.function_args)} arguments but got {len(method_call.arguments)}"+\

@@ -136,8 +136,8 @@ class TestTypeConversions(TestCase):
             (PArrayType(PType("MyClass", Position.default), Position.default), PArrayType(PType("OtherClass", Position.default), Position.default), False)
         ]
 
-        self.typer.known_types["MyClass"] = Typ("MyClass", [], [])
-        self.typer.known_types["OtherClass"] = Typ("OtherClass", [], [])
+        self.typer.known_types["MyClass"] = Typ("MyClass", {}, [])
+        self.typer.known_types["OtherClass"] = Typ("OtherClass", {}, [])
         for type1, type2, expected in test_cases:
             with self.subTest(type1=type1, type2=type2):
                 actual = self.typer.check_types_match(
@@ -269,7 +269,7 @@ class TestTypeInfoHandling(TestCase):
         for var_decl in array_types:
             with self.subTest(type_name=var_decl):
                 self.typer = Typer('text.cs', StringIO(var_decl))
-                self.typer.known_types["MyClass"] = Typ("MyClass", [], [])
+                self.typer.known_types["MyClass"] = Typ("MyClass", {}, [])
                 ast = self.typer.type_program()
                 self.assertIsInstance(ast.statements[0], PVariableDeclaration)
                 assert isinstance(ast.statements[0], PVariableDeclaration)
@@ -286,7 +286,7 @@ class TestTypeInfoHandling(TestCase):
         # Add some custom classes
         custom_classes = ["MyClass", "AnotherClass", "DataHolder"]
         for class_name in custom_classes:
-            self.typer.known_types[class_name] = Typ(class_name, [], [])
+            self.typer.known_types[class_name] = Typ(class_name, {}, [])
 
         for class_name in custom_classes:
             with self.subTest(class_name=class_name):
@@ -643,7 +643,7 @@ class TestTyperClassDeclarations(TestCase):
         self.assertIsInstance(typ, Typ)
         self.assertNotIsInstance(typ, ArrayTyp)
         self.assertTrue(typ.is_reference_type)
-        self.assertEqual(len(typ.methods), 1)
+        self.assertEqual(len(typ.methods), 0)
         self.assertEqual(len(typ.fields), 2)
         self.assertEqual(typ.fields[0].var_type.type_string, "i32")
         self.assertEqual(typ.fields[1].var_type.type_string, "i32")
@@ -671,7 +671,7 @@ class TestTyperClassDeclarations(TestCase):
         self.assertIsInstance(class_decl, PClass)
         assert isinstance(class_decl, PClass)
         self.assertEqual(len(class_decl.fields), 2)
-        self.assertEqual(len(class_decl.methods), 2+1) #+ the default ToString method
+        self.assertEqual(len(class_decl.methods), 2)
         self.assertIn(class_decl.name, self.typer.known_types)
 
     def test_invalid_class_property_types(self):

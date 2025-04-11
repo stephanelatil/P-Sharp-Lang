@@ -43,9 +43,10 @@ class LexemeStream:
 class Typ:
     """Represents a type in the P# language with its methods and fields"""
     name:str
-    methods: List['PMethod']
+    methods: Dict[str, 'PMethod']
     fields: List['PClassField']
     is_reference_type:bool = True
+    is_builtin:bool=False
     
     def __hash__(self) -> int:
         return hash(self.name)
@@ -53,34 +54,7 @@ class Typ:
     def __eq__(self, value: object) -> bool:
         if not isinstance(value, Typ):
             return False
-        return self.name == value.name \
-            #    and all((m1 == m2 for m1, m2 in zip(self.methods, value.methods))) \
-            #    and all((f1 == f2 for f1, f2 in zip(self.fields, value.fields)))
-    
-    def __post_init__(self):
-        for function in self.methods:
-            if function.name == "ToString" and len(function.function_args) == 0:
-                return
-        # Add default ToString method if it does not exist
-        # Default ToString calls the builtin default
-        method = PMethod("ToString",
-                         PType('string', Lexeme.default),
-                         PType(self.name, Lexeme.default),
-                         [],
-                         PBlock([
-                             PReturnStatement(
-                                 PFunctionCall(
-                                     PIdentifier(FUNC_DEFAULT_TOSTRING, Lexeme.default),
-                                     [PThis(Lexeme.default)],
-                                     Lexeme.default
-                                 ),
-                                 Lexeme.default)
-                             ], Lexeme.default, BlockProperties(
-                                     is_top_level=False,
-                                     in_function=True
-                             )),
-                         Lexeme.default, is_builtin=True)
-        self.methods.append(method)
+        return self.name == value.name
     
     def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
         """Returns the llvm value-Type corresponding to the Typ. All reference types will return an ir.PointerType
@@ -125,29 +99,19 @@ class Typ:
 class ArrayTyp(Typ):
     def __init__(self, element_type:Typ):
         self.element_typ:Typ = element_type
-        methods:List[PMethod] = []
-        fields:List[PClassField] = []
+        methods:Dict[str, PMethod] = {}
+        fields:List[PClassField] = [PClassField("Length",
+                                        PType('u64', Lexeme.default), 
+                                        lexeme=Lexeme.default,
+                                        is_public=True,
+                                        is_builtin=True,
+                                        default_value=None)
+                                    ]
+        
         super().__init__(f'{element_type.name}[]',
                          methods=methods,
                          fields=fields,
                          is_reference_type=True)
-    
-    def __post_init__(self):
-        """Adds .Length field and other methods"""
-        super().__post_init__()
-        for field in self.fields:
-            if field.name == "Length":
-                return
-        # Add default Length method if it does not exist
-        # Default Length calls the builtin default
-        field = PClassField("Length",
-                            PType('u64', Lexeme.default), 
-                            lexeme=Lexeme.default,
-                            is_public=True,
-                            is_builtin=True,
-                            default_value=None)
-        #it's the only field of an array! (others are the actual array elements)
-        self.fields = [field]
     
     def __hash__(self) -> int:
         return super().__hash__()
