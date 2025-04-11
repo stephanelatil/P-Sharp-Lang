@@ -2,7 +2,7 @@ from unittest import TestCase
 from io import StringIO
 from typing import List, Type
 from tempfile import TemporaryDirectory
-from llvm_transpiler import CodeGen
+from llvm_transpiler import CodeGen, LLVM_Version, OutputFormat
 from llvmlite import ir
 from llvmlite.binding import (Target, parse_assembly, create_mcjit_compiler,
                               ModuleRef, parse_bitcode)
@@ -30,16 +30,30 @@ class CodeGenTestCase(TestCase):
     def setUp(self):
         self.generator = CodeGen()
         self._engine = create_execution_engine()
+    
+    def compile_to_llvm_ir(self, source:str) -> str:
+        gen = CodeGen(debug_symbols=True)
+        with TemporaryDirectory() as tmpdir:
+            outfile = str(Path(tmpdir,'outfile.ll'))
+            outfile = gen.compile_module(Path('/tmp/test.cs'),
+                                           StringIO(source),
+                                           emit_format=OutputFormat.IntermediateRepresentation,
+                                           output_file=outfile,
+                                           llvm_version=LLVM_Version.v15)
+            with open(outfile, 'rt') as ir:
+                return ir.read()
 
     def generate_module(self, source: str) -> ModuleRef:
         """Helper method to generate LLVM IR from source code"""
         gen = CodeGen()
         with TemporaryDirectory() as tmpdir:
-            output_bc = gen.compile_module(Path('/tmp/test.cs'),
-                                           StringIO(source),
-                                           output_dir=tmpdir,
-                                           llvm_version='-15')
-            with open(output_bc, 'rb') as bc:
+            outfile = str(Path(tmpdir,'outfile.bc'))
+            outfile = gen.compile_module(Path('/tmp/test.cs'),
+                                StringIO(source),
+                                emit_format=OutputFormat.BitCode,
+                                output_file=outfile,
+                                llvm_version=LLVM_Version.v15)
+            with open(outfile, 'rb') as bc:
                 return parse_bitcode(bc.read())
     
     def get_function_ir(self, module:ModuleRef, func_name:str='main'):

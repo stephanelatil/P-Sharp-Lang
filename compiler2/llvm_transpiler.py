@@ -11,17 +11,42 @@ from parser import (PClass,PFunction,PProgram, Typ, ArrayTyp,
                     PReturnStatement, PVariableDeclaration,
                     PLiteral, CodeGenContext, Scopes,
                     CompilerError)
+from tempfile import TemporaryDirectory
 from subprocess import Popen, PIPE
-from typing import TextIO, Dict, Optional, Union, Literal
+from shutil import move
+from typing import TextIO, Dict, Optional, Union, IO
 from llvmlite import ir
 from warnings import warn
 from constants import *
+from enum import IntEnum, StrEnum
 from llvmlite.binding import (initialize, initialize_native_target, 
-                              initialize_native_asmprinter, PipelineTuningOptions,
-                              PassBuilder, Target, parse_assembly, parse_bitcode,
-                              ModuleRef, TypeRef, TypeKind)
+                              initialize_native_asmprinter, Target,
+                              parse_bitcode, TypeRef, TypeKind)
 from pathlib import Path
 
+
+class LLVM_Version(IntEnum):
+    v15=15
+    v16=16
+    v17=17
+    v18=18
+    v19=19
+    
+    def suffix(self):
+        return f"-{self.value}"
+    
+class OutputFormat(StrEnum):
+    """The supported output formats for the compiler"""
+    """LLVM IR, human readable intermediate representation"""
+    IntermediateRepresentation="ir"
+    """LLVM BitCode, machine readable intermediate representation"""
+    BitCode="bc"
+    """Native assembly code for the platform"""
+    Assembly="asm"
+    """An object file to be compiled and/or linked further to an executable"""
+    Object="obj"
+    """An executable format (Or library if flag is set)"""
+    Executable="exe"
 
 class CodeGen:
     _RUNTIME_LIB=str(Path(Path(__file__).parent.parent, 'garbage_collector/ps_re.bc'))
@@ -66,21 +91,25 @@ class CodeGen:
     
     
     def compile_module(self, filepath:Path, file:TextIO,
-                       output_dir:str, is_library:bool=False,
-                       llvm_version:Literal["", "-15", "-16", "-17", "-18", "-19"]="") -> Path:
-        """Compiles the module to llvm-ir,
-        then uses llvm-link to link the runtime with the compiled module if it's not a library
+                       output_file:str,
+                       emit_format:OutputFormat,
+                       is_library:bool=False,
+                       llvm_version:LLVM_Version=LLVM_Version.v15,
+                       clang_flags:Optional[list]=None) -> Path:
+        """Compiles the module to the requested output and linked with the runtime environment if it's not a library
 
         Args:
             filepath (Path): The input file path
             file (TextIO): The readable buffer to the file contents
-            output_dir (str): The dir where to place the compiled and linked llvm-bc file
+            output_file (str): The file where to place the compiled and linked output
+            emit (OutputFormat): The format of the output
             is_library (bool, optional): Whether to compile the module as a library. Defaults to False.
-            llvm_version (Literal["", "-15", "-16", "-17", "-18", "-19"], optional): The llvm executables suffix. Defaults to "" where the default llvm-link and llvm-as are used
+            llvm_version (LLVM_Version, optional): The LLVM version to use. Defaults to version 15.
 
         Returns:
-            Path: The filepath to the compiled and linked module
+            Path: The filepath to the compiled and linked module of the requested format
         """
+        clang_flags = clang_flags or list()
         # Initializes module & typer
         filename = filepath.name
         self.module = ir.Module(name=filename.removesuffix('.psc'))
@@ -130,23 +159,76 @@ class CodeGen:
         # Here should check if we're building a library.
         self._setup_exit_code_global(context, is_library=is_library)
         
-        bc_out = "module_out.bc"
+        #TODO here recompile using llvm toolchain
         if not is_library:
             # generate code for main function
             self._generate_main_function(typed_abstract_syntax_tree, context, globals_ref_type_count)
-            proc = Popen(["llvm-link"+llvm_version, '--suppress-warnings', '-o', bc_out, self._RUNTIME_LIB, '-'],
-                         cwd=output_dir, stdin=PIPE)
-            proc.communicate(str(context.module).encode())
+            self._compile_prog(context.module, output_file=output_file,
+                                llvm_version=llvm_version, output_format=emit_format,
+                                clang_flags=clang_flags)
 
         # If building a library, add a globals initializer function. and ignore all other statement
         else:
             # TODO set the globals/methods/classes to export and which to keep internally private
             # compile write to file and return path to it
-            proc = Popen(["llvm-as"+llvm_version, "-o", bc_out, "-"],
-                         stdin=PIPE, cwd=output_dir)
-            proc.communicate(str(context.module).encode())
+            self._compile_to_output_format(context.module,
+                                            output_file=output_file,
+                                            llvm_version=llvm_version,
+                                            output_format=emit_format,
+                                            clang_flags=clang_flags)
 
-        return Path(output_dir, bc_out)
+        return Path(output_file).resolve().absolute()
+    
+    def _compile_prog(self, module:ir.Module, output_file:str,
+                     llvm_version:LLVM_Version, output_format:OutputFormat,
+                     clang_flags:list):
+        link_flags = ["--suppress-warnings", self._RUNTIME_LIB]
+        if output_format in [OutputFormat.IntermediateRepresentation, OutputFormat.BitCode]:
+            if output_format == OutputFormat.IntermediateRepresentation:
+                link_flags += ['-S', '-o', output_file]
+            elif output_format == OutputFormat.BitCode:
+                link_flags += ['-o', output_file]
+            proc = Popen(['llvm-link'+llvm_version.suffix(), *link_flags, '-'], stdin=PIPE)
+            proc.communicate(str(module).encode())
+            # compiled to the requested output format. no additional compilation needed
+            return
+        
+        #needs to use clang to advance
+        link_flags.append('-f')
+        proc = Popen(['llvm-link'+llvm_version.suffix(), *link_flags, '-'],
+                     stdin=PIPE, stdout=PIPE)
+        
+        self._compile_to_output_format(proc.communicate(str(module).encode())[0],
+                                       output_file=output_file, 
+                                       llvm_version=llvm_version,
+                                       output_format=output_format,
+                                       clang_flags=clang_flags)
+
+    def _compile_to_output_format(self, module_bc:Union[ir.Module, bytes], output_file:str,
+                     llvm_version:LLVM_Version, output_format:OutputFormat,
+                     clang_flags:list):
+        if isinstance(module_bc, ir.Module):
+            module_bc = str(module_bc).encode()
+
+        clang_flags = ['-x', 'ir'] + clang_flags
+        if output_format == OutputFormat.Assembly:
+            clang_flags.append('-S')
+        elif output_format == OutputFormat.Object:
+            clang_flags.append('-c')
+        elif output_format == OutputFormat.Executable:
+            pass
+        elif output_format == OutputFormat.IntermediateRepresentation:
+            clang_flags.append('-emit-llvm')
+            clang_flags.append('-S')
+        elif output_format == OutputFormat.BitCode:
+            clang_flags.append('-emit-llvm')
+            clang_flags.append('-c')
+        else:
+            raise NotImplementedError(f"Unknown output format {output_format}")
+        
+        proc = Popen(["clang"+llvm_version.suffix(), *clang_flags,
+                        "-o", output_file, '-'], stdin=PIPE)
+        proc.communicate(module_bc)
     
     def _define_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
         """Generates the code within all functions and methods"""

@@ -1,72 +1,34 @@
 from argparse import ArgumentParser, ArgumentError, Namespace
-from subprocess import Popen, PIPE
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from llvm_transpiler import CodeGen
+from llvm_transpiler import CodeGen, OutputFormat, LLVM_Version
 from typing import Union
 from os import environ
-from shutil import move
 from warnings import filterwarnings
-from tempfile import TemporaryDirectory
 import sys
 #avoid including full traceback in the exception messages
-# sys.tracebacklimit = -1
+sys.tracebacklimit = -1
 
-LLVM_VERSION = environ.get("LLVM_VERSION", "")
-assert LLVM_VERSION in ("", "-15", "-16", "-17", "-18", "-19"), "The only currently supported llvm versions are 15 to 19"
-
-LLC = 'llc' + LLVM_VERSION
-LLVM_LINK = 'llvm-link' + LLVM_VERSION
-LLVM_DIS = 'llvm-dis' + LLVM_VERSION
-CLANG = 'clang' + LLVM_VERSION
+try:
+    LLVM_VERSION = LLVM_Version(int(environ.get("LLVM_VERSION", "15")))
+except:
+    raise ValueError(f"Unable to use LLVM version '{environ.get("LLVM_VERSION", "15")}', it's not a valid version. Valid versions are 15, 16, 17, 18 or 19")
 
 def compile_file(filename: Path, output: str, is_library: bool, optimization_level: Union[int, str],
-                 use_warnings: bool, debug_symbols:bool, emit: str):
+                 use_warnings: bool, debug_symbols:bool, emit: OutputFormat):
     if filename == Path(output):
         raise FileExistsError("Cannot use the same file for input and output!")
-    with filename.open('r') as fileIO, TemporaryDirectory() as tmpdir:
-        codegen = CodeGen(use_warnings, debug_symbols)
-        module_location = codegen.compile_module(filename, fileIO,
-                                                 output_dir=tmpdir, is_library=is_library,
-                                                 llvm_version=LLVM_VERSION)
-        llc_flags = ['-relocation-model=pic']
-        clang_flags= [] 
-        if debug_symbols:
-            llc_flags.append('--emit-call-site-info')
-            clang_flags.append('-g')
-
-        opt_flags = [f'-O{optimization_level}']
-        
-        if emit == "bc":
-            bc_file = output if output.endswith(".bc") else output + ".bc"
-            move(module_location, str(Path(bc_file).resolve()))
-        
-        elif emit == "ir":
-            ll_file = output if output.endswith(".ll") else output + ".ll"
-            proc = Popen([LLVM_DIS, '-o', ll_file, str(module_location.resolve().absolute())])
-            proc.wait()
-        
-        elif emit == "asm":
-            llc_flags.append('-filetype=asm')
-            asm_file = output if output.endswith(".s") else output + ".s"
-            proc = Popen([LLC, "-o", asm_file, str(module_location.resolve().absolute()),
-                          *llc_flags,*opt_flags])
-            proc.wait()
-        
-        elif emit == "obj":
-            llc_flags.append("-filetype=obj")
-            obj_file = output if output.endswith(".o") else output + ".o"
-            proc = Popen([LLC, "-o", obj_file, str(module_location.resolve().absolute()),
-                          *llc_flags,*opt_flags])
-            proc.wait()
-            
-        elif emit == 'exe':
-            exe_file = output or "a.out"
-            o_to_exe_proc = Popen([CLANG, "-o", exe_file, module_location, *clang_flags, *opt_flags])
-            o_to_exe_proc.wait()
-        
-        else:
-            raise ArgumentError(None, f"Unknown format to emit to '{emit}'")
+    codegen = CodeGen(use_warnings, debug_symbols)
+    clang_flags= [] 
+    if debug_symbols:
+        clang_flags.append('-g')
+    clang_flags.append(f'-O{optimization_level}')
+    with open(filename, 'rt') as fileIO:
+        codegen.compile_module(filename, fileIO,
+                               output_file=output,
+                               emit_format=emit,
+                               is_library=is_library,
+                               llvm_version=LLVM_VERSION,
+                               clang_flags=clang_flags)
 
 def file_check(filepath:str) -> Path:
     path = Path(filepath)
@@ -92,7 +54,7 @@ def main():
     parser.add_argument("-O", type=opt_level, choices=[*range(0, 4),'s'], default=0, help="Optimization level (0-3) or optimize for size -Os", dest="O")
     parser.add_argument("-g", action='store_true', dest='debug_symbols', default=False, help="Add debug symbols (Currently not available)")
     parser.add_argument("-w", "--warnings", action="store_true", default=False, help="Enable warnings (only some available for now)")
-    parser.add_argument("--emit", type=str, choices=["ir", "bc", 'asm', "obj", "exe"], default="exe",
+    parser.add_argument("--emit", type=OutputFormat, choices=["ir", "bc", 'asm', "obj", "exe"], default="exe",
                         help="""Select output type (default exe):
                         ir : builds to LLVM Intermediate Representation and outputs a human readable .ll file
                         bc : builds to LLVM Intermediate Representation and outputs a machine readable bitcode .bc file
