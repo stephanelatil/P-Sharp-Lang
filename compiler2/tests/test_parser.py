@@ -785,23 +785,23 @@ class TestParserControlFlow(TestParserBase):
         test_cases = [
             # Simple assert
             """
-            assert(x > 0);
+            assert x > 0;
             """,
             # Assert with message
             """
-            assert(x > 0, "x must be positive");
+            assert x > 0, "x must be positive";
             """,
             # Assert with complex condition
             """
-            assert(x > 0 and y < 100 or z == 0);
+            assert x > 0 and y < 100 or z == 0;
             """,
             # Assert with function call
             """
-            assert(isValid(x));
+            assert isValid(x);
             """,
             # Assert with complex expression and message
             """
-            assert(calculateValue() > threshold, "Value too low");
+            assert calculateValue() > threshold, "Value too low";
             """
         ]
 
@@ -860,8 +860,6 @@ class TestParserControlFlow(TestParserBase):
             "for i = 0; i < 10; i++ { }",
             # Missing while condition
             "while { }",
-            # Invalid assert syntax
-            "assert x > 0;",
             # Invalid ternary syntax
             "i32 x = condition ? : 2;",
             # For loop with multiple initializers
