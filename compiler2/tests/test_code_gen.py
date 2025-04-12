@@ -1,9 +1,9 @@
-from unittest import TestCase
+import pytest
 from io import StringIO
 from typing import List, Type
 from tempfile import TemporaryDirectory
 from llvm_transpiler import CodeGen, LLVM_Version, OutputFormat
-from llvmlite import ir
+import re
 from llvmlite.binding import (Target, parse_assembly, create_mcjit_compiler,
                               ModuleRef, parse_bitcode)
 from constants import (ENTRYPOINT_FUNCTION_NAME, FUNC_POPULATE_GLOBALS,
@@ -26,8 +26,8 @@ def create_execution_engine():
     engine = create_mcjit_compiler(backing_mod, target_machine)
     return engine
 
-class CodeGenTestCase(TestCase):    
-    def setUp(self):
+class CodeGenTestCase:    
+    def setup_method(self):
         self.generator = CodeGen()
         self._engine = create_execution_engine()
     
@@ -86,31 +86,26 @@ class CodeGenTestCase(TestCase):
         cfunc = ctypes.CFUNCTYPE(*func_prototype_ctypes)(func_ptr)
         return cfunc(*args)
 
+
 class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
     """Test basic variable and function declarations"""
 
-    def test_valid_primitive_global_literal_declarations(self):
-        """Test valid primitive type declarations"""
-        test_cases = [
+    @pytest.mark.parametrize("source, var_name",[
             ("i32 x = 42;", "x"),
             ("f64 pi = 3.14159;", "pi"),
             ("bool flag = true;", "flag"),
             ("char c = 'a';", "c"),
             ("string msg = \"hello\";", "msg")
-        ]
-
-        for source, var_name in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                global_ir = str(module)
-                main_ir = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-                self.assertIn(f"@{var_name} = global", global_ir)
-                self.assertIn("store", main_ir)
-
-
-    def test_valid_primitive_literal_declarations(self):
+        ])
+    def test_valid_primitive_global_literal_declarations(self, source, var_name):
         """Test valid primitive type declarations"""
-        test_cases = [
+        module = self.generate_module(source)
+        global_ir = str(module)
+        main_ir = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
+        assert f"@{var_name} = global" in global_ir
+        assert "store" in main_ir
+
+    @pytest.mark.parametrize("source, expected_result",[
             ("""i32 main()
             {
                 i32 x = 42;
@@ -126,38 +121,32 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
                 bool flag = true;
                 return flag;
             }""", 1)
-        ]
+        ])
+    def test_valid_primitive_literal_declarations(self, source, expected_result):
+        """Test valid primitive type declarations"""
+        ret_val = self.compile_and_run_main(source)
+        assert ret_val == expected_result
 
-        for source, expected_result in test_cases:
-            with self.subTest(source=source):
-                ret_val = self.compile_and_run_main(source)
-                self.assertEqual(ret_val, expected_result)
-
-    def test_valid_array_declarations(self):
-        """Test valid array declarations"""
-        test_cases = [
+    @pytest.mark.parametrize("source, alloc_func",[
             ("i32[] arr = new i32[10];", "@__PS_AllocateValueArray"),
             ("string[] arr = new string[5];", "@__PS_AllocateRefArray"),
             ("bool[] arr = new bool[3];", "@__PS_AllocateValueArray"),
             ("i32[][] arr = new i32[3][];", "@__PS_AllocateRefArray")
-        ]
-
-        for source, alloc_func in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                main_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-                global_code = str(module)
-                # assert array var is globally known
-                self.assertIn("@arr = global ptr", global_code)
-                # assert value is initialized in main func
-                self.assertIn(f"call ptr {alloc_func}", main_code)
+        ])
+    def test_valid_array_declarations(self, source, alloc_func):
+        """Test valid array declarations"""
+        module = self.generate_module(source)
+        main_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
+        global_code = str(module)
+        # assert array var is globally known
+        assert "@arr = global ptr" in global_code
+        # assert value is initialized in main func
+        assert f"call ptr {alloc_func}" in main_code
 
 class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
     """Test function declarations and return types"""
 
-    def test_valid_void_functions(self):
-        """Test valid void function declarations"""
-        test_cases = [
+    @pytest.mark.parametrize("source, f_name",[
             ("""
             void empty() {
             }
@@ -175,22 +164,19 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
                 return 0;
             }
             ""","printInt")
-        ]
-
-        for source, f_name in test_cases:
-            with self.subTest(source=source.strip()):
-                module = self.generate_module(source)
-                try:
-                    self.get_function_ir(module, func_name=f_name)
-                    self.compile_ir(module)
-                except:
-                    raise AssertionError(f"Unable to find function {f_name}")
-                self.assertEqual(0, self.compile_and_run_main(source))
+        ])
+    def test_valid_void_functions(self, source, f_name):
+        """Test valid void function declarations"""
+        module = self.generate_module(source)
+        try:
+            self.get_function_ir(module, func_name=f_name)
+            self.compile_ir(module)
+        except:
+            raise AssertionError(f"Unable to find function {f_name}")
+        assert 0 == self.compile_and_run_main(source)
                 
 
-    def test_valid_return_type_functions(self):
-        """Test valid functions with return values"""
-        test_cases = [
+    @pytest.mark.parametrize("source, f_name, res",[
             ("""
             i32 add(i32 a, i32 b) {
                 return a + b;
@@ -207,18 +193,17 @@ class TestCodeGeneratorFunctionDeclarations(CodeGenTestCase):
                 return (i32) mul(2,3);
             }
             """, "mul", 6)
-        ]
-
-        for source, f_name, res in test_cases:
-            with self.subTest(source=source.strip()):
-                module = self.generate_module(source)
-                try:
-                    ir_code = self.get_function_ir(module, func_name=f_name)
-                    self.assertIn("ret", ir_code)
-                    self.compile_ir(module)
-                except:
-                    raise AssertionError(f"Unable to find function {f_name}")
-                self.assertEqual(res, self.compile_and_run_main(source))
+        ])
+    def test_valid_return_type_functions(self, source, f_name, res):
+        """Test valid functions with return values"""
+        module = self.generate_module(source)
+        try:
+            ir_code = self.get_function_ir(module, func_name=f_name)
+            assert "ret" in ir_code
+            self.compile_ir(module)
+        except:
+            raise AssertionError(f"Unable to find function {f_name}")
+        assert res == self.compile_and_run_main(source)
 
 
 class TestCodeGeneratorClassDeclarations(CodeGenTestCase):
@@ -264,10 +249,10 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         module = self.generate_module(source)
         ir_code = self.get_function_ir(module, "__Calculator.__Add")
         ir_code = self.get_function_ir(module)
-        self.assertIn("call", ir_code)
-        self.assertIn("i32", ir_code)
+        assert "call" in ir_code
+        assert "i32" in ir_code
         res = self.compile_and_run_main(source)
-        self.assertEqual(res, 3+5)                
+        assert res == 3+5
 
     def test_valid_method_chaining(self):
         """Test valid method chaining"""
@@ -288,47 +273,39 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         }
         """
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, 1 + 2 + 3)
+        assert result == 1 + 2 + 3
         
 
 class TestCodeGeneratorBuiltins(CodeGenTestCase):
     """Test builtin methods and fields"""
     
-    def test_valid_ToString_calls_and_string_Length_access(self):
-        test_cases = [
+    @pytest.mark.parametrize("source, expected_value",[
             ("i32 main() { string s = true.ToString(); return (i32) s.Length; }", 4),
             ("i32 main() { string s = (123).ToString(); return (i32) s.Length; }", 3),
             ("i32 main() { string s = (3.1415).ToString(); return (i32) s.Length; }", 6),
             ("i32 main() { string s = \"hello\".ToString(); return (i32) s.Length; }", 5),
             ("i32 main() { string s = 'a'.ToString(); return (i32) s.Length; }", 1)
-        ]
-        
-        for source, expected_value in test_cases:
-            with self.subTest(source=source):
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, expected_value)
+        ])
+    def test_valid_to_string_calls_and_string_length_access(self, source, expected_value):
+        res = self.compile_and_run_main(source)
+        assert res == expected_value
     
-    def test_valid_array_Length_field_access(self):
-        test_cases = [
+    @pytest.mark.parametrize("source, expected_value",[
             ("i32 main() { i32[] arr = new i32[4]; return (i32) arr.Length; }", 4),
             ("i32 main() { i32[] arr = new i32[0]; return (i32) arr.Length; }", 0),
             ("i32 main() { bool[] arr = new bool[5]; return (i32) arr.Length; }", 5),
             ("i32 main() { string[] arr = new string[100]; return (i32) arr.Length; }", 100),
             ("""class A{}
              i32 main() { A[] arr = new A[10]; return (i32) arr.Length; }""", 10),
-        ]
-        
-        for source, expected_value in test_cases:
-            with self.subTest(source=source):
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, expected_value)
+        ])
+    def test_valid_array_length_field_access(self, source, expected_value):
+        res = self.compile_and_run_main(source)
+        assert res == expected_value
 
 class TestCodeGeneratorArrayOperations(CodeGenTestCase):
     """Test array operations and indexing"""
 
-    def test_valid_array_indexing(self):
-        """Test valid array indexing operations"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected_result",[
             ("""
             i32 main() {
                 i32[] arr = new i32[10];
@@ -353,22 +330,18 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
                 return x;
             }
             """, 1)
-        ]
-
-        for source, expected_result in test_cases:
-            with self.subTest(source=source.strip()):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("getelementptr", ir_code)
-                self.assertIn("store", ir_code)
-                self.assertIn("load", ir_code)
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected_result)
-    """Test array operations and indexing"""
-
-    def test_valid_field_array_indexing(self):
+        ])
+    def test_valid_array_indexing(self, source, expected_result):
         """Test valid array indexing operations"""
-        test_cases = [
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert "getelementptr" in ir_code
+        assert "store" in ir_code
+        assert "load" in ir_code
+        result = self.compile_and_run_main(source)
+        assert result == expected_result
+
+    @pytest.mark.parametrize("source, expected_result",[
             ("""
             class C
             {
@@ -419,77 +392,68 @@ class TestCodeGeneratorArrayOperations(CodeGenTestCase):
                 return obj.matrix[1][0];
             }
             """, 0)
-        ]
-
-        for source, expected_result in test_cases:
-            with self.subTest(source=source.strip()):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("getelementptr", ir_code)
-                self.assertIn("store", ir_code)
-                self.assertIn("load", ir_code)
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected_result)
+        ])
+    def test_valid_field_array_indexing(self, source, expected_result):
+        """Test valid array indexing operations"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert "getelementptr" in ir_code
+        assert "store" in ir_code
+        assert "load" in ir_code
+        result = self.compile_and_run_main(source)
+        assert result == expected_result
 
 class TestCodeGeneratorOperators(CodeGenTestCase):
     """Test operator type checking"""
 
-    def test_valid_arithmetic_operators(self):
-        """Test valid arithmetic operators"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected_result, operation", [
             ("i32 main() { return 1 + 2;}", 3, "add"),
             ("i32 main() { return 3 - 4;}", -1, "sub"),
             ("i32 main() { return 5 * 6;}", 30, "mul"),
             ("i32 main() { return 8 / 2;}", 4, "div"),
             ("i32 main() { return 10 % 3;}", 1, "srem")
-        ]
-        for source, expected_result, operation in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn(operation, ir_code)
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, expected_result)
+        ])
+    def test_valid_arithmetic_operators(self, source, expected_result, operation):
+        """Test valid arithmetic operators"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert operation in ir_code
+        res = self.compile_and_run_main(source)
+        assert res == expected_result
 
-    def test_valid_comparison_operators(self):
-        """Test valid comparison operators"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected_result",[
             ("i32 main() { return 1 < 2;}", True),
             ("i32 main() { return 3 > 4;}", False),
             ("i32 main() { return 5 <= 6;}", True),
             ("i32 main() { return 7 >= 8;}", False),
             ("i32 main() { return 9 == 10;}", False),
             ("i32 main() { return 11 != 12;}", True)
-        ]
-        for source, expected_result in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("icmp", ir_code)
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, int(expected_result))
+        ])
+    def test_valid_comparison_operators(self, source, expected_result):
+        """Test valid comparison operators"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert "icmp" in ir_code
+        res = self.compile_and_run_main(source)
+        assert res == int(expected_result)
 
-    def test_valid_logical_operators(self):
-        """Test valid logical operators"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected_result, operation",[
             ("i32 main() { return true and false;}", False, "and"),
             ("i32 main() { return true or false;}", True, "or"),
             ("i32 main() { return not true;}", False, "xor")
-        ]
-        for source, expected_result, operation in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn(operation, ir_code)
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, int(expected_result))
+        ])
+    def test_valid_logical_operators(self, source, expected_result, operation):
+        """Test valid logical operators"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert operation in ir_code
+        res = self.compile_and_run_main(source)
+        assert res == int(expected_result)
 
 class TestCodeGeneratorControlFlow(CodeGenTestCase):
     """Test type checking in control flow statements"""
 
-    def test_valid_if_conditions(self):
-        """Test valid if statement conditions"""
-        test_cases = [
+    @pytest.mark.parametrize("source",[
             """
             i32 main(){
                 i32 x = 0;
@@ -513,18 +477,16 @@ class TestCodeGeneratorControlFlow(CodeGenTestCase):
                     x = 2;
                 return x;
             }
-            """]
-        for source in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("br i1", ir_code)
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, 2)
+            """])
+    def test_valid_if_conditions(self, source):
+        """Test valid if statement conditions"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert "br i1" in ir_code
+        res = self.compile_and_run_main(source)
+        assert res == 2
 
-    def test_valid_while_conditions(self):
-        """Test valid while loop conditions"""
-        test_cases = [
+    @pytest.mark.parametrize("source, excepted_result",[
             ("""
             i32 main(){
                 i32 x = 1;
@@ -553,18 +515,16 @@ class TestCodeGeneratorControlFlow(CodeGenTestCase):
                 }
                 return j;
             }
-            """, 9)]
-        for source, excepted_result in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("br i1", ir_code)
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, excepted_result)
+            """, 9)])
+    def test_valid_while_conditions(self, source, excepted_result):
+        """Test valid while loop conditions"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert "br i1" in ir_code
+        res = self.compile_and_run_main(source)
+        assert res == excepted_result
 
-    def test_valid_for_components(self):
-        """Test valid for loop components"""
-        test_cases = [
+    @pytest.mark.parametrize("source, excepted_result",[
             ("""
             i32 main(){
                 i32 x;
@@ -583,14 +543,14 @@ class TestCodeGeneratorControlFlow(CodeGenTestCase):
             i32 main() {
                 for (;;){return 3;}
             }""",3)
-            ]
-        for source, excepted_result in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn("br i1", ir_code)
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, excepted_result)
+            ])
+    def test_valid_for_components(self, source, excepted_result):
+        """Test valid for loop components"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert "br i1" in ir_code
+        res = self.compile_and_run_main(source)
+        assert res == excepted_result
 
 class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
     """Test implicit type conversion rules"""
@@ -605,7 +565,7 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         """
         module = self.generate_module(source)
         ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-        self.assertIn("sext", ir_code)
+        assert "sext" in ir_code
 
     def test_valid_float_promotions(self):
         """Test valid float type promotions"""
@@ -615,20 +575,18 @@ class TestCodeGeneratorImplicitConversions(CodeGenTestCase):
         """
         module = self.generate_module(source)
         ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-        self.assertIn("fpext", ir_code)
+        assert "fpext" in ir_code
 
-    def test_valid_integer_to_float_conversions(self):
-        """Test valid integer to float conversions"""
-        test_cases = [
+    @pytest.mark.parametrize("source",[
             "f32 float32 = (i8) 123;    // i8 -> f32",
             "f32 another = (i16) 123;    // i16 -> f32",
             "f64 float64 = (i32) 123;    // i32 -> f64"
-        ]
-        for source in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-                self.assertIn("sitofp", ir_code)
+        ])
+    def test_valid_integer_to_float_conversions(self, source):
+        """Test valid integer to float conversions"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
+        assert "sitofp" in ir_code
 
 class TestCodeGeneratorTypeCasting(CodeGenTestCase):
     """Test explicit type casting operations"""
@@ -643,11 +601,9 @@ class TestCodeGeneratorTypeCasting(CodeGenTestCase):
         """
         module = self.generate_module(source)
         ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-        self.assertIn("trunc", ir_code)
+        assert "trunc" in ir_code
 
-    def test_valid_float_to_integer_casts(self):
-        """Test valid float to integer casts"""
-        test_cases = [
+    @pytest.mark.parametrize("source",[
             """
             f64 double = 3.14; 
             i32 int32 = (i32)double;  // f64 -> i32
@@ -655,65 +611,58 @@ class TestCodeGeneratorTypeCasting(CodeGenTestCase):
             """
             f32 single = 2.718;
             i16 int16 = (i16)single;  // f32 -> i16
-            """]
-        for source in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-                self.assertIn("fptosi", ir_code)
+            """])
+    def test_valid_float_to_integer_casts(self, source):
+        """Test valid float to integer casts"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
+        assert "fptosi" in ir_code
 
 class TestCodeGeneratorUnaryOperations(CodeGenTestCase):
     """Test type checking of unary operations"""
 
-    def test_valid_numeric_negation(self):
-        """Test valid numeric negation"""
-        test_cases = (
+    @pytest.mark.parametrize("source, expected_op, expected_result",(
             ("i32 main(){ return -42;}", "sub", -42),
             ("i32 main(){ return -(1 + 2);}", "sub", -3),
             ("i32 main(){ return (i32) -3.14;}", "fneg", -3),
             ("i32 main(){ return (i32) -(2.0 * 3.0);}"," fneg", -6)
-        )
-        for source, expected_op, expected_result in test_cases:
-            with self.subTest(source=source):
-                module = self.generate_module(source)
-                ir_code = self.get_function_ir(module)
-                self.assertIn(expected_op, ir_code)
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, expected_result)
+        ))
+    def test_valid_numeric_negation(self, source, expected_op, expected_result):
+        """Test valid numeric negation"""
+        module = self.generate_module(source)
+        ir_code = self.get_function_ir(module)
+        assert expected_op in ir_code
+        res = self.compile_and_run_main(source)
+        assert res == expected_result
 
-    def test_valid_logical_not(self):
+    @pytest.mark.parametrize("var_decl",[
+                    "bool a = not true;",
+                    "bool b = not (1 < 2);",
+                    "bool c = not (true and false);",
+                    "bool d = not not true;"])
+    def test_valid_logical_not(self, var_decl):
         """Test valid logical not operations"""
-        test_cases = ("bool a = not true;",
-                      "bool b = not (1 < 2);",
-                      "bool c = not (true and false);",
-                      "bool d = not not true;")
-        for var_decl in test_cases:
-            with self.subTest(source=var_decl):
-                module = self.generate_module(var_decl)
-                ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
-                self.assertIn("xor", ir_code)
+        module = self.generate_module(var_decl)
+        ir_code = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
+        assert "xor" in ir_code
 
-    def test_valid_increment_decrement(self):
-        """Test valid increment/decrement operations"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected_result",[
                 ("i32 main(){ i32 x = 0; return x++;}", 0),
                 ("i32 main(){ i32 x = 0; return ++x;}", 1),
                 ("i32 main(){ i32 x = 0; return x--;}", 0),
                 ("i32 main(){ i32 x = 0; return --x;}", -1),
                 ("i32 main(){ i32 x = 0; i32 y = x++; return x;}", 1),
                 ("i32 main(){ i32 x = 0; i32 z = ++x; return x;}", 1)
-            ]
-        for source, expected_result in test_cases:
-            with self.subTest(source=source):
-                res = self.compile_and_run_main(source)
-                self.assertEqual(res, expected_result)
+            ])
+    def test_valid_increment_decrement(self, source, expected_result):
+        """Test valid increment/decrement operations"""
+        res = self.compile_and_run_main(source)
+        assert res == expected_result
 
 class TestRuntimeExecution(CodeGenTestCase):
     """Test cases that verify correct execution results at runtime"""
     
-    def test_arithmetic_operations(self):
-        """Test basic arithmetic operations with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 return 1 + 2;
             }""", 3),
@@ -729,16 +678,13 @@ class TestRuntimeExecution(CodeGenTestCase):
             ("""i32 main() {
                 return 10 % 3;
             }""", 1)
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_arithmetic_operations(self, source, expected):
+        """Test basic arithmetic operations with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_variable_declarations(self):
-        """Test variable declarations with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 i32 x = 42;
                 return x;
@@ -753,16 +699,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 x = 10;
                 return x;
             }""", 10)
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_variable_declarations(self, source, expected):
+        """Test variable declarations with runtime verification"""  
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_condition_statements(self):
-        """Test if statements with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 if (true) {
                     return 42;
@@ -789,16 +732,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                     return 0;
                 }
             }""", 0)
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_condition_statements(self, source, expected):
+        """Test if statements with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_loop_statements(self):
-        """Test loop statements with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 i32 sum = 0;
                 for (i32 i = 1; i <= 5; i = i + 1) {
@@ -815,16 +755,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 }
                 return sum;
             }""", 10)  # 0+1+2+3+4 = 10
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_loop_statements(self, source, expected):
+        """Test loop statements with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_function_calls(self):
-        """Test function calls with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""
             i32 add(i32 a, i32 b) {
                 return a + b;
@@ -846,16 +783,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 return factorial(5);
             }
             """, 120)  # 5! = 120
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_function_calls(self, source, expected):
+        """Test function calls with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_type_conversions(self):
-        """Test type conversions with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 i8 a = (i8)127;
                 i32 b = a;
@@ -872,16 +806,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 i32 b = (i32)a;
                 return b;
             }""", 3)  # float to int truncates
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_type_conversions(self, source, expected):
+        """Test type conversions with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_complex_expressions(self):
-        """Test complex expressions with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 return (5 + 3) * 2 - 4;
             }""", 12),
@@ -894,16 +825,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 i32 c = 2;
                 return a * b + c * (a - b);
             }""", 19)  # 5*3 + 2*(5-3) = 15 + 4 = 19
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_complex_expressions(self, source, expected):
+        """Test complex expressions with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_boolean_logic(self):
-        """Test boolean logic with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 return true and true;
             }""", 1),
@@ -925,16 +853,13 @@ class TestRuntimeExecution(CodeGenTestCase):
             ("""i32 main() {
                 return (5 > 3) and (10 < 20);
             }""", 1)
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_boolean_logic(self, source, expected):
+        """Test boolean logic with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
     
-    def test_logical_short_circuit(self):
-        """Test logical short-circuit behavior"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""
              i32 x = 5;
              bool inc_x(){++x; return true;}
@@ -952,16 +877,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 }
                 return x;
             }""", 5)  # x should not be modified because of short-circuit
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_logical_short_circuit(self, source, expected):
+        """Test logical short-circuit behavior"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
 
-    def test_char_operations(self):
-        """Test character operations with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 char a = 'A';
                 return a;
@@ -971,16 +893,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 char b = 'a';
                 return b - a;
             }""", 32)  # Difference between 'a' and 'A' in ASCII
-        ]
-        
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        ])
+    def test_char_operations(self, source, expected):
+        """Test character operations with runtime verification"""
+        result = self.compile_and_run_main(source)
+        assert result == expected
                 
-    def test_increment_decrement(self):
-        """Test increment/decrement operations with runtime verification"""
-        test_cases = [
+    @pytest.mark.parametrize("source, expected",[
             ("""i32 main() {
                 i32 x = 5;
                 x++;
@@ -1007,12 +926,13 @@ class TestRuntimeExecution(CodeGenTestCase):
                 i32 x = 5;
                 return x--;
             }""", 5)  # Return value before decrement
-        ]
+        ])
+    def test_increment_decrement(self, source, expected):
+        """Test increment/decrement operations with runtime verification"""
         
-        for source, expected in test_cases:
-            with self.subTest(source=source):
-                result = self.compile_and_run_main(source)
-                self.assertEqual(result, expected)
+        result = self.compile_and_run_main(source)
+        assert result == expected
+
 class TestCodeGeneratorNestedLoops(CodeGenTestCase):
     """Test nested loops: both for–for and while–while combinations."""
 
@@ -1031,7 +951,7 @@ class TestCodeGeneratorNestedLoops(CodeGenTestCase):
         # Expected: (1*1 + 1*2 + 1*3) + (2*1 + 2*2 + 2*3) + (3*1 + 3*2 + 3*3) = 36
         expected = 36
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
     def test_nested_while_loops(self):
         source = """
@@ -1051,7 +971,7 @@ class TestCodeGeneratorNestedLoops(CodeGenTestCase):
         """
         expected = 36
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorContinueBreak(CodeGenTestCase):
@@ -1073,7 +993,7 @@ class TestCodeGeneratorContinueBreak(CodeGenTestCase):
         # 1 + 3 + 5 + 7 + 9 = 25
         expected = 25
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
     def test_while_loop_with_continue(self):
         # Sum only odd numbers using a while loop with continue
@@ -1094,7 +1014,7 @@ class TestCodeGeneratorContinueBreak(CodeGenTestCase):
         """
         expected = 25
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
     def test_for_loop_with_break(self):
         # Break out of the loop when i equals 5
@@ -1112,7 +1032,7 @@ class TestCodeGeneratorContinueBreak(CodeGenTestCase):
         # Sum of 1+2+3+4 = 10
         expected = 10
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
     def test_while_loop_with_break(self):
         # Break the while loop when counter reaches 7
@@ -1132,7 +1052,7 @@ class TestCodeGeneratorContinueBreak(CodeGenTestCase):
         # Sum of 1+2+3+4+5+6 = 21
         expected = 21
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorClassFieldAccess(CodeGenTestCase):
@@ -1159,7 +1079,7 @@ class TestCodeGeneratorClassFieldAccess(CodeGenTestCase):
         """
         expected = 3
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorArrayOfObjects(CodeGenTestCase):
@@ -1189,7 +1109,7 @@ class TestCodeGeneratorArrayOfObjects(CodeGenTestCase):
         """
         expected = 60
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorRecursionAdvanced(CodeGenTestCase):
@@ -1209,7 +1129,7 @@ class TestCodeGeneratorRecursionAdvanced(CodeGenTestCase):
         # Fibonacci sequence: 0, 1, 1, 2, 3, 5, 8 so fib(6) = 8
         expected = 8
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorTernaryOperators(CodeGenTestCase):
@@ -1228,7 +1148,7 @@ class TestCodeGeneratorTernaryOperators(CodeGenTestCase):
         # Expected: 20 - 10 = 10
         expected = 10
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
     def test_nested_ternary(self):
         source = """
@@ -1240,7 +1160,7 @@ class TestCodeGeneratorTernaryOperators(CodeGenTestCase):
         """
         expected = 50
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorMixedTypeExpressions(CodeGenTestCase):
@@ -1259,7 +1179,7 @@ class TestCodeGeneratorMixedTypeExpressions(CodeGenTestCase):
         # 3 * 1.5 = 4.5 which truncates to 4
         expected = 4
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorEdgeCases(CodeGenTestCase):
@@ -1276,7 +1196,7 @@ class TestCodeGeneratorEdgeCases(CodeGenTestCase):
         """
         expected = 0
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
     def test_zero_length_array(self):
         source = """
@@ -1287,7 +1207,7 @@ class TestCodeGeneratorEdgeCases(CodeGenTestCase):
         """
         expected = 42
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
         
 class TestCodeGeneratorGCScope(CodeGenTestCase):
     """Tests that the GC scopes are opened and all properly closed"""
@@ -1316,19 +1236,13 @@ class TestCodeGeneratorGCScope(CodeGenTestCase):
         """
         expected = 1
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
         #count the number of enter/leave scopes
         ir_code = self.get_function_ir(self.generate_module(source), "f")
-        self.assertEqual(ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}'), 5)
-        self.assertIn(f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 5)', ir_code)
+        assert ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}') == 5
+        assert f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 5)' in ir_code
         
-    def test_enter_as_many_scopes_as_we_leave(self):
-        main = """
-        i32 main(){
-            return 0;
-        }
-        """
-        test_cases = [
+    @pytest.mark.parametrize("source, scope_enter_count, scope_leave_counts",[
         ("""
         bool f()//enter param scope
         {
@@ -1362,15 +1276,18 @@ class TestCodeGeneratorGCScope(CodeGenTestCase):
             return false; //leave 2 scopes
         }
         """, 7, [2, 3, 6]),
-        ]
-        
-        for source, scope_enter_count, scope_leave_counts in test_cases:
-            with self.subTest(source=source):
-                mod = self.generate_module(source)
-                ir_code = self.get_function_ir(mod, 'f')
-                self.assertEqual(ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}'), scope_enter_count)
-                for leave_count in scope_leave_counts:
-                    self.assertIn(f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 {leave_count})', ir_code)
+        ])
+    def test_enter_as_many_scopes_as_we_leave(self, source, scope_enter_count, scope_leave_counts):
+        main = """
+        i32 main(){
+            return 0;
+        }
+        """
+        mod = self.generate_module(source)
+        ir_code = self.get_function_ir(mod, 'f')
+        assert ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}') == scope_enter_count
+        for leave_count in scope_leave_counts:
+            assert f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 {leave_count})' in ir_code
 
 class TestCodeGeneratorLoopWithoutBraces(CodeGenTestCase):
     """Test for-loops written without braces for a single statement body."""
@@ -1380,7 +1297,7 @@ class TestCodeGeneratorLoopWithoutBraces(CodeGenTestCase):
         # Expected: 0+1+2+3+4 = 10
         expected = 10
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorComplexProgram(CodeGenTestCase):
@@ -1414,7 +1331,7 @@ class TestCodeGeneratorComplexProgram(CodeGenTestCase):
         sum_tot = sum(range(1,5))
         expected = math.factorial(sum_tot)
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorVariableScope(CodeGenTestCase):
@@ -1434,7 +1351,7 @@ class TestCodeGeneratorVariableScope(CodeGenTestCase):
         # Expected: 0 + 1 + 2 = 3
         expected = 3
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorComplexMethodChaining(CodeGenTestCase):
@@ -1463,7 +1380,7 @@ class TestCodeGeneratorComplexMethodChaining(CodeGenTestCase):
         # Calculation: ((0+2)*3)+4 = 10
         expected = 10
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorOperatorPrecedence(CodeGenTestCase):
@@ -1479,7 +1396,7 @@ class TestCodeGeneratorOperatorPrecedence(CodeGenTestCase):
         # 5 + (3*2)=11, 4/2=2, 11-2=9
         expected = 9
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorMultipleStatements(CodeGenTestCase):
@@ -1489,7 +1406,7 @@ class TestCodeGeneratorMultipleStatements(CodeGenTestCase):
         source = "i32 main() { i32 a = 10; i32 b = 20; return a + b; }"
         expected = 30
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorLargeLoop(CodeGenTestCase):
@@ -1506,7 +1423,7 @@ class TestCodeGeneratorLargeLoop(CodeGenTestCase):
         """
         expected = sum(range(1,100))
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestCodeGeneratorComments(CodeGenTestCase):
@@ -1523,4 +1440,4 @@ class TestCodeGeneratorComments(CodeGenTestCase):
         """
         expected = 10
         result = self.compile_and_run_main(source)
-        self.assertEqual(result, expected)
+        assert result == expected
