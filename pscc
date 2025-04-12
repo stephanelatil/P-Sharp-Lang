@@ -1,6 +1,7 @@
 #!/bin/bash
 
 MAIN_LOCATION=./compiler2/main.py
+LLVM_VERSION=${LLVM_VERSION:-15}
 
 LLVM_LINK_LOCATION="llvm-link-${LLVM_VERSION}"
 CLANG_LOCATION="clang-${LLVM_VERSION}"
