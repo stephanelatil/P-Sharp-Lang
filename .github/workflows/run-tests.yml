@@ -1,0 +1,40 @@
+# This workflow runs all compiler tests
+# to validate functionality
+
+name: Run-Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    # daily at 06:30 Europe time
+    - cron: '30 6 * * *'
+
+permissions:
+    contents: read
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-22.04
+    name: Build environement and run tests 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Install llvm toolchain
+        run: apt update && apt install -y llvm-15
+      - name: Run tests and collect coverage
+        run: pytest --cov --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
