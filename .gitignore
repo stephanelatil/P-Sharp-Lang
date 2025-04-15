@@ -29,3 +29,4 @@ notes/
 
 # Keep bitcode-compiled runtime env
 !garbage_collector/ps_re.bc
+!garbage_collector/ps_re.dbg.bc

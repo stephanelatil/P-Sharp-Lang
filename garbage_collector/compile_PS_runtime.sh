@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-set -e
+set -x
 
 GC_FILENAME=gc
 UTILS_FILENAME=ps_utils
@@ -16,10 +16,13 @@ LLVM_LINKER=llvm-link-15
 ${COMPILER} -O3 -emit-llvm -c ${FLAGS} -o "${GC_FILENAME}.bc" "${GC_FILENAME}.c"
 ${COMPILER} -O3 -emit-llvm -c ${FLAGS} -o "${UTILS_FILENAME}.bc" "${UTILS_FILENAME}.c"
 
-#merge all .bc to a single runtime .bc object
+# merge all .bc to a single runtime .bc object
 ${LLVM_LINKER} "${GC_FILENAME}.bc" "${UTILS_FILENAME}.bc" -o "${COMBINED_FILENAME}.bc"
+# Adds llvm.dbg.cu to make sure debug symbols are added
+echo  ''  | clang-15 -x c -emit-llvm -c -g -o - - | ${LLVM_LINKER} - "${COMBINED_FILENAME}.bc" -o "${COMBINED_FILENAME}.dbg.bc"
 
 # rename symbols to adhere to standard naming
 ${PY} "${RENAME_PASS_PY}" "${COMBINED_FILENAME}.bc" "${RENAME_MAPPING_CSV}"
+${PY} "${RENAME_PASS_PY}" "${COMBINED_FILENAME}.dbg.bc" "${RENAME_MAPPING_CSV}"
 
 rm "${GC_FILENAME}.bc" "${UTILS_FILENAME}.bc"
