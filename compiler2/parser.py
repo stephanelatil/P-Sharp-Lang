@@ -902,67 +902,6 @@ class PMethod(PFunction):
         if not isinstance(value, PMethod):
             return False
         return super().__eq__(value)
-        
-    # def generate_llvm(self, context: CodeGenContext) -> None:        
-    #     method_name = context.get_method_symbol_name(self.class_type.name, self.name)
-    #     assert context.scopes.has_symbol(method_name), "The function should be declared already"
-    #     func = context.scopes.get_symbol(method_name).func_ptr
-    #     assert func is not None
-
-    #     if context.compilation_opts.add_debug_symbols:
-    #         func.set_metadata("dbg", self.add_debug_info(context))
-        
-    #     context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
-
-    #     context.enter_scope(self.count_ref_vars_declared_in_scope)
-    #     # defined args in scoper:
-    #     assert len(self.function_args) == len(func.args)
-    #     for param, arg_value in zip(self.function_args, func.args):
-    #         # build alloca to a function argument
-    #         # In llvm function arguments are just NamedValues and don't have a mem address.
-    #         # We define a location on the stack for them so they can be written to.
-    #         # This will be optimized out by the mem2reg pass
-    #             # NB: written to just means that an argument x can be written to.
-    #             # The caller will not have the value changed from his point of view, he just passed a value not a reference!
-    #         arg_alloca = context.builder.alloca(arg_value.type)
-    #         debug_info:Optional[ir.DIValue] = None
-    #         if context.compilation_opts.add_debug_symbols:
-    #             debug_info = param.add_di_location_metadata(context)
-    #             arg_alloca.set_metadata("dbg", debug_info)
-    #         context.builder.store(arg_value, arg_alloca)
-    #         context.scopes.declare_var(param.name,
-    #                                    param.typer_pass_var_type.get_llvm_value_type(context),
-    #                                    arg_alloca)
-            
-    #         if param.typer_pass_var_type.is_reference_type:
-    #             context.add_root_to_gc(arg_alloca,
-    #                                    param.typer_pass_var_type,
-    #                                    param.name)
-    #     # run body statements
-    #     self.body.generate_llvm(context)
-
-        # scope leaving handled by the return instruction (implicit for void methods)
-        
-    # def add_debug_info(self, context: CodeGenContext) -> Optional[ir.DIValue]:
-    #     if not context.compilation_opts.add_debug_symbols:
-    #         return
-    #     assert context.debug_info is not None
-    #     subroutine_type = context.module.add_debug_info("DISubroutineType",
-    #                                 {
-    #                                     "types": [self.return_typ_typed.di_type(context)]+\
-    #                                                 [arg.typer_pass_var_type.di_type(context) for arg in self.function_args]
-    #                                 })
-    #     context.debug_info.di_scope.append(context.module.add_debug_info("DISubprogram",
-    #             {
-    #                 "name": self.name,
-    #                 "linkageName": context.get_method_symbol_name(self.class_type.name, self.name), # TODO get the name within namespace etc. with full name for Methods especially
-    #                 **self.di_location(context),
-    #                 "type": subroutine_type,
-    #                 "isDefinition": True,
-    #                 "unit":context.debug_info.di_compile_unit,
-    #                 "containingType": self.class_type.di_type(context),
-    #             }, is_distinct=True))
-    #     return subroutine_type
 
 @dataclass
 class PClass(PStatement):
