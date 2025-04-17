@@ -2,7 +2,7 @@ import pytest
 from io import StringIO
 from typing import List, Type
 from tempfile import TemporaryDirectory
-from llvm_transpiler import CodeGen, LLVM_Version, OutputFormat
+from llvm_transpiler import CodeGen, LLVM_Version, OutputFormat, CompilationOptions
 import re
 from llvmlite.binding import (Target, parse_assembly, create_mcjit_compiler,
                               ModuleRef, parse_bitcode)
@@ -32,7 +32,7 @@ class CodeGenTestCase:
         self._engine = create_execution_engine()
     
     def compile_to_llvm_ir(self, source:str) -> str:
-        gen = CodeGen(debug_symbols=True)
+        gen = CodeGen()
         with TemporaryDirectory() as tmpdir:
             outfile = str(Path(tmpdir,'outfile.ll'))
             outfile = gen.compile_module(Path('/tmp/test.cs'),
@@ -1441,3 +1441,738 @@ class TestCodeGeneratorComments(CodeGenTestCase):
         expected = 10
         result = self.compile_and_run_main(source)
         assert result == expected
+
+class DebugSymbolTestCase:
+    """Base class for debug symbol tests"""
+    
+    def setup_method(self):
+        self.generator = CodeGen()
+    
+    def compile_to_llvm_ir(self, source, filename='/tmp/test.cs'):
+        """Helper to compile source to LLVM IR with debug symbols enabled"""
+        with TemporaryDirectory() as tmpdir:
+            outfile = str(Path(tmpdir, 'outfile.ll'))
+            compile_opts = CompilationOptions(add_debug_symbols=True)
+            outfile = self.generator.compile_module(
+                Path(filename),
+                StringIO(source),
+                emit_format=OutputFormat.IntermediateRepresentation,
+                output_file=outfile,
+                llvm_version=LLVM_Version.v19,
+                compiler_opts=compile_opts
+            )
+            with open(outfile, 'rt') as ir:
+                return ir.read()
+    
+    def assert_debug_info_present(self, ir_code):
+        """Check that basic debug info sections are present"""
+        assert "!llvm.dbg.cu" in ir_code, "Debug compilation unit missing"
+        assert "DICompileUnit" in ir_code, "DICompileUnit missing"
+        assert "!DIFile" in ir_code, "DIFile missing"
+    
+    def assert_local_variable_debug_info(self, ir_code, var_name):
+        """Check if debug info for a specific variable exists"""
+        var_pattern = re.compile(r"!DILocalVariable\(.*name\s*:\s*\"" + var_name + r"\"")
+        assert var_pattern.search(ir_code), f"Debug info for variable '{var_name}' not found"
+    
+    def assert_global_variable_debug_info(self, ir_code, var_name):
+        """Check if debug info for a specific variable exists"""
+        var_pattern = re.compile(r"!DIGlobalVariable\(.*name\s*:\s*\"" + var_name + r"\"")
+        assert var_pattern.search(ir_code), f"Debug info for variable '{var_name}' not found"
+    
+    def assert_function_debug_info(self, ir_code, func_name):
+        """Check if debug info for a specific function exists"""
+        func_pattern = re.compile(r"!DISubprogram\(.*name\s*:\s*\"" + func_name + r"\"")
+        assert func_pattern.search(ir_code), f"Debug info for function '{func_name}' not found"
+    
+    def assert_debug_location(self, ir_code, line_num):
+        """Check if debug info for a specific line number exists"""
+        loc_pattern = re.compile(r"!DILocation\(line:\s*" + str(line_num))
+        assert loc_pattern.search(ir_code), f"Debug location for line {line_num} not found"
+    
+    def assert_type_debug_info(self, ir_code, type_name):
+        """Check if debug info for a specific type exists"""
+        type_pattern = re.compile(r"!DIBasicType\(.*name\s*:\s*\"" + type_name + r"\"")
+        assert type_pattern.search(ir_code), f"Debug info for type '{type_name}' not found"
+    
+    def assert_class_debug_info(self, ir_code, class_name):
+        """Check if debug info for a specific class exists"""
+        class_pattern = re.compile(r"!DICompositeType\(.*name\s*:\s*\"" + class_name + r"\"")
+        assert class_pattern.search(ir_code), f"Debug info for class '{class_name}' not found"
+
+
+class TestBasicDebugSymbols(DebugSymbolTestCase):
+    """Test basic debug symbols generation"""
+
+    def test_debug_info_present(self):
+        """Test that basic debug info sections are present"""
+        source = "i32 x = 42;"
+        ir_code = self.compile_to_llvm_ir(source)
+        self.assert_debug_info_present(ir_code)
+    
+    def test_file_info_present(self):
+        """Test that source file information is correctly included"""
+        source = "i32 x = 42;"
+        filename = "/path/to/test_file.cs"
+        ir_code = self.compile_to_llvm_ir(source, filename)
+        
+        # Check for file path in debug info
+        file_pattern = re.compile(r"!DIFile\(.*filename\s*:\s*\"[^\"]*test_file.cs\"")
+        assert file_pattern.search(ir_code), "Source file info not found in debug info"
+
+    @pytest.mark.parametrize("var_type, var_name, value", [
+        ("i32", "intVar", "42"),
+        ("f64", "doubleVar", "3.14159"),
+        ("bool", "boolVar", "true"),
+        ("char", "charVar", "'a'"),
+        ("string", "stringVar", "\"hello world\"")
+    ])
+    def test_variable_debug_info(self, var_type, var_name, value):
+        """Test debug info for different types of variable declarations"""
+        source = f"i32 main(){{ {var_type} {var_name} = {value}; return 0;}}"
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_local_variable_debug_info(ir_code, var_name)
+        if var_type != "string":  # Basic types should have type info
+            self.assert_type_debug_info(ir_code, var_type)
+
+
+class TestFunctionDebugSymbols(DebugSymbolTestCase):
+    """Test debug symbols for functions"""
+
+    def test_function_declaration_debug_info(self):
+        """Test debug info for function declarations"""
+        source = """
+        i32 addNumbers(i32 a, i32 b) {
+            return a + b;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "addNumbers")
+        self.assert_local_variable_debug_info(ir_code, "a")
+        self.assert_local_variable_debug_info(ir_code, "b")
+    
+    def test_empty_function_debug_info(self):
+        """Test debug info for empty function"""
+        source = """
+        void emptyFunc() {
+            // Empty function
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "emptyFunc")
+    
+    def test_recursive_function_debug_info(self):
+        """Test debug info for recursive function"""
+        source = """
+        i32 factorial(i32 n) {
+            if (n <= 1) {
+                return 1;
+            }
+            return n * factorial(n - 1);
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "factorial")
+        self.assert_local_variable_debug_info(ir_code, "n")
+    
+    def test_nested_function_calls_debug_info(self):
+        """Test debug info for nested function calls"""
+        source = """
+        i32 add(i32 a, i32 b) {
+            return a + b;
+        }
+        
+        i32 multiply(i32 a, i32 b) {
+            return a * b;
+        }
+        
+        i32 compute(i32 x, i32 y) {
+            return multiply(add(x, 1), add(y, 2));
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "add")
+        self.assert_function_debug_info(ir_code, "multiply")
+        self.assert_function_debug_info(ir_code, "compute")
+
+
+class TestControlFlowDebugSymbols(DebugSymbolTestCase):
+    """Test debug symbols for control flow structures"""
+
+    def test_if_else_debug_info(self):
+        """Test debug info for if-else statements"""
+        source = """
+        i32 max(i32 a, i32 b) {
+            if (a > b) {
+                return a;
+            } else {
+                return b;
+            }
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "max")
+        # Check for debug locations at the appropriate lines
+        self.assert_debug_location(ir_code, 3)  # if condition
+        self.assert_debug_location(ir_code, 4)  # return a
+        self.assert_debug_location(ir_code, 6)  # return b
+    
+    def test_for_loop_debug_info(self):
+        """Test debug info for for loops"""
+        source = """
+        i32 sumRange(i32 n) {
+            i32 sum = 0;
+            for (i32 i = 1; i <= n; i = i + 1) {
+                sum = sum + i;
+            }
+            return sum;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "sumRange")
+        self.assert_local_variable_debug_info(ir_code, "sum")
+        self.assert_local_variable_debug_info(ir_code, "i")
+        # Check for debug locations
+        self.assert_debug_location(ir_code, 3)  # sum initialization
+        self.assert_debug_location(ir_code, 4)  # for loop
+        self.assert_debug_location(ir_code, 5)  # sum = sum + i
+    
+    def test_while_loop_debug_info(self):
+        """Test debug info for while loops"""
+        source = """
+        i32 countDown(i32 start) {
+            i32 count = 0;
+            while (start > 0) {
+                start = start - 1;
+                count = count + 1;
+            }
+            return count;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "countDown")
+        self.assert_local_variable_debug_info(ir_code, "count")
+        # Check for debug locations
+        self.assert_debug_location(ir_code, 3)  # count initialization
+        self.assert_debug_location(ir_code, 4)  # while condition
+        self.assert_debug_location(ir_code, 5)  # start = start - 1
+    
+    def test_nested_control_flow_debug_info(self):
+        """Test debug info for nested control structures"""
+        source = """
+        i32 complexFunction(i32 n) {
+            i32 result = 0;
+            
+            for (i32 i = 0; i < n; i = i + 1) {
+                if (i % 2 == 0) {
+                    result = result + i;
+                } else {
+                    while (i > 0 && i % 3 != 0) {
+                        i = i - 1;
+                        result = result + 1;
+                    }
+                }
+            }
+            
+            return result;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "complexFunction")
+        self.assert_local_variable_debug_info(ir_code, "result")
+        self.assert_local_variable_debug_info(ir_code, "i")
+
+
+class TestClassDebugSymbols(DebugSymbolTestCase):
+    """Test debug symbols for classes and methods"""
+
+    def test_class_debug_info(self):
+        """Test debug info for class declaration"""
+        source = """
+        class Rectangle {
+            i32 width;
+            i32 height;
+        }
+        Rectangle r = new Rectangle();
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_class_debug_info(ir_code, "Rectangle")
+    
+    def test_class_fields_debug_info(self):
+        """Test debug info for class fields"""
+        source = """
+        class Person {
+            string name;
+            i32 age;
+            bool isStudent;
+        }
+        Person p = new Person();
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_class_debug_info(ir_code, "Person")
+        
+        # Check for field debug info within class scope
+        field_pattern = re.compile(r"!DIDerivedType\(tag: DW_TAG_member, name: \"(name|age|isStudent)\"")
+        matches = field_pattern.findall(ir_code)
+        
+        assert "name" in matches, "Debug info for field 'name' not found"
+        assert "age" in matches, "Debug info for field 'age' not found"
+        assert "isStudent" in matches, "Debug info for field 'isStudent' not found"
+    
+    def test_class_methods_debug_info(self):
+        """Test debug info for class methods"""
+        source = """
+        class Calculator {
+            i32 add(i32 a, i32 b) {
+                return a + b;
+            }
+            
+            i32 subtract(i32 a, i32 b) {
+                return a - b;
+            }
+        }
+        Calculator c = new Calculator();
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_class_debug_info(ir_code, "Calculator")
+        self.assert_function_debug_info(ir_code, "__Calculator.__add")
+        self.assert_function_debug_info(ir_code, "__Calculator.__subtract")
+    
+    def test_class_instance_debug_info(self):
+        """Test debug info for class instantiation and method calls"""
+        source = """
+        class Counter {
+            i32 value = 0;
+            
+            void increment() {
+                this.value = this.value + 1;
+            }
+            
+            i32 getValue() {
+                return this.value;
+            }
+        }
+        
+        i32 main() {
+            Counter c = new Counter();
+            c.increment();
+            return c.getValue();
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_class_debug_info(ir_code, "Counter")
+        self.assert_function_debug_info(ir_code, "__Counter.__increment")
+        self.assert_function_debug_info(ir_code, "__Counter.__getValue")
+        self.assert_function_debug_info(ir_code, "main")
+        
+        # Check for variable 'c' in main function
+        self.assert_local_variable_debug_info(ir_code, "c")
+
+
+class TestArrayDebugSymbols(DebugSymbolTestCase):
+    """Test debug symbols for arrays"""
+
+    def test_array_declaration_debug_info(self):
+        """Test debug info for array declarations"""
+        source = """
+        i32 main() {
+            i32[] numbers = new i32[10];
+            return 0;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "main")
+        self.assert_local_variable_debug_info(ir_code, "numbers")
+    
+    def test_multidimensional_array_debug_info(self):
+        """Test debug info for multidimensional arrays"""
+        source = """
+        i32 main() {
+            i32[][] matrix = new i32[3][];
+            for (i32 i = 0; i < 3; i = i + 1) {
+                matrix[i] = new i32[4];
+            }
+            return 0;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "main")
+        self.assert_local_variable_debug_info(ir_code, "matrix")
+        self.assert_local_variable_debug_info(ir_code, "i")
+    
+    def test_array_access_debug_info(self):
+        """Test debug info for array access operations"""
+        source = """
+        i32 sumArray(i32[] arr) {
+            i32 sum = 0;
+            for (i32 i = 0; i < arr.Length; i = i + 1) {
+                sum = sum + arr[i];
+            }
+            return sum;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "sumArray")
+        self.assert_local_variable_debug_info(ir_code, "arr")
+        self.assert_local_variable_debug_info(ir_code, "sum")
+        self.assert_local_variable_debug_info(ir_code, "i")
+
+
+class TestComplexDebugSymbols(DebugSymbolTestCase):
+    """Test debug symbols for complex code patterns"""
+
+    def test_variable_scoping_debug_info(self):
+        """Test debug info for variables in different scopes"""
+        source = """
+        i32 calculateScoped(i32 value) {
+            i32 result = 0;
+            
+            // Outer scope
+            {
+                i32 temp = value * 2;
+                result = temp;
+                
+                // Inner scope
+                {
+                    i32 temp = value + 10;  // Shadows outer temp
+                    result = result + temp;
+                }
+            }
+            
+            return result;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "calculateScoped")
+        self.assert_local_variable_debug_info(ir_code, "result")
+        
+        # Both instances of 'temp' should have debug info, potentially with different DILocalVariable entries
+        # This is just a basic check - might need refinement based on how scoping is implemented
+        temp_vars = re.findall(r"!DILocalVariable\(.*name\s*:\s*\"temp\"", ir_code)
+        assert len(temp_vars) >= 1, "Debug info for 'temp' variable(s) not found"
+    
+    def test_complex_expression_debug_info(self):
+        """Test debug info for complex expressions"""
+        source = """
+        i32 evaluate() {
+            i32 a = 5;
+            i32 b = 10;
+            i32 c = 15;
+            
+            i32 result = a + b * c / (a + 1) - b;
+            
+            return result;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "evaluate")
+        self.assert_local_variable_debug_info(ir_code, "a")
+        self.assert_local_variable_debug_info(ir_code, "b")
+        self.assert_local_variable_debug_info(ir_code, "c")
+        self.assert_local_variable_debug_info(ir_code, "result")
+    
+    def test_method_chaining_debug_info(self):
+        """Test debug info for method chaining"""
+        source = """
+        class Builder {
+            i32 value = 0;
+            
+            Builder add(i32 x) {
+                this.value = this.value + x;
+                return this;
+            }
+            
+            Builder multiply(i32 x) {
+                this.value = this.value * x;
+                return this;
+            }
+            
+            i32 getValue() {
+                return this.value;
+            }
+        }
+        
+        i32 main() {
+            Builder b = new Builder();
+            i32 result = b.add(5).multiply(2).add(3).getValue();
+            return result;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_class_debug_info(ir_code, "Builder")
+        self.assert_function_debug_info(ir_code, "__Builder.__add")
+        self.assert_function_debug_info(ir_code, "__Builder.__multiply")
+        self.assert_function_debug_info(ir_code, "__Builder.__getValue")
+        self.assert_function_debug_info(ir_code, "main")
+        self.assert_local_variable_debug_info(ir_code, "result")
+
+
+class TestEdgeCaseDebugSymbols(DebugSymbolTestCase):
+    """Test debug symbols for edge cases"""
+
+    def test_empty_main_debug_info(self):
+        """Test debug info for empty main function"""
+        source = """
+        i32 main() {
+            return 0;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "main")
+        self.assert_debug_location(ir_code, 3)  # return statement
+    
+    def test_one_line_function_debug_info(self):
+        """Test debug info for one-line function"""
+        source = "i32 getValue() { return 42; }"
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "getValue")
+        # Line number might be 1, depending on how lines are counted
+        self.assert_debug_location(ir_code, 1)
+    
+    def test_unused_variables_debug_info(self):
+        """Test debug info for unused variables"""
+        source = """
+        void unusedVars() {
+            i32 unused1 = 10;
+            string unused2 = "hello";
+            bool unused3 = true;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "unusedVars")
+        self.assert_local_variable_debug_info(ir_code, "unused1")
+        self.assert_local_variable_debug_info(ir_code, "unused2")
+        self.assert_local_variable_debug_info(ir_code, "unused3")
+    
+    def test_shadowing_variable_debug_info(self):
+        """Test debug info for shadowing variables"""
+        source = """
+        i32 shadowTest() {
+            i32 x = 10;
+            
+            {
+                i32 x = 20;  // Shadows outer x
+                x = x + 5;
+            }
+            
+            return x;  // Should be 10
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "shadowTest")
+        
+        # Both instances of 'x' should have debug info
+        x_vars = re.findall(r"!DILocalVariable\(.*name\s*:\s*\"x\"", ir_code)
+        assert len(x_vars) >= 1, "Debug info for 'x' variable(s) not found"
+
+
+class TestLargeSourceDebugSymbols(DebugSymbolTestCase):
+    """Test debug symbols with larger source files"""
+    
+    def test_large_function_debug_info(self):
+        """Test debug info for a function with many statements"""
+        # Create a large function with many statements
+        statements = ["i32 x{0} = {0};".format(i) for i in range(1, 101)]
+        function_body = "\n        ".join(statements)
+        
+        source = f"""
+        void largeFunction() {{
+        {function_body}
+        }}
+        """
+        
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "largeFunction")
+        
+        # Check a sample of variables
+        self.assert_local_variable_debug_info(ir_code, "x1")
+        self.assert_local_variable_debug_info(ir_code, "x50")
+        self.assert_local_variable_debug_info(ir_code, "x100")
+    
+    def test_many_functions_debug_info(self):
+        """Test debug info with many functions in one file"""
+        # Create many small functions
+        functions = []
+        for i in range(1, 21):
+            functions.append(f"""
+        i32 func{i}() {{
+            return {i};
+        }}
+        """)
+        
+        source = "".join(functions)
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        # Check a sample of functions
+        self.assert_function_debug_info(ir_code, "func1")
+        self.assert_function_debug_info(ir_code, "func10")
+        self.assert_function_debug_info(ir_code, "func20")
+    
+    def test_many_classes_debug_info(self):
+        """Test debug info with many classes in one file"""
+        # Create many small classes
+        classes = []
+        for i in range(1, 11):
+            classes.append(f"""
+        class Class{i} {{
+            i32 field{i};
+            i32 method{i}() {{
+                return this.field{i};
+            }}
+        }}
+        """)
+        
+        source = "".join(classes)
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        # Check a sample of classes and their methods
+        self.assert_class_debug_info(ir_code, "Class1")
+        self.assert_function_debug_info(ir_code, "__Class1.__method1")
+        self.assert_class_debug_info(ir_code, "Class10")
+        self.assert_function_debug_info(ir_code, "__Class10.__method10")
+
+
+class TestCustomTypes(DebugSymbolTestCase):
+    """Test debug symbols for custom types in the language"""
+
+    def test_class_type_debug_info(self):
+        """Test debug info for variables of custom class types"""
+        source = """
+        class Point {
+            i32 x;
+            i32 y;
+            
+            void setCoords(i32 newX, i32 newY) {
+                this.x = newX;
+                this.y = newY;
+            }
+        }
+        
+        void usePoint() {
+            Point p = new Point();
+            p.setCoords(10, 20);
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_class_debug_info(ir_code, "Point")
+        self.assert_function_debug_info(ir_code, "__Point.__setCoords")
+        
+        # Check for variable 'p' in usePoint function
+        self.assert_local_variable_debug_info(ir_code, "p")
+        
+        # There should be a DICompositeType for Point and p should reference it
+        point_type = re.search(r"!DICompositeType\(.*name\s*:\s*\"Point\".*", ir_code)
+        assert point_type, "Point composite type not found"
+    
+    def test_array_type_debug_info(self):
+        """Test debug info for array types"""
+        source = """
+        void useArrays() {
+            i32[] intArray = new i32[5];
+            string[] stringArray = new string[3];
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "useArrays")
+        self.assert_local_variable_debug_info(ir_code, "intArray")
+        self.assert_local_variable_debug_info(ir_code, "stringArray")
+        
+        # There should be array type DICompositeTypes
+        array_types = re.findall(r"!DICompositeType\(tag: DW_TAG_array_type", ir_code)
+        assert len(array_types) >= 1, "Array composite types not found"
+
+
+class TestErrorHandling(DebugSymbolTestCase):
+    """Test debug symbols with potential error scenarios"""
+    
+    def test_unicode_characters_debug_info(self):
+        """Test debug info with non-ASCII characters"""
+        source = """
+        i32 unicode() {
+            string euroSymbol = "€";
+            string emoji = "😊";
+            string chineseText = "你好";
+            return 0;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "unicode")
+        self.assert_local_variable_debug_info(ir_code, "euroSymbol")
+        self.assert_local_variable_debug_info(ir_code, "emoji")
+        self.assert_local_variable_debug_info(ir_code, "chineseText")
+    
+    def test_source_with_line_directives(self):
+        """Test debug info when source has line directives"""
+        source = """
+        // This should be line 2
+        #line 100
+        i32 lineDirective() {
+            i32 x = 42;
+            return x;
+        }
+        """
+        # Note: Your compiler might not support #line directives,
+        # but this test checks how debug info handles them if they exist
+        ir_code = self.compile_to_llvm_ir(source)
+        
+        self.assert_function_debug_info(ir_code, "lineDirective")
+        
+        # Check if line numbers are affected by the directive
+        # This is implementation-dependent, but we can check if line info exists
+        self.assert_debug_location(ir_code, 100)
+
+
+class TestSourcePathVariations(DebugSymbolTestCase):
+    """Test debug symbols with different source file paths"""
+    
+    @pytest.mark.parametrize("filename", [
+        "/absolute/path/to/source.cs",
+        "relative/path/to/source.cs",
+        "./source.cs",
+        "c:\\windows\\path\\source.cs",  # Windows-style path
+        "file with spaces.cs",
+    ])
+    def test_source_path_variations(self, filename):
+        """Test debug info with different source file paths"""
+        source = """
+        i32 main() {
+            return 42;
+        }
+        """
+        ir_code = self.compile_to_llvm_ir(source, filename)
+        
+        self.assert_function_debug_info(ir_code, "main")
+        
+        # Extract just the filename part for validation
+        basename = os.path.basename(filename.replace("\\", "/"))
+        
+        # Check if the filename appears in the debug info
+        file_pattern = re.compile(r"!DIFile\(.*filename\s*:\s*[\"'].*" + re.escape(basename) + r"[\"']")
+        assert file_pattern.search(ir_code), f"File info for '{basename}' not found"

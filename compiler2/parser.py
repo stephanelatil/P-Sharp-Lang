@@ -7,6 +7,7 @@ from operations import BinaryOperation, UnaryOperation, TernaryOperator
 from llvmlite import ir, binding
 from constants import *
 from warnings import warn
+from objs import CompilationOptions
 
 class ParserWarning(Warning):
     pass
@@ -47,10 +48,12 @@ class LexemeStream:
 class Typ:
     """Represents a type in the P# language with its methods and fields"""
     name:str
-    methods: Dict[str, 'PMethod']
-    fields: List['PClassField']
+    methods: Dict[str, 'PMethod'] = field(default_factory=dict)
+    fields: List['PClassField'] = field(default_factory=list)
     is_reference_type:bool = True
     is_builtin:bool=False
+    
+    _cached_di_type:Optional[ir.DIValue] = None
     
     def __hash__(self) -> int:
         return hash(self.name)
@@ -59,6 +62,111 @@ class Typ:
         if not isinstance(value, Typ):
             return False
         return self.name == value.name
+
+    def di_type(self, context:'CodeGenContext') -> Optional[ir.DIValue]:
+        if self._cached_di_type is not None:
+            return self._cached_di_type
+        ditype = None
+        if self.name in TYPE_INFO:
+            tinfo = TYPE_INFO[self.name]
+            if self.name == 'char':
+                ditype = context.module.add_debug_info("DIBasicType",
+                                                     {
+                                                        "name":self.name,
+                                                        "size":tinfo.bit_width,
+                                                        "encoding": ir.DIToken("DW_ATE_signed_char") if tinfo.is_signed else ir.DIToken("DW_ATE_unsigned_char")
+                                                     })
+            elif tinfo.type_class == TypeClass.INTEGER:
+                ditype = context.module.add_debug_info("DIBasicType",
+                                                     {
+                                                        "name":self.name,
+                                                        "size":tinfo.bit_width,
+                                                        "encoding": ir.DIToken("DW_ATE_signed") if tinfo.is_signed else ir.DIToken("DW_ATE_unsigned")
+                                                     })
+            elif tinfo.type_class == TypeClass.BOOLEAN:
+                ditype = context.module.add_debug_info("DIBasicType",
+                                                     {
+                                                        "name":self.name,
+                                                        "size":tinfo.bit_width,
+                                                        "encoding": ir.DIToken("DW_ATE_boolean")
+                                                     })
+            elif tinfo.type_class == TypeClass.FLOAT:
+                ditype = context.module.add_debug_info("DIBasicType",
+                                                     {
+                                                        "name":self.name,
+                                                        "size":tinfo.bit_width,
+                                                        "encoding": 4#"DW_ATE_float"
+                                                     })
+            elif tinfo.type_class == TypeClass.STRING:
+                string_length_bitlength = ir.IntType(64).get_abi_size(context.target_data)*8
+                string_length = context.module.add_debug_info("DIDerivedType",
+                                                {   # string size (excluding null ptr)
+                                                    "tag":ir.DIToken("DW_TAG_member"),
+                                                    "name": "Length",
+                                                    "baseType": context.type_by_name("i64").di_type(context),
+                                                    "size": string_length_bitlength,
+                                                })
+                ditype = context.module.add_debug_info("DICompositeType",
+                                {
+                                    "tag" : ir.DIToken("DW_TAG_structure_type"),
+                                    "name": "string",
+                                    "elements":[
+                                        string_length, 
+                                        # string of chars
+                                        context.module.add_debug_info("DIDerivedType",{
+                                            "tag":ir.DIToken("DW_TAG_member"),
+                                            "name": "c-string",
+                                            "offset":string_length_bitlength,
+                                            "baseType":context.module.add_debug_info("DIStringType",{
+                                                "name":"string_value",
+                                                "stringLength": string_length
+                                            })
+                                        })
+                                    ]
+                                })
+                #pointer to string
+                ditype = context.module.add_debug_info("DIDerivedType",
+                                    {
+                                        "tag":ir.DIToken("DW_TAG_pointer_type"),
+                                        "name":f"__{self.name}_reference",
+                                        "baseType": ditype,
+                                        "size":ir.PointerType().get_abi_size(context.target_data)*8
+                                    })
+            elif tinfo.type_class == TypeClass.VOID:
+                return None
+        else: #reference type Typ
+            offset = 0
+            elements = list()
+            #type field list 
+            for field in self.fields:
+                elements.append(context.module.add_debug_info("DIDerivedType",
+                                        {
+                                            "tag":ir.DIToken("DW_TAG_member"),
+                                            "name": field.name,
+                                            "offset": offset,
+                                            "baseType": field.typer_pass_var_type.di_type(context)
+                                        }))
+                corresponding_ir_type = field.typer_pass_var_type.get_llvm_value_type(context)
+                offset += 8*corresponding_ir_type.get_abi_size(context.target_data)
+                
+            ditype = context.module.add_debug_info("DICompositeType",
+                            {
+                                "tag" : ir.DIToken("DW_TAG_structure_type"),
+                                "name": self.name,
+                                "elements": elements
+                            })
+            #pointer to ref type
+            ditype = context.module.add_debug_info("DIDerivedType",
+                                {
+                                    "tag":ir.DIToken("DW_TAG_pointer_type"),
+                                    "name":f"ptr to {self.name}",
+                                    "baseType": ditype,
+                                    "size":ir.PointerType().get_abi_size(context.target_data)*8
+                                })
+        #set in cache
+        self._cached_di_type = ditype
+        return ditype
+                
     
     def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
         """Returns the llvm value-Type corresponding to the Typ. All reference types will return an ir.PointerType
@@ -105,7 +213,8 @@ class ArrayTyp(Typ):
         self.element_typ:Typ = element_type
         methods:Dict[str, PMethod] = {}
         fields:List[PClassField] = [PClassField("Length",
-                                        PType('u64', Lexeme.default), 
+                                        #TODO make global Const somewhere to define if array length is a i64 or i32
+                                        PType('i64', Lexeme.default), 
                                         lexeme=Lexeme.default,
                                         is_public=True,
                                         is_builtin=True,
@@ -122,6 +231,33 @@ class ArrayTyp(Typ):
     
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
+    
+    def di_type(self, context: 'CodeGenContext'):
+        if self._cached_di_type is not None:
+            return self._cached_di_type
+        ditype = context.module.add_debug_info("DICompositeType",
+                        {
+                            "tag" : ir.DIToken("DW_TAG_structure_type"),
+                            "name": self.name,
+                            "elements":[
+                                context.module.add_debug_info("DIDerivedType",
+                                        {   #array_size
+                                            "tag":ir.DIToken("DW_TAG_member"),
+                                            "name": "Length",
+                                            "baseType":context.type_by_name("i64").di_type(context),
+                                            "size": ir.IntType(64).get_abi_size(context.target_data)*8,
+                                        }), 
+                                # array elements
+                                context.module.add_debug_info("DIDerivedType",{
+                                        "tag":ir.DIToken("DW_TAG_member"),
+                                        "name":"elements",
+                                        "baseType": self.element_typ.di_type(context),
+                                        # "offset": ir.IntType(64).get_abi_size(context.target_data)*8,
+                                    })
+                            ]
+                        })
+        self._cached_di_type = ditype
+        return ditype
 
 class ParserError(Exception):
     """Custom exception for parser-specific errors"""
@@ -183,8 +319,6 @@ class VarInfo:
     name:str
     type_:ir.Type
     alloca:Optional[ir.NamedValue]=None
-    """This is useful to know if the var needs to be explicitly dereferenced! A global var is a pointer to the given type"""
-    is_global:bool=False
     func_ptr:Optional[ir.Function]=None
     
     @property
@@ -200,10 +334,10 @@ class ScopeVars:
             raise CompilerError(f"Variable already exists!")
         self.scope_vars[name] = VarInfo(name, return_type, func_ptr=function_ptr)
         
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue, is_global:bool=False):
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
         if name in self.scope_vars:
             raise CompilerError(f"Variable already exists!")
-        self.scope_vars[name] = VarInfo(name, type_, alloca=alloca, is_global=is_global)
+        self.scope_vars[name] = VarInfo(name, type_, alloca=alloca)
         
     def get_symbol(self, name:str) -> Optional[VarInfo]:
         return self.scope_vars.get(name, None)
@@ -225,9 +359,9 @@ class Scopes:
     def leave_scope(self):
         self.scopes.pop()
 
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue, is_global:bool=False):
-        self.scopes[-1].declare_var(name, type_, alloca, is_global)
-        
+    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
+        self.scopes[-1].declare_var(name, type_, alloca)
+
     def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
         self.scopes[-1].declare_func(name, return_type, function_ptr)
         
@@ -271,6 +405,13 @@ class LoopContext:
     end_of_loop_block:ir.Block
     is_for_loop:bool
     current_loop_scope_depth:int = 0
+    
+@dataclass
+class DebugInfo:
+    di_file:ir.DIValue
+    di_compile_unit:ir.DIValue
+    dbg_declare_func:ir.Function
+    di_scope:List[ir.DIValue] = field(default_factory=list)
 
 @dataclass
 class CodeGenContext:
@@ -282,6 +423,8 @@ class CodeGenContext:
     # get_llvm_type: Callable[['Typ'],ir.Type]
     """A dict containing all Types known to the typer and it's corresponding ir.Type"""
     type_map:Dict[Typ, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]]
+    #the debug information. ignored if -g flag not set
+    debug_info:Optional[DebugInfo]
     """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
     loopinfo:List[LoopContext] = field(default_factory=list)
     builder:ir.IRBuilder = ir.IRBuilder()
@@ -289,6 +432,7 @@ class CodeGenContext:
     type_ids:Dict[str, int] = field(default_factory=dict)
     """A Dict where for every given string there is an associated constant string PS object. constant because strings are immutable"""
     _global_string_objs:Dict[str, ir.GlobalValue] = field(default_factory=dict)
+    compilation_opts:CompilationOptions = field(default_factory=CompilationOptions)
     
     def get_string_const(self, string:str):
         if string in self._global_string_objs:
@@ -315,6 +459,12 @@ class CodeGenContext:
         #cache value to avoid saturating executable
         self._global_string_objs[string] = string_obj
         return string_obj
+    
+    def type_by_name(self, name:str) -> Typ:
+        for typ in self.type_map.keys():
+            if typ.name == name:
+                return typ
+        raise NameError("No type with name is known", name)
     
     def get_char_ptr_from_string(self, string:str):
         """Adds a Global string with the given value (if none already exists) and returns a GEP pointer to the first character (char* c string style)
@@ -493,7 +643,7 @@ class PStatement:
         # NB: will need to reevaluate how the "depth_from_next_XX" is calculated
     
     @property
-    def count_ref_vars_declared_in_scope(self):
+    def count_ref_vars_declared_in_scope(self) -> int:
         """Counts the number of reference Variables are defined in the scope"""
         return 0
     
@@ -504,7 +654,7 @@ class PStatement:
             child._setup_parents()
             child._parent = self
 
-    def generate_llvm(self, context:CodeGenContext) -> None:
+    def generate_llvm(self, context:CodeGenContext) -> Optional[ir.Value]:
         raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
     
     def exit_with_error(self, context:CodeGenContext, error_code:int=1, error_message:str="Error "):
@@ -522,6 +672,31 @@ class PStatement:
         ])
         context.builder.call(exit_func, [ir.Constant(ir.IntType(32), error_code)])
         context.builder.unreachable()
+
+    def di_location(self, context:CodeGenContext, includeFile=True):
+        """returns the kay-value pairs for the location of the debug info"""
+        assert context.debug_info is not None
+        loc:Dict['str', Any] = {
+                "line": self.position.line
+            }
+        if (len(context.debug_info.di_scope) > 0 and 
+                context.debug_info.di_scope[-1].kind in ("DISubprogram", "DILexicalBlock")):
+            loc["scope"] = context.debug_info.di_scope[-1]
+        if includeFile:
+            loc["file"] = context.debug_info.di_file
+        return loc
+    
+    def add_di_location_metadata(self, context:CodeGenContext) ->ir.DIValue:
+        return context.module.add_debug_info("DILocation",
+                                             self.di_location(context, includeFile=False))
+
+    def add_debug_info(self, context:CodeGenContext) -> Optional[ir.DIValue]:
+        """returns a DIExpression dor debug into to the expression"""
+        if not context.compilation_opts.add_debug_symbols:
+            return
+        assert context.debug_info is not None
+        
+        return self.add_di_location_metadata(context)
         
 
 @dataclass
@@ -593,6 +768,10 @@ class PFunction(PStatement):
     def __hash__(self) -> int:
         return hash(self.name) + hash(self.return_type) + sum([hash(func) for func in self.function_args])
     
+    def get_linkable_name(self, context:CodeGenContext):
+        #TODO edit once namespaces are implemented
+        return self.name
+    
     @property
     def return_typ_typed(self) -> Typ:
         if self._return_typ_typed is None:
@@ -609,18 +788,18 @@ class PFunction(PStatement):
         self.is_builtin = is_builtin
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        if not context.scopes.has_symbol(self.name):
-            assert False, "The function should be declared already"
-            func_type = ir.FunctionType(self.return_typ_typed.get_llvm_value_type(context),
-                                        [arg.typer_pass_var_type.get_llvm_value_type(context) for arg in self.function_args])
-            func = ir.Function(context.module, func_type, name=self.name)
-        else:
-            func = context.scopes.get_symbol(self.name).func_ptr
-            assert func is not None
+        func_name = self.get_linkable_name(context)
+        assert context.scopes.has_symbol(func_name), "The function should be declared already"
+        func = context.scopes.get_symbol(func_name).func_ptr
+        assert func is not None
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
 
         context.enter_scope(self.count_ref_vars_declared_in_scope)
+        
+        if context.compilation_opts.add_debug_symbols:
+            func.set_metadata("dbg", self.add_debug_info(context))
+        
         # defined args in scoper:
         assert len(self.function_args) == len(func.args)
         for param, arg_value in zip(self.function_args, func.args):
@@ -631,11 +810,15 @@ class PFunction(PStatement):
                 # NB: written to just means that an argument x can be written to.
                 # The caller will not have the value changed from his point of view, he just passed a value not a reference!
             arg_alloca = context.builder.alloca(arg_value.type)
+            debug_info:Optional[ir.DIValue] = None
+            if context.compilation_opts.add_debug_symbols:
+                debug_info = param.add_di_location_metadata(context)
+                arg_alloca.set_metadata("dbg", debug_info)
             context.builder.store(arg_value, arg_alloca)
             context.scopes.declare_var(param.name,
                                        param.typer_pass_var_type.get_llvm_value_type(context),
-                                       arg_alloca
-                                       )
+                                       arg_alloca)
+            
             if param.is_root_to_declare_to_gc:
                 context.add_root_to_gc(arg_alloca,
                                        param.typer_pass_var_type,
@@ -658,6 +841,31 @@ class PFunction(PStatement):
         # GC scope leaving handled by the return instruction (implicit for void methods)
         # but still need to go up a scope outside of the function block
         context.scopes.leave_scope()
+        
+    def di_type(self, context:CodeGenContext):
+        return [self.return_typ_typed.di_type(context)] + [
+                arg.typer_pass_var_type.di_type(context) for arg in self.function_args]
+        
+    def add_debug_info(self, context: CodeGenContext) -> Optional[ir.DIValue]:
+        if not context.compilation_opts.add_debug_symbols:
+            return
+        assert context.debug_info is not None
+        subroutine_type = context.module.add_debug_info("DISubroutineType",
+                                    {
+                                        "types": [self.return_typ_typed.di_type(context)]+\
+                                                    [arg.typer_pass_var_type.di_type(context) for arg in self.function_args]
+                                    })
+        di_subprogram = context.module.add_debug_info("DISubprogram",
+                {
+                    "name": self.name,
+                    "linkageName": self.get_linkable_name(context),
+                    **self.di_location(context),
+                    "type": subroutine_type,
+                    "isDefinition": True,
+                    "unit":context.debug_info.di_compile_unit
+                }, is_distinct=True)
+        context.debug_info.di_scope.append(di_subprogram)
+        return di_subprogram
 
 @dataclass    
 class PMethod(PFunction):
@@ -677,6 +885,10 @@ class PMethod(PFunction):
     def explicit_arguments(self):
         return self.function_args[1:]
     
+    def get_linkable_name(self, context: CodeGenContext):
+        return context.get_method_symbol_name(self.class_type.name,
+                                              self.name)
+    
     @property
     def class_type(self):
         if self._class_type is None:
@@ -691,43 +903,66 @@ class PMethod(PFunction):
             return False
         return super().__eq__(value)
         
-    def generate_llvm(self, context: CodeGenContext) -> None:        
-        method_name = context.get_method_symbol_name(self.class_type.name, self.name)
-        if not context.scopes.has_symbol(method_name):
-            assert False, "This should not happen. Method should be declared already"
-            func_type = ir.FunctionType(self.return_typ_typed.get_llvm_value_type(context),
-                                        [arg.typer_pass_var_type.get_llvm_value_type(context) for arg in self.function_args])
-            func = ir.Function(context.module, func_type, name=self.name)
-        else:
-            func = context.scopes.get_symbol(method_name).func_ptr
-            assert func is not None
-        
-        context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
+    # def generate_llvm(self, context: CodeGenContext) -> None:        
+    #     method_name = context.get_method_symbol_name(self.class_type.name, self.name)
+    #     assert context.scopes.has_symbol(method_name), "The function should be declared already"
+    #     func = context.scopes.get_symbol(method_name).func_ptr
+    #     assert func is not None
 
-        context.enter_scope(self.count_ref_vars_declared_in_scope)
-        # defined args in scoper:
-        assert len(self.function_args) == len(func.args)
-        for param, arg_value in zip(self.function_args, func.args):
-            # build alloca to a function argument
-            # In llvm function arguments are just NamedValues and don't have a mem address.
-            # We define a location on the stack for them so they can be written to.
-            # This will be optimized out by the mem2reg pass
-                # NB: written to just means that an argument x can be written to.
-                # The caller will not have the value changed from his point of view, he just passed a value not a reference!
-            arg_alloca = context.builder.alloca(arg_value.type)
-            context.builder.store(arg_value, arg_alloca)
-            context.scopes.declare_var(param.name,
-                                       param.typer_pass_var_type.get_llvm_value_type(context),
-                                       arg_alloca
-                                       )
-            if param.typer_pass_var_type.is_reference_type:
-                context.add_root_to_gc(arg_alloca,
-                                       param.typer_pass_var_type,
-                                       param.name)
-        # run body statements
-        self.body.generate_llvm(context)
+    #     if context.compilation_opts.add_debug_symbols:
+    #         func.set_metadata("dbg", self.add_debug_info(context))
+        
+    #     context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
+
+    #     context.enter_scope(self.count_ref_vars_declared_in_scope)
+    #     # defined args in scoper:
+    #     assert len(self.function_args) == len(func.args)
+    #     for param, arg_value in zip(self.function_args, func.args):
+    #         # build alloca to a function argument
+    #         # In llvm function arguments are just NamedValues and don't have a mem address.
+    #         # We define a location on the stack for them so they can be written to.
+    #         # This will be optimized out by the mem2reg pass
+    #             # NB: written to just means that an argument x can be written to.
+    #             # The caller will not have the value changed from his point of view, he just passed a value not a reference!
+    #         arg_alloca = context.builder.alloca(arg_value.type)
+    #         debug_info:Optional[ir.DIValue] = None
+    #         if context.compilation_opts.add_debug_symbols:
+    #             debug_info = param.add_di_location_metadata(context)
+    #             arg_alloca.set_metadata("dbg", debug_info)
+    #         context.builder.store(arg_value, arg_alloca)
+    #         context.scopes.declare_var(param.name,
+    #                                    param.typer_pass_var_type.get_llvm_value_type(context),
+    #                                    arg_alloca)
+            
+    #         if param.typer_pass_var_type.is_reference_type:
+    #             context.add_root_to_gc(arg_alloca,
+    #                                    param.typer_pass_var_type,
+    #                                    param.name)
+    #     # run body statements
+    #     self.body.generate_llvm(context)
 
         # scope leaving handled by the return instruction (implicit for void methods)
+        
+    # def add_debug_info(self, context: CodeGenContext) -> Optional[ir.DIValue]:
+    #     if not context.compilation_opts.add_debug_symbols:
+    #         return
+    #     assert context.debug_info is not None
+    #     subroutine_type = context.module.add_debug_info("DISubroutineType",
+    #                                 {
+    #                                     "types": [self.return_typ_typed.di_type(context)]+\
+    #                                                 [arg.typer_pass_var_type.di_type(context) for arg in self.function_args]
+    #                                 })
+    #     context.debug_info.di_scope.append(context.module.add_debug_info("DISubprogram",
+    #             {
+    #                 "name": self.name,
+    #                 "linkageName": context.get_method_symbol_name(self.class_type.name, self.name), # TODO get the name within namespace etc. with full name for Methods especially
+    #                 **self.di_location(context),
+    #                 "type": subroutine_type,
+    #                 "isDefinition": True,
+    #                 "unit":context.debug_info.di_compile_unit,
+    #                 "containingType": self.class_type.di_type(context),
+    #             }, is_distinct=True))
+    #     return subroutine_type
 
 @dataclass
 class PClass(PStatement):
@@ -836,7 +1071,11 @@ class PBlock(PStatement):
         #TODO: optimize this to only create a scope when ref-vars are present.
             # need to make sure to count correctly when exiting a function scope from anywhere within a
             # function or when leaving a loop (break/continue)!
-        #create scope
+        #create scope and enter scope in debug info
+        assert isinstance(context.builder.block, ir.Block)
+        if context.compilation_opts.add_debug_symbols:
+            assert context.debug_info is not None
+            context.debug_info.di_scope.append(self.add_debug_info(context))
         context.enter_scope(self.count_ref_vars_declared_in_scope)
         for stmt in self.statements:
             stmt.generate_llvm(context)
@@ -847,6 +1086,15 @@ class PBlock(PStatement):
         else:
             #otherwise leave the current scope for the block if the block has not been terminated by a return, break or continue
             context.leave_scope()
+            
+        if context.compilation_opts.add_debug_symbols:
+            assert context.debug_info is not None
+            context.debug_info.di_scope.pop()
+            
+    def add_debug_info(self, context: CodeGenContext):
+        assert isinstance(context.builder.block, ir.Block)
+        assert context.debug_info is not None
+        return context.module.add_debug_info("DILexicalBlock", self.di_location(context))
 
 @dataclass
 class PVariableDeclaration(PStatement):
@@ -891,19 +1139,44 @@ class PVariableDeclaration(PStatement):
     def generate_llvm(self, context: CodeGenContext) -> None:        
         type_ = self.typer_pass_var_type.get_llvm_value_type(context)
         alloca = context.builder.alloca(type_,name=self.name)
+        context.scopes.declare_var(self.name, type_, alloca)
         
         if self.is_root_to_declare_to_gc:
             context.add_root_to_gc(alloca,
                                 self.typer_pass_var_type,
                                 self.name)
-        
+
+        if context.compilation_opts.add_debug_symbols:
+            self.add_debug_info(context)
+
         if self.initial_value is None:
             init = self.typer_pass_var_type.default_llvm_value(context)
         else:
             init = self.initial_value.generate_llvm(context, False)
         
-        context.scopes.declare_var(self.name, type_, alloca)
-        context.builder.store(init, alloca)
+        instr = context.builder.store(init, alloca)
+        if self.initial_value is not None and context.compilation_opts.add_debug_symbols:
+            instr.set_metadata('dbg', self.add_di_location_metadata(context))
+                
+        
+    def add_debug_info(self, context: CodeGenContext) -> Optional[ir.DIValue]:
+        if not context.compilation_opts.add_debug_symbols:
+            return
+        assert context.debug_info is not None
+        di_local_var = context.module.add_debug_info("DILocalVariable",
+                                            {
+                                                "name": self.name,
+                                                **self.di_location(context),
+                                                "type": self.typer_pass_var_type.di_type(context)
+                                            })
+        alloca = context.scopes.get_symbol(self.name).alloca
+        assert alloca is not None
+        call = context.builder.call(context.debug_info.dbg_declare_func,
+                             [alloca, #alloca Metadata
+                              di_local_var,# metadata associated with local var info
+                              context.module.add_debug_info("DIExpression", {})]) # expression metadata
+        call.set_metadata('dbg', self.add_di_location_metadata(context))
+        return
 
 @dataclass
 class PAssignment(PExpression):
@@ -923,7 +1196,7 @@ class PAssignment(PExpression):
         yield self.value
         return
         
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         assert not get_ptr_to_expression, "Cannot get pointer to an assignment value"
         # get ptr to assign to
         if isinstance(self.target, PIdentifier):
@@ -938,7 +1211,9 @@ class PAssignment(PExpression):
         #get value to assign
         value = self.value.generate_llvm(context)
         #assign to target
-        context.builder.store(value, target)
+        instr = context.builder.store(value, target)
+        if context.compilation_opts.add_debug_symbols:
+            instr.set_metadata("dbg", self.add_debug_info(context))
         #return the value
         return value
 
@@ -992,6 +1267,10 @@ class PBinaryOperation(PExpression):
         # True block: evaluate right side
         context.builder.position_at_end(true_block)
         right = self.right.generate_llvm(context)
+        
+        if context.compilation_opts.add_debug_symbols:
+            if isinstance(right, ir.Instruction):
+                right.set_metadata("dbg", self.right.add_debug_info(context))
         context.builder.branch(end_block)
 
         # Merge block: PHI node to combine results
@@ -1014,6 +1293,10 @@ class PBinaryOperation(PExpression):
         # False block: evaluate right side
         context.builder.position_at_end(false_block)
         right = self.right.generate_llvm(context)
+        
+        if context.compilation_opts.add_debug_symbols:
+            if isinstance(right, ir.Instruction):
+                right.set_metadata("dbg", self.right.add_debug_info(context))
         context.builder.branch(end_block)
 
         # Merge block: PHI node to combine results
@@ -1035,6 +1318,7 @@ class PBinaryOperation(PExpression):
             raise NotImplementedError() # Should never happen
         type_info = TYPE_INFO[self.expr_type.name]
         
+        ret_val = None
         if self.operation == BinaryOperation.LOGIC_AND:
             ret_val = context.builder.and_(left, self.right.generate_llvm(context))
         elif self.operation == BinaryOperation.LOGIC_OR:
@@ -1108,6 +1392,10 @@ class PBinaryOperation(PExpression):
                 raise NotImplementedError()
         else:
             raise NotImplementedError()
+        
+        if context.compilation_opts.add_debug_symbols:
+            if isinstance(ret_val, ir.Instruction):
+                ret_val.set_metadata("dbg", self.add_debug_info(context))
         assert isinstance(ret_val, ir.NamedValue)
         return ret_val
 
@@ -1132,12 +1420,14 @@ class PUnaryOperation(PExpression):
         yield self.operand
         return
 
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         assert not get_ptr_to_expression, "Cannot get pointer to an operation result"
         
         operand = self.operand.generate_llvm(context, get_ptr_to_expression=self.operand.is_lvalue)
         assert self.operand.expr_type is not None
         assert self.expr_type is not None
+        
+        ret_val = None
         typeinfo = TYPE_INFO.get(self.operand.expr_type.name, TypeInfo(TypeClass.CLASS))
         if self.operation in (UnaryOperation.BOOL_NOT, UnaryOperation.LOGIC_NOT, UnaryOperation.MINUS):
             if self.operation == UnaryOperation.BOOL_NOT:
@@ -1183,6 +1473,9 @@ class PUnaryOperation(PExpression):
                 context.builder.store(after_op_val, operand_ptr)
         else:
             raise NotImplementedError()
+        if context.compilation_opts.add_debug_symbols:
+            if isinstance(ret_val, ir.Instruction):
+                ret_val.set_metadata("dbg", self.add_debug_info(context))
         assert isinstance(ret_val, ir.NamedValue)
         return ret_val
 
@@ -1397,7 +1690,7 @@ class PFunctionCall(PExpression):
             yield stmt
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         assert not get_ptr_to_expression, "Cannot get pointer to a function result"
         # get function pointer
         fun = self.function.generate_llvm(context)
@@ -1431,7 +1724,7 @@ class PMethodCall(PExpression):
             yield stmt
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         assert not get_ptr_to_expression, "Cannot get pointer to a function return value"
         assert self.object.expr_type is not None
         # TODO: get method function pointer from a v-table
@@ -1464,7 +1757,7 @@ class PIdentifier(PExpression):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
         self.name = name
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         variable = context.scopes.get_symbol(self.name)
         if variable.is_function:
             assert variable.func_ptr is not None
@@ -1483,7 +1776,7 @@ class PThis(PExpression):
     def __init__(self, lexeme:Lexeme):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         this = context.scopes.get_symbol('this').alloca
         assert this is not None
         assert self.expr_type is not None
@@ -1511,7 +1804,7 @@ class PLiteral(PExpression):
         self.literal_type = literal_type
         self.is_compile_time_constant = True
         
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Constant:
         assert not get_ptr_to_expression, "Cannot get pointer to a literal value"
         assert self.expr_type is not None
         const_typ = self.expr_type.get_llvm_value_type(context)
@@ -1542,7 +1835,7 @@ class PCast(PExpression):
         yield self.expression
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         assert not get_ptr_to_expression, "Cannot get pointer to a casted value"
         expr = self.expression.generate_llvm(context)
         original_type = self.expression.expr_type
@@ -1565,7 +1858,7 @@ class PCast(PExpression):
             if target_type.name == "null":
                 #cast to void ptr
                 result = context.builder.bitcast(expr, ir.PointerType())
-                assert isinstance(result, ir.NamedValue)
+                assert isinstance(result, ir.Value)
                 return result
             raise CompilerError("Cannot cast reference types yet")
         elif target_type_info.type_class == TypeClass.FLOAT:
@@ -1573,21 +1866,21 @@ class PCast(PExpression):
             if original_type_info.type_class in [TypeClass.INTEGER]:
                 if original_type_info.is_signed:
                     val = context.builder.sitofp(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
                 else:
                     val = context.builder.uitofp(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
             elif original_type_info.type_class == TypeClass.FLOAT:
                 if original_type_info.bit_width > target_type_info.bit_width:
                     #truncate
                     val = context.builder.fptrunc(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
                 else: #increase size of FP
                     val = context.builder.fpext(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
             else:
                 raise TypingError(f"Cannot Cast from {original_type} to {target_type}")
@@ -1597,30 +1890,30 @@ class PCast(PExpression):
                 if original_type_info.bit_width < target_type_info.bit_width: #cast to larger int
                     if original_type_info.is_signed:
                         val = context.builder.sext(expr, target_type.get_llvm_value_type(context))
-                        assert isinstance(val, ir.NamedValue)
+                        assert isinstance(val, ir.Value)
                         return val
                     else:
                         val = context.builder.zext(expr, target_type.get_llvm_value_type(context))
-                        assert isinstance(val, ir.NamedValue)
+                        assert isinstance(val, ir.Value)
                         return val
                 elif original_type_info.bit_width > target_type_info.bit_width:
                     val = context.builder.trunc(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
                 else:
                     #sign to unsigned or vice versa
                     val = context.builder.bitcast(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
             elif original_type_info.type_class == TypeClass.FLOAT:
                 #float to int
                 if target_type_info.is_signed:
                     val = context.builder.fptosi(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
                 else:
                     val = context.builder.fptoui(expr, target_type.get_llvm_value_type(context))
-                    assert isinstance(val, ir.NamedValue)
+                    assert isinstance(val, ir.Value)
                     return val
         elif target_type_info.type_class == TypeClass.BOOLEAN:
             #do zero check
@@ -1710,7 +2003,7 @@ class PDotAttribute(PExpression):
         yield self.right
         return
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         # left**
         left_mem_loc = self.left.generate_llvm(context, get_ptr_to_expression=True)
         assert isinstance(left_mem_loc, ir.NamedValue)
@@ -1768,7 +2061,7 @@ class PTernaryOperation(PExpression):
         yield self.false_value
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         return context.builder.select(
             self.condition.generate_llvm(context),
             self.true_value.generate_llvm(context, get_ptr_to_expression),
@@ -1796,7 +2089,7 @@ class PObjectInstantiation(PExpression):
         yield self.class_type
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
         
         assert not get_ptr_to_expression, "Cannot get ptr to Object reference"
@@ -1860,7 +2153,7 @@ class PArrayInstantiation(PExpression):
         yield self.element_type
         return
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         assert not get_ptr_to_expression, "Cannot get ptr to array reference"
         n_elements = self.size.generate_llvm(context)
         
@@ -1973,7 +2266,7 @@ class PArrayIndexing(PExpression):
         yield self.index
         return
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
         #get type of array
         assert self.array.expr_type is not None
         assert self.expr_type is not None

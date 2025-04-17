@@ -10,46 +10,21 @@ from typer import Typer, TypeClass, TypingError, CompilerWarning
 from parser import (PClass,PFunction,PProgram, Typ, ArrayTyp,
                     PReturnStatement, PVariableDeclaration,
                     PLiteral, CodeGenContext, Scopes,
-                    CompilerError)
-from tempfile import TemporaryDirectory
+                    CompilerError, DebugInfo, Position)
 from subprocess import Popen, PIPE
-from shutil import move
-from typing import TextIO, Dict, Optional, Union, IO
+from tempfile import TemporaryDirectory
+from typing import TextIO, Dict, Optional, Union
 from llvmlite import ir
 from warnings import warn
 from constants import *
-from enum import IntEnum, StrEnum
+from objs import OutputFormat, LLVM_Version, CompilationOptions
 from llvmlite.binding import (initialize, initialize_native_target, 
                               initialize_native_asmprinter, Target,
                               parse_bitcode, TypeRef, TypeKind)
 from pathlib import Path
 
-
-class LLVM_Version(IntEnum):
-    v15=15
-    v16=16
-    v17=17
-    v18=18
-    v19=19
-    
-    def suffix(self):
-        return f"-{self.value}"
-    
-class OutputFormat(StrEnum):
-    """The supported output formats for the compiler"""
-    """LLVM IR, human readable intermediate representation"""
-    IntermediateRepresentation="ir"
-    """LLVM BitCode, machine readable intermediate representation"""
-    BitCode="bc"
-    """Native assembly code for the platform"""
-    Assembly="asm"
-    """An object file to be compiled and/or linked further to an executable"""
-    Object="obj"
-    """An executable format (Or library if flag is set)"""
-    Executable="exe"
-
 class CodeGen:
-    _RUNTIME_LIB=str(Path(Path(__file__).parent.parent, 'garbage_collector/ps_re.bc'))
+    _COMPILER_VERSION = "0.1"
     BUILTINS_TYPE_MAP: Dict[str, Union[ir.IntType,
                                        ir.HalfType,
                                        ir.FloatType,
@@ -71,14 +46,14 @@ class CodeGen:
             'bool': ir.IntType(1)
         }
     
-    def __init__(self, use_warnings:bool=False,
-                 debug_symbols:bool=False) -> None:
+    def __init__(self, use_warnings:bool=False) -> None:
         
         #required for code generation (no cross-compile yet, needs initialize_all* for that)
         initialize()
         initialize_native_target()
         initialize_native_asmprinter()
         
+        self._RUNTIME_LIB=Path(__file__).parent.parent.joinpath('garbage_collector', 'ps_re.bc')
         self.use_warnings = use_warnings
         self.typer = Typer.default
         self.module = ir.Module(name='')
@@ -90,12 +65,13 @@ class CodeGen:
         )
     
     
-    def compile_module(self, filepath:Path, file:TextIO,
+    def compile_module(self, filepath:Path,
+                       file:TextIO,
                        output_file:str,
                        emit_format:OutputFormat,
-                       is_library:bool=False,
                        llvm_version:LLVM_Version=LLVM_Version.v15,
-                       clang_flags:Optional[list]=None) -> Path:
+                       clang_flags:Optional[list]=None,
+                       compiler_opts:CompilationOptions=CompilationOptions()) -> Path:
         """Compiles the module to the requested output and linked with the runtime environment if it's not a library
 
         Args:
@@ -108,7 +84,7 @@ class CodeGen:
 
         Returns:
             Path: The filepath to the compiled and linked module of the requested format
-        """
+        """        
         clang_flags = clang_flags or list()
         # Initializes module & typer
         filename = filepath.name
@@ -122,10 +98,53 @@ class CodeGen:
             typ:self.get_llvm_struct(typ, None)
             for typ in self.typer.known_types.values()
         }
-        # Create CodeGenContext
-        context = CodeGenContext(target_data=self.target.target_data,
-                                 module=self.module, scopes=Scopes(),
-                                 type_map=type_map)
+        if compiler_opts.add_debug_symbols:
+            dbg_declare = ir.Function(self.module, 
+                                      ir.FunctionType(ir.VoidType(), [ir.MetaDataType()] * 3),
+                                      'llvm.dbg.declare')
+            di_file = self.module.add_debug_info("DIFile", 
+                                                {"filename": filename,
+                                                "directory": str(filepath.parent.resolve())})
+            di_compile_unit = self.module.add_debug_info("DICompileUnit", 
+                                                    {
+                                                        "language": ir.DIToken('DW_LANG_C99'),
+                                                        "producer": f"pscc {self._COMPILER_VERSION}/llvmlite {llvmlite._version.version_version}",
+                                                        "runtimeVersion": 1,
+                                                        "isOptimized":False,
+                                                        "emissionKind": ir.DIToken('FullDebug'),
+                                                        "nameTableKind": ir.DIToken('None'),
+                                                        "splitDebugInlining": False,
+                                                        "file": di_file
+                                                    },
+                                                    is_distinct=True)
+            # add Metadata for debugging
+            self.module.add_named_metadata('llvm.dbg.cu', di_compile_unit)
+            self.module.add_named_metadata('llvm.module.flags', [ir.Constant(ir.IntType(32),7), "Dwarf Version", ir.Constant(ir.IntType(32),5)])
+            self.module.add_named_metadata('llvm.module.flags', [ir.Constant(ir.IntType(32),2), "Debug Info Version", ir.Constant(ir.IntType(32),3)])
+            self.module.add_named_metadata('llvm.module.flags', [ir.Constant(ir.IntType(32),1), "wchar_size", ir.Constant(ir.IntType(32),4)])
+            self.module.add_named_metadata('llvm.module.flags', [ir.Constant(ir.IntType(32),7), "PIC Level", ir.Constant(ir.IntType(32),2)])
+            self.module.add_named_metadata('llvm.module.flags', [ir.Constant(ir.IntType(32),7), "PIE Level", ir.Constant(ir.IntType(32),2)])
+            self.module.add_named_metadata('llvm.module.flags', [ir.Constant(ir.IntType(32),7), "uwtable", ir.Constant(ir.IntType(32),2)])
+            self.module.add_named_metadata('llvm.module.flags', [ir.Constant(ir.IntType(32),7), "frame-pointer", ir.Constant(ir.IntType(32),2)])
+            # Create CodeGenContext
+            debug_info = DebugInfo(di_file=di_file,
+                                    di_compile_unit=di_compile_unit,
+                                    dbg_declare_func=dbg_declare,
+                                    di_scope=[
+                                        self.module.add_debug_info("DINamespace",
+                                                                   {
+                                                                       "scope":di_compile_unit,
+                                                                       "name":"Default", #TODO fix once namespaces are included
+                                                                   })
+                                    ])
+        else:
+            debug_info = None
+        self.module.add_named_metadata("llvm.ident", [f"pscc {self._COMPILER_VERSION}/llvmlite {llvmlite._version.version_version}"])
+        context = CodeGenContext(module=self.module, scopes=Scopes(),
+                                target_data=self.target.target_data,
+                                type_map=type_map,
+                                debug_info=debug_info,
+                                compilation_opts=compiler_opts)
         # Setup type_ids
         type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
         for typ, ir_type in context.type_map.items():
@@ -157,10 +176,10 @@ class CodeGen:
         globals_ref_type_count = self._generate_globals_populator(typed_abstract_syntax_tree, context)
         
         # Here should check if we're building a library.
-        self._setup_exit_code_global(context, is_library=is_library)
+        self._setup_exit_code_global(context, is_library=compiler_opts.is_library)
         
         #TODO here recompile using llvm toolchain
-        if not is_library:
+        if not compiler_opts.is_library:
             # generate code for main function
             self._generate_main_function(typed_abstract_syntax_tree, context, globals_ref_type_count)
             self._compile_prog(context.module, output_file=output_file,
@@ -171,45 +190,51 @@ class CodeGen:
         else:
             # TODO set the globals/methods/classes to export and which to keep internally private
             # compile write to file and return path to it
-            self._compile_to_output_format(context.module,
-                                            output_file=output_file,
-                                            llvm_version=llvm_version,
-                                            output_format=emit_format,
-                                            clang_flags=clang_flags)
+            with TemporaryDirectory() as tmpdir:
+                tmp_module_ll = Path(tmpdir, 'generated_ir.ll')
+                tmp_module_ll.write_text(str(context.module), encoding='utf_8')
+                self._compile_to_output_format(tmp_module_ll,
+                                                output_file=output_file,
+                                                llvm_version=llvm_version,
+                                                output_format=emit_format,
+                                                clang_flags=clang_flags)
 
         return Path(output_file).resolve().absolute()
     
     def _compile_prog(self, module:ir.Module, output_file:str,
                      llvm_version:LLVM_Version, output_format:OutputFormat,
                      clang_flags:list):
-        link_flags = ["--suppress-warnings", self._RUNTIME_LIB]
-        if output_format in [OutputFormat.IntermediateRepresentation, OutputFormat.BitCode]:
-            if output_format == OutputFormat.IntermediateRepresentation:
-                link_flags += ['-S', '-o', output_file]
-            elif output_format == OutputFormat.BitCode:
-                link_flags += ['-o', output_file]
-            proc = Popen(['llvm-link'+llvm_version.suffix(), *link_flags, '-'], stdin=PIPE)
-            proc.communicate(str(module).encode())
-            # compiled to the requested output format. no additional compilation needed
-            return
-        
-        #needs to use clang to advance
-        link_flags.append('-f')
-        proc = Popen(['llvm-link'+llvm_version.suffix(), *link_flags, '-'],
-                     stdin=PIPE, stdout=PIPE)
-        
-        self._compile_to_output_format(proc.communicate(str(module).encode())[0],
-                                       output_file=output_file, 
-                                       llvm_version=llvm_version,
-                                       output_format=output_format,
-                                       clang_flags=clang_flags)
+        with TemporaryDirectory() as tmpdir:
+            tmp_generated_ir_file = Path(tmpdir, 'generated_ir.ll')
+            tmp_generated_ir_file.write_text(str(module),
+                                     'utf_8')
+            link_flags = [str(tmp_generated_ir_file), f'--override={tmp_generated_ir_file}',
+                          "--suppress-warnings", str(self._RUNTIME_LIB)]
+            if output_format in [OutputFormat.IntermediateRepresentation, OutputFormat.BitCode]:
+                if output_format == OutputFormat.IntermediateRepresentation:
+                    link_flags += ['-S', '-o', output_file]
+                elif output_format == OutputFormat.BitCode:
+                    link_flags += ['-o', output_file]
+                proc = Popen(['llvm-link'+llvm_version.suffix(), *link_flags])
+                proc.communicate()
+                # compiled to the requested output format. no additional compilation needed
+                return
+            
+            tmp_linked_bc_file = Path(tmpdir, 'linked_module.bc')
+            #needs to use clang to advance
+            link_flags += ['-o', str(tmp_linked_bc_file)]
+            proc = Popen(['llvm-link'+llvm_version.suffix(), *link_flags])
+            proc.wait()
+            
+            self._compile_to_output_format(module_bc=tmp_linked_bc_file,
+                                           output_file=output_file, 
+                                           llvm_version=llvm_version,
+                                           output_format=output_format,
+                                           clang_flags=clang_flags)
 
-    def _compile_to_output_format(self, module_bc:Union[ir.Module, bytes], output_file:str,
+    def _compile_to_output_format(self, module_bc:Path, output_file:str,
                      llvm_version:LLVM_Version, output_format:OutputFormat,
                      clang_flags:list):
-        if isinstance(module_bc, ir.Module):
-            module_bc = str(module_bc).encode()
-
         clang_flags = ['-x', 'ir'] + clang_flags
         if output_format == OutputFormat.Assembly:
             clang_flags.append('-S')
@@ -227,8 +252,8 @@ class CodeGen:
             raise NotImplementedError(f"Unknown output format {output_format}")
         
         proc = Popen(["clang"+llvm_version.suffix(), *clang_flags,
-                        "-o", output_file, '-'], stdin=PIPE)
-        proc.communicate(module_bc)
+                        "-o", output_file, str(module_bc)], stdin=PIPE)
+        proc.wait()
     
     def _define_top_level_declarations(self, ast:PProgram, context:CodeGenContext):
         """Generates the code within all functions and methods"""
@@ -280,6 +305,31 @@ class CodeGen:
         context.builder.branch(user_main_func_code_block)
         context.builder.position_at_end(user_main_func_code_block)
         
+        #add debug info if requested
+        if context.compilation_opts.add_debug_symbols:
+            assert context.debug_info is not None
+            main_pos = Position.default
+            main_type = [Typ('i32').di_type(context)]
+            for statement in ast.statements:
+                if isinstance(statement, PFunction):
+                    if statement.name == ENTRYPOINT_FUNCTION_NAME:
+                        main_pos = statement.position
+                        main_type = statement.di_type(context)
+            main_type = context.module.add_debug_info("DISubroutineType", 
+                                                      {
+                                                          "types": main_type
+                                                      })
+            debug_info = context.module.add_debug_info("DISubprogram",{
+                                "scope":context.debug_info.di_scope[-1],
+                                "name": main_func.name,
+                                "file": context.debug_info.di_file,
+                                "line": main_pos.line,
+                                "unit": context.debug_info.di_compile_unit,
+                                "type": main_type,
+                                "scopeLine": main_pos.line
+                            }, is_distinct=True)
+            context.debug_info.di_scope.append(debug_info)
+            main_func.set_metadata("dbg", debug_info)
         # Generate the user code in the main function
         self._generate_user_main_code(ast, context, reference_type_globals_count)
         
@@ -457,6 +507,23 @@ class CodeGen:
                 global_var.initializer = statement.initial_value.generate_llvm(context)
             else:
                 global_var.initializer = statement.typer_pass_var_type.default_llvm_value(context)
+            if context.compilation_opts.add_debug_symbols:
+                assert context.debug_info is not None
+                debug_info = context.module.add_debug_info("DIGlobalVariable",
+                                                {
+                                                    "name":statement.name,
+                                                    "file":context.debug_info.di_file,
+                                                    **statement.di_location(context),
+                                                    "type": statement.typer_pass_var_type.di_type(context)
+                                                })
+                debug_info = context.module.add_debug_info("DIGlobalVariableExpression",
+                                { 
+                                    "var": debug_info,
+                                    "expr": context.module.add_debug_info("DIExpression", {})
+                                })
+                global_var.set_metadata("dbg", debug_info)
+            else:
+                debug_info = None
             context.scopes.declare_var(global_var.name, var_type, global_var)
         
     def _compile_module_functions(self, ast:PProgram, context:CodeGenContext):
