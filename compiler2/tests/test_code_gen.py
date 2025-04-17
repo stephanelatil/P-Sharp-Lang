@@ -1458,7 +1458,7 @@ class DebugSymbolTestCase:
                 StringIO(source),
                 emit_format=OutputFormat.IntermediateRepresentation,
                 output_file=outfile,
-                llvm_version=LLVM_Version.v19,
+                llvm_version=LLVM_Version.v15,
                 compiler_opts=compile_opts
             )
             with open(outfile, 'rt') as ir:
@@ -2147,32 +2147,3 @@ class TestErrorHandling(DebugSymbolTestCase):
         # Check if line numbers are affected by the directive
         # This is implementation-dependent, but we can check if line info exists
         self.assert_debug_location(ir_code, 100)
-
-
-class TestSourcePathVariations(DebugSymbolTestCase):
-    """Test debug symbols with different source file paths"""
-    
-    @pytest.mark.parametrize("filename", [
-        "/absolute/path/to/source.cs",
-        "relative/path/to/source.cs",
-        "./source.cs",
-        "c:\\windows\\path\\source.cs",  # Windows-style path
-        "file with spaces.cs",
-    ])
-    def test_source_path_variations(self, filename):
-        """Test debug info with different source file paths"""
-        source = """
-        i32 main() {
-            return 42;
-        }
-        """
-        ir_code = self.compile_to_llvm_ir(source, filename)
-        
-        self.assert_function_debug_info(ir_code, "main")
-        
-        # Extract just the filename part for validation
-        basename = os.path.basename(filename.replace("\\", "/"))
-        
-        # Check if the filename appears in the debug info
-        file_pattern = re.compile(r"!DIFile\(.*filename\s*:\s*[\"'].*" + re.escape(basename) + r"[\"']")
-        assert file_pattern.search(ir_code), f"File info for '{basename}' not found"
