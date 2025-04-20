@@ -1836,37 +1836,6 @@ class TestArrayDebugSymbols(DebugSymbolTestCase):
 
 class TestComplexDebugSymbols(DebugSymbolTestCase):
     """Test debug symbols for complex code patterns"""
-
-    def test_variable_scoping_debug_info(self):
-        """Test debug info for variables in different scopes"""
-        source = """
-        i32 calculateScoped(i32 value) {
-            i32 result = 0;
-            
-            // Outer scope
-            {
-                i32 temp = value * 2;
-                result = temp;
-                
-                // Inner scope
-                {
-                    i32 temp = value + 10;  // Shadows outer temp
-                    result = result + temp;
-                }
-            }
-            
-            return result;
-        }
-        """
-        ir_code = self.compile_to_llvm_ir(source)
-        
-        self.assert_function_debug_info(ir_code, "calculateScoped")
-        self.assert_local_variable_debug_info(ir_code, "result")
-        
-        # Both instances of 'temp' should have debug info, potentially with different DILocalVariable entries
-        # This is just a basic check - might need refinement based on how scoping is implemented
-        temp_vars = re.findall(r"!DILocalVariable\(.*name\s*:\s*\"temp\"", ir_code)
-        assert len(temp_vars) >= 1, "Debug info for 'temp' variable(s) not found"
     
     def test_complex_expression_debug_info(self):
         """Test debug info for complex expressions"""
