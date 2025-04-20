@@ -102,6 +102,12 @@ class CodeGen:
             dbg_declare = ir.Function(self.module, 
                                       ir.FunctionType(ir.VoidType(), [ir.MetaDataType()] * 3),
                                       'llvm.dbg.declare')
+            dbg_assign = ir.Function(self.module, 
+                                      ir.FunctionType(ir.VoidType(), [ir.MetaDataType()] * 3),
+                                      'llvm.dbg.assign')
+            dbg_value = ir.Function(self.module, 
+                                      ir.FunctionType(ir.VoidType(), [ir.MetaDataType()] * 3),
+                                      'llvm.dbg.value')
             di_file = self.module.add_debug_info("DIFile", 
                                                 {"filename": filename,
                                                 "directory": str(filepath.parent.resolve())})
@@ -130,6 +136,8 @@ class CodeGen:
             debug_info = DebugInfo(di_file=di_file,
                                     di_compile_unit=di_compile_unit,
                                     dbg_declare_func=dbg_declare,
+                                    dbg_assign_func=dbg_assign,
+                                    dbg_value_func=dbg_value,
                                     di_scope=[
                                         self.module.add_debug_info("DINamespace",
                                                                    {

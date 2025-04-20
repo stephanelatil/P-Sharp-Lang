@@ -411,6 +411,8 @@ class DebugInfo:
     di_file:ir.DIValue
     di_compile_unit:ir.DIValue
     dbg_declare_func:ir.Function
+    dbg_value_func:ir.Function
+    dbg_assign_func:ir.Function
     di_scope:List[ir.DIValue] = field(default_factory=list)
 
 @dataclass
