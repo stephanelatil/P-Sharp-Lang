@@ -316,28 +316,11 @@ class CodeGen:
         #add debug info if requested
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
-            main_pos = Position.default
-            main_type = [Typ('i32').di_type(context)]
             for statement in ast.statements:
                 if isinstance(statement, PFunction):
                     if statement.name == ENTRYPOINT_FUNCTION_NAME:
-                        main_pos = statement.position
-                        main_type = statement.di_type(context)
-            main_type = context.module.add_debug_info("DISubroutineType", 
-                                                      {
-                                                          "types": main_type
-                                                      })
-            debug_info = context.module.add_debug_info("DISubprogram",{
-                                "scope":context.debug_info.di_scope[-1],
-                                "name": main_func.name,
-                                "file": context.debug_info.di_file,
-                                "line": main_pos.line,
-                                "unit": context.debug_info.di_compile_unit,
-                                "type": main_type,
-                                "scopeLine": main_pos.line
-                            }, is_distinct=True)
-            context.debug_info.di_scope.append(debug_info)
-            main_func.set_metadata("dbg", debug_info)
+                        main_func.set_metadata("dbg", statement.add_debug_info(context))
+                        break
         # Generate the user code in the main function
         self._generate_user_main_code(ast, context, reference_type_globals_count)
         

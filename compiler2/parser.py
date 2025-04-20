@@ -804,7 +804,9 @@ class PFunction(PStatement):
         
         # defined args in scoper:
         assert len(self.function_args) == len(func.args)
+        arg_num = 0
         for param, arg_value in zip(self.function_args, func.args):
+            arg_num += 1
             # build alloca to a function argument
             # In llvm function arguments are just NamedValues and don't have a mem address.
             # We define a location on the stack for them so they can be written to.
@@ -814,8 +816,24 @@ class PFunction(PStatement):
             arg_alloca = context.builder.alloca(arg_value.type)
             debug_info:Optional[ir.DIValue] = None
             if context.compilation_opts.add_debug_symbols:
+                assert context.debug_info is not None
                 debug_info = param.add_di_location_metadata(context)
                 arg_alloca.set_metadata("dbg", debug_info)
+                
+                di_local_var = context.module.add_debug_info("DILocalVariable",
+                                            {
+                                                "name": param.name,
+                                                **param.di_location(context),
+                                                "type": param.typer_pass_var_type.di_type(context),
+                                                "arg":arg_num
+                                            })
+                
+                call = context.builder.call(context.debug_info.dbg_declare_func,
+                                    [arg_alloca, #alloca Metadata
+                                    di_local_var,# metadata associated with local var info
+                                    context.module.add_debug_info("DIExpression", {})]) # expression metadata
+                call.set_metadata('dbg', self.add_di_location_metadata(context))
+                
             context.builder.store(arg_value, arg_alloca)
             context.scopes.declare_var(param.name,
                                        param.typer_pass_var_type.get_llvm_value_type(context),
@@ -864,7 +882,9 @@ class PFunction(PStatement):
                     **self.di_location(context),
                     "type": subroutine_type,
                     "isDefinition": True,
-                    "unit":context.debug_info.di_compile_unit
+                    "unit":context.debug_info.di_compile_unit,
+                    "spFlags":ir.DIToken('DISPFlagDefinition'),
+                    "retainedNodes":[]
                 }, is_distinct=True)
         context.debug_info.di_scope.append(di_subprogram)
         return di_subprogram
@@ -1154,7 +1174,31 @@ class PAssignment(PExpression):
         #assign to target
         instr = context.builder.store(value, target)
         if context.compilation_opts.add_debug_symbols:
-            instr.set_metadata("dbg", self.add_debug_info(context))
+            assert context.debug_info is not None
+            di_loc = self.add_di_location_metadata(context)
+            instr.set_metadata("dbg", di_loc)
+            
+            # dbg_assign = context.builder.call(context.debug_info.dbg_assign_func,
+            #                                   [
+            #                                     value,
+            #                                     context.module.add_debug_info("DIExpression",{}),
+            #                                     context.module.add_debug_info("DILocalVariable",
+            #                                             {
+            #                                                 "name": target,
+            #                                                 **target.di_location(context),
+            #                                                 "type": target.expr_type.di_type(context)
+            #                                             }),#DILocalVariable,
+            #                                     context.module.add_debug_info("DIAssignID", {}, is_distinct=True),
+            #                                     target, # should be the original memory address of the base variable
+            #                                         # aka. the array if getting a field like class.field, this points to the class
+            #                                         # or if adding to an array: this should point to the original array
+                                                    
+            #                                     context.module.add_debug_info("DIExpression", {}),
+            #                                         #DIExpression showing how to run the pointer arithmetic
+            #                                         # like for class.field DIExpression(DW_OP_plus_uconst, $OffsetInBytes (or bits?))
+            #                                     di_loc #location
+            #                                     ])
+            # dbg_assign.set_metadata("dbg", di_loc)
         #return the value
         return value
 
@@ -1641,7 +1685,8 @@ class PFunctionCall(PExpression):
                 for arg, expected_arg in zip(self.arguments, fun.args)]
         assert isinstance(fun, ir.Function)
         #call function
-        ret_val = context.builder.call(fun, args)        
+        ret_val = context.builder.call(fun, args)       
+        ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
         return ret_val
 
 @dataclass
@@ -1687,6 +1732,7 @@ class PMethodCall(PExpression):
                 for arg, expected_arg in zip(args, fun.args)]
         assert isinstance(fun, ir.Function)
         ret_val = context.builder.call(fun, args)
+        ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
         return ret_val
 
 @dataclass
