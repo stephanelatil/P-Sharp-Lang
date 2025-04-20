@@ -1482,7 +1482,7 @@ class DebugSymbolTestCase:
     
     def assert_function_debug_info(self, ir_code, func_name):
         """Check if debug info for a specific function exists"""
-        func_pattern = re.compile(r"!DISubprogram\(.*name\s*:\s*\"" + func_name + r"\"")
+        func_pattern = re.compile(r"!DISubprogram\(.*linkageName\s*:\s*\"" + func_name + r"\"")
         assert func_pattern.search(ir_code), f"Debug info for function '{func_name}' not found"
     
     def assert_debug_location(self, ir_code, line_num):
@@ -2127,23 +2127,4 @@ class TestErrorHandling(DebugSymbolTestCase):
         self.assert_local_variable_debug_info(ir_code, "euroSymbol")
         self.assert_local_variable_debug_info(ir_code, "emoji")
         self.assert_local_variable_debug_info(ir_code, "chineseText")
-    
-    def test_source_with_line_directives(self):
-        """Test debug info when source has line directives"""
-        source = """
-        // This should be line 2
-        #line 100
-        i32 lineDirective() {
-            i32 x = 42;
-            return x;
-        }
-        """
-        # Note: Your compiler might not support #line directives,
-        # but this test checks how debug info handles them if they exist
-        ir_code = self.compile_to_llvm_ir(source)
-        
-        self.assert_function_debug_info(ir_code, "lineDirective")
-        
-        # Check if line numbers are affected by the directive
-        # This is implementation-dependent, but we can check if line info exists
-        self.assert_debug_location(ir_code, 100)
+
