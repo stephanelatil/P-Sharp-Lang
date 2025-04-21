@@ -180,14 +180,12 @@ class CodeGen:
             # (functions/methods bodies are defined though)
         self._declare_top_level_declarations(typed_abstract_syntax_tree, context)
         self._define_top_level_declarations(typed_abstract_syntax_tree, context)
+        
         # Generate function to populate globals
         globals_ref_type_count = self._generate_globals_populator(typed_abstract_syntax_tree, context)
         
-        # Here should check if we're building a library.
-        self._setup_exit_code_global(context, is_library=compiler_opts.is_library)
-        
-        #TODO here recompile using llvm toolchain
         if not compiler_opts.is_library:
+            self._setup_exit_code_global(context, is_library=compiler_opts.is_library)
             # generate code for main function
             self._generate_main_function(typed_abstract_syntax_tree, context, globals_ref_type_count)
             self._compile_prog(context.module, output_file=output_file,
@@ -345,6 +343,26 @@ class CodeGen:
         func = ir.Function(context.module, func_type, FUNC_POPULATE_GLOBALS)
         context.scopes.declare_func(FUNC_POPULATE_GLOBALS, ir.VoidType(), func)
         context.builder.position_at_start(func.append_basic_block(FUNC_POPULATE_GLOBALS+'_entry'))
+        if context.compilation_opts.add_debug_symbols:
+            assert context.debug_info is not None
+            subroutine_type = context.module.add_debug_info("DISubroutineType",
+                                        {
+                                            "types": [None]
+                                        })
+            di_subprogram = context.module.add_debug_info("DISubprogram",
+                    {
+                        "name": FUNC_POPULATE_GLOBALS,
+                        #TODO edit linkable name with namespace info
+                        "linkageName": FUNC_POPULATE_GLOBALS,
+                        "line":0,
+                        "file":None,
+                        "type": subroutine_type,
+                        "isDefinition": True,
+                        "unit":context.debug_info.di_compile_unit,
+                        "spFlags":ir.DIToken('DISPFlagDefinition'),
+                        "retainedNodes":[]
+                    }, is_distinct=True)
+            context.debug_info.di_scope.append(di_subprogram)
         
         for statement in ast.statements:
             if isinstance(statement, PVariableDeclaration) and statement.initial_value is not None:
@@ -359,6 +377,9 @@ class CodeGen:
                 if statement.typer_pass_var_type.is_reference_type:
                     globals_ref_type_count += 1
         context.builder.ret_void()
+        if context.compilation_opts.add_debug_symbols:
+            assert context.debug_info is not None
+            context.debug_info.di_scope.pop()
         return globals_ref_type_count
 
     def _generate_gc_init(self, context:CodeGenContext):
