@@ -5,6 +5,7 @@ from enum import Enum, auto
 from lexer import Lexer, LexemeType, Lexeme, Position
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
 from llvmlite import ir, binding
+from llvmlite.ir._utils import _HasMetadata
 from constants import *
 from warnings import warn
 from objs import CompilationOptions
@@ -210,7 +211,7 @@ class Typ:
     
 class ArrayTyp(Typ):
     def __init__(self, element_type:Typ):
-        self.element_typ:Typ = element_type
+        self.element_typ:Typ = element_type        
         methods:Dict[str, PMethod] = {}
         fields:List[PClassField] = [PClassField("Length",
                                         #TODO make global Const somewhere to define if array length is a i64 or i32
@@ -235,6 +236,19 @@ class ArrayTyp(Typ):
     def di_type(self, context: 'CodeGenContext'):
         if self._cached_di_type is not None:
             return self._cached_di_type
+        
+        assert len(self.fields) == 1 and self.fields[0].name == "Length"
+        length_field_type:Typ = self.fields[0].typer_pass_var_type
+        length_field_size = (length_field_type.get_llvm_value_type(context)
+                                              .get_abi_size(context.target_data)*8)
+        
+        element_array_type = context.module.add_debug_info("DICompositeType",
+                                                {
+                                                    "tag":ir.DIToken('DW_TAG_array_type'),
+                                                    "baseType": self.element_typ.di_type(context),
+                                                    "size": 0
+                                                })
+        
         ditype = context.module.add_debug_info("DICompositeType",
                         {
                             "tag" : ir.DIToken("DW_TAG_structure_type"),
@@ -244,15 +258,16 @@ class ArrayTyp(Typ):
                                         {   #array_size
                                             "tag":ir.DIToken("DW_TAG_member"),
                                             "name": "Length",
-                                            "baseType":context.type_by_name("i64").di_type(context),
-                                            "size": ir.IntType(64).get_abi_size(context.target_data)*8,
+                                            "baseType": length_field_type.di_type(context),
+                                            "size": length_field_size,
+                                            "offset":0
                                         }), 
                                 # array elements
                                 context.module.add_debug_info("DIDerivedType",{
                                         "tag":ir.DIToken("DW_TAG_member"),
                                         "name":"elements",
-                                        "baseType": self.element_typ.di_type(context),
-                                        # "offset": ir.IntType(64).get_abi_size(context.target_data)*8,
+                                        "baseType": element_array_type,
+                                        "offset": length_field_size,
                                     })
                             ]
                         })
@@ -799,7 +814,7 @@ class PFunction(PStatement):
 
         context.enter_scope(self.count_ref_vars_declared_in_scope)
         
-        if context.compilation_opts.add_debug_symbols:
+        if context.compilation_opts.add_debug_symbols and isinstance(func, _HasMetadata):
             func.set_metadata("dbg", self.add_debug_info(context))
         
         # defined args in scoper:
@@ -815,7 +830,7 @@ class PFunction(PStatement):
                 # The caller will not have the value changed from his point of view, he just passed a value not a reference!
             arg_alloca = context.builder.alloca(arg_value.type)
             debug_info:Optional[ir.DIValue] = None
-            if context.compilation_opts.add_debug_symbols:
+            if context.compilation_opts.add_debug_symbols and isinstance(arg_alloca, _HasMetadata):
                 assert context.debug_info is not None
                 debug_info = param.add_di_location_metadata(context)
                 arg_alloca.set_metadata("dbg", debug_info)
@@ -1116,7 +1131,7 @@ class PVariableDeclaration(PStatement):
             init = self.initial_value.generate_llvm(context, False)
         
         instr = context.builder.store(init, alloca)
-        if self.initial_value is not None and context.compilation_opts.add_debug_symbols:
+        if self.initial_value is not None and context.compilation_opts.add_debug_symbols and isinstance(instr, _HasMetadata):
             instr.set_metadata('dbg', self.add_di_location_metadata(context))
                 
         
@@ -1178,6 +1193,7 @@ class PAssignment(PExpression):
             di_loc = self.add_di_location_metadata(context)
             instr.set_metadata("dbg", di_loc)
             
+            #TODO add debug info here
             # dbg_assign = context.builder.call(context.debug_info.dbg_assign_func,
             #                                   [
             #                                     value,
@@ -1253,8 +1269,7 @@ class PBinaryOperation(PExpression):
         context.builder.position_at_end(true_block)
         right = self.right.generate_llvm(context)
         
-        if context.compilation_opts.add_debug_symbols:
-            if isinstance(right, ir.Instruction):
+        if context.compilation_opts.add_debug_symbols and isinstance(right, _HasMetadata):
                 right.set_metadata("dbg", self.right.add_debug_info(context))
         context.builder.branch(end_block)
 
@@ -1279,8 +1294,7 @@ class PBinaryOperation(PExpression):
         context.builder.position_at_end(false_block)
         right = self.right.generate_llvm(context)
         
-        if context.compilation_opts.add_debug_symbols:
-            if isinstance(right, ir.Instruction):
+        if context.compilation_opts.add_debug_symbols and isinstance(right, _HasMetadata):
                 right.set_metadata("dbg", self.right.add_debug_info(context))
         context.builder.branch(end_block)
 
@@ -1458,8 +1472,7 @@ class PUnaryOperation(PExpression):
                 context.builder.store(after_op_val, operand_ptr)
         else:
             raise NotImplementedError()
-        if context.compilation_opts.add_debug_symbols:
-            if isinstance(ret_val, ir.Instruction):
+        if context.compilation_opts.add_debug_symbols and isinstance(ret_val, _HasMetadata):
                 ret_val.set_metadata("dbg", self.add_debug_info(context))
         assert isinstance(ret_val, ir.NamedValue)
         return ret_val
@@ -1487,14 +1500,18 @@ class PIfStatement(PStatement):
         return
     
     def generate_llvm(self, context: CodeGenContext) -> None:
+        cond = self.condition.generate_llvm(context)
+        if context.compilation_opts.add_debug_symbols and isinstance(cond, _HasMetadata):
+            cond.set_metadata('dbg', self.condition.add_di_location_metadata(context))
+
         if self.else_block is not None:
-            with context.builder.if_else(self.condition.generate_llvm(context)) as (then, otherwise):
+            with context.builder.if_else(cond) as (then, otherwise):
                 with then:
                     self.then_block.generate_llvm(context)
                 with otherwise:
                     self.else_block.generate_llvm(context)
         else:
-            with context.builder.if_then(self.condition.generate_llvm(context)):
+            with context.builder.if_then(cond):
                 self.then_block.generate_llvm(context)
                 
 
@@ -1527,6 +1544,9 @@ class PWhileStatement(PStatement):
         # Generate condition in condition block
         context.builder.position_at_end(cond_block)
         cond_value = self.condition.generate_llvm(context)
+        if context.compilation_opts.add_debug_symbols and isinstance(cond_value, _HasMetadata):
+            cond_value.set_metadata('dbg', self.condition.add_di_location_metadata(context))
+
         context.builder.cbranch(cond_value, body_block, after_block)
 
         # Generate loop body in body block
@@ -1577,7 +1597,9 @@ class PForStatement(PStatement):
         
         context.enter_scope(for_initializer_ref_vars)
         
-        self.initializer.generate_llvm(context)
+        init = self.initializer.generate_llvm(context)
+        if context.compilation_opts.add_debug_symbols and isinstance(init, _HasMetadata):
+            init.set_metadata('dbg', self.initializer.add_di_location_metadata(context))
         # Create basic blocks for loop structure
         increment_block:ir.Block = context.builder.append_basic_block(f"for_inc_{self.condition.position.index}")
         cond_block:ir.Block = context.builder.append_basic_block(f"for_cond_{self.condition.position.index}")
@@ -1591,6 +1613,8 @@ class PForStatement(PStatement):
         # Generate condition in condition block
         context.builder.position_at_end(cond_block)
         cond_value = self.condition.generate_llvm(context)
+        if context.compilation_opts.add_debug_symbols and isinstance(cond_value, _HasMetadata):
+            cond_value.set_metadata('dbg', self.condition.add_di_location_metadata(context))
         context.builder.cbranch(cond_value, body_block, after_block)
 
         # Generate loop body in body block
@@ -1601,7 +1625,9 @@ class PForStatement(PStatement):
             context.builder.branch(increment_block)
         # at the end of the for loop run the increment statement
         context.builder.position_at_end(increment_block)
-        self.increment.generate_llvm(context)
+        increment = self.increment.generate_llvm(context)
+        if context.compilation_opts.add_debug_symbols and isinstance(increment, _HasMetadata):
+            increment.set_metadata('dbg', self.increment.add_di_location_metadata(context))
         # Branch back to condition block after body execution
         context.builder.branch(cond_block)
 
@@ -1635,19 +1661,22 @@ class PReturnStatement(PStatement):
             assert self.value.expr_type.get_llvm_value_type(context) == ir.IntType(32)
             exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME).alloca
             assert exit_code is not None
-            context.builder.store(self.value.generate_llvm(context), exit_code)
+            instr = context.builder.store(self.value.generate_llvm(context), exit_code)
             # leave all scopes not needed as GC cleanup will handle destroying all scopes
             # go to exit
             context.builder.branch(context.global_exit_block)
-            return
             
-        if isinstance(self.value, PVoid):
+        elif isinstance(self.value, PVoid):
             context.leave_scope(self.depth_from_next_function)
-            context.builder.ret_void()
+            instr = context.builder.ret_void()
         else:
             ret_val = self.value.generate_llvm(context)
             context.leave_scope(self.depth_from_next_function)
-            context.builder.ret(ret_val)
+            instr = context.builder.ret(ret_val)
+
+        if context.compilation_opts.add_debug_symbols:
+            instr.set_metadata("dbg", self.add_di_location_metadata(context))
+            
     
     @staticmethod
     def implicit_return(position:Position):
@@ -1685,8 +1714,9 @@ class PFunctionCall(PExpression):
                 for arg, expected_arg in zip(self.arguments, fun.args)]
         assert isinstance(fun, ir.Function)
         #call function
-        ret_val = context.builder.call(fun, args)       
-        ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
+        ret_val = context.builder.call(fun, args)
+        if context.compilation_opts.add_debug_symbols:  
+            ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
         return ret_val
 
 @dataclass
@@ -1732,7 +1762,8 @@ class PMethodCall(PExpression):
                 for arg, expected_arg in zip(args, fun.args)]
         assert isinstance(fun, ir.Function)
         ret_val = context.builder.call(fun, args)
-        ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
+        if context.compilation_opts.add_debug_symbols:
+            ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
         return ret_val
 
 @dataclass
@@ -1750,11 +1781,11 @@ class PIdentifier(PExpression):
             assert variable.func_ptr is not None
             return variable.func_ptr
         assert variable.alloca is not None
-        assert self.expr_type is not None
-        var_type = self.expr_type.get_llvm_value_type(context)
         if get_ptr_to_expression:
             return variable.alloca
         else:
+            assert self.expr_type is not None
+            var_type = self.expr_type.get_llvm_value_type(context)
             return context.builder.load(variable.alloca, typ=var_type)
 
 @dataclass
@@ -1829,14 +1860,14 @@ class PCast(PExpression):
         target_type = self.expr_type
         assert original_type is not None and target_type is not None
 
-        if target_type == original_type:
-            return expr #nothing to do
-        
         original_type_info = TYPE_INFO.get(original_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
         target_type_info = TYPE_INFO.get(target_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
         
-        if original_type_info.type_class == TypeClass.BOOLEAN:
-            return context.builder.select(
+        ret_val = expr
+        if target_type == original_type:
+            pass #nothing to do
+        elif original_type_info.type_class == TypeClass.BOOLEAN:
+            ret_val = context.builder.select(
                     cond=expr,
                     lhs=ir.Constant(target_type.get_llvm_value_type(context), 1),
                     rhs=ir.Constant(target_type.get_llvm_value_type(context), 0)
@@ -1846,7 +1877,7 @@ class PCast(PExpression):
                 #cast to void ptr
                 result = context.builder.bitcast(expr, ir.PointerType())
                 assert isinstance(result, ir.Value)
-                return result
+                ret_val = result
             raise CompilerError("Cannot cast reference types yet")
         elif target_type_info.type_class == TypeClass.FLOAT:
             #convert to float
@@ -1854,21 +1885,21 @@ class PCast(PExpression):
                 if original_type_info.is_signed:
                     val = context.builder.sitofp(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
                 else:
                     val = context.builder.uitofp(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
             elif original_type_info.type_class == TypeClass.FLOAT:
                 if original_type_info.bit_width > target_type_info.bit_width:
                     #truncate
                     val = context.builder.fptrunc(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
                 else: #increase size of FP
                     val = context.builder.fpext(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
             else:
                 raise TypingError(f"Cannot Cast from {original_type} to {target_type}")
         elif target_type_info.type_class == TypeClass.INTEGER:
@@ -1878,51 +1909,55 @@ class PCast(PExpression):
                     if original_type_info.is_signed:
                         val = context.builder.sext(expr, target_type.get_llvm_value_type(context))
                         assert isinstance(val, ir.Value)
-                        return val
+                        ret_val = val
                     else:
                         val = context.builder.zext(expr, target_type.get_llvm_value_type(context))
                         assert isinstance(val, ir.Value)
-                        return val
+                        ret_val = val
                 elif original_type_info.bit_width > target_type_info.bit_width:
                     val = context.builder.trunc(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
                 else:
                     #sign to unsigned or vice versa
                     val = context.builder.bitcast(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
             elif original_type_info.type_class == TypeClass.FLOAT:
                 #float to int
                 if target_type_info.is_signed:
                     val = context.builder.fptosi(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
                 else:
                     val = context.builder.fptoui(expr, target_type.get_llvm_value_type(context))
                     assert isinstance(val, ir.Value)
-                    return val
+                    ret_val = val
         elif target_type_info.type_class == TypeClass.BOOLEAN:
             #do zero check
             if original_type_info.type_class == TypeClass.INTEGER:
-                return context.builder.select(
+                ret_val = context.builder.select(
                     cond=context.builder.icmp_unsigned('!=', expr, ir.Constant(ir.IntType(1), 0)),
                     lhs=ir.Constant(ir.IntType(1), True),
                     rhs=ir.Constant(ir.IntType(1), False)
                 )
             elif original_type_info.type_class == TypeClass.FLOAT:
-                return context.builder.select(
+                ret_val = context.builder.select(
                     cond=context.builder.fcmp_ordered('!=', expr, ir.Constant(original_type.get_llvm_value_type(context), 0)),
                     lhs=ir.Constant(ir.IntType(1), True),
                     rhs=ir.Constant(ir.IntType(1), False)
                 )
             else:
-                return context.builder.select(
+                ret_val = context.builder.select(
                     cond=context.builder.icmp_unsigned('!=', expr, ir.Constant(ir.PointerType(), ir.PointerType.null)),
                     lhs=ir.Constant(ir.IntType(1), True),
                     rhs=ir.Constant(ir.IntType(1), False)
                 )
-        raise TypingError(f"Cannot Cast from {original_type} to {target_type}")
+        else:
+            raise TypingError(f"Cannot Cast from {original_type} to {target_type}")
+        if context.compilation_opts.add_debug_symbols and isinstance(ret_val, _HasMetadata):
+            ret_val.set_metadata('dbg', self.add_di_location_metadata(context))
+        return ret_val
 
 @dataclass
 class PBreakStatement(PStatement):
@@ -1934,7 +1969,9 @@ class PBreakStatement(PStatement):
     def generate_llvm(self, context: CodeGenContext) -> None:
         end_of_loop_block = context.loopinfo[-1].end_of_loop_block
         context.leave_scope(self.depth_from_next_loop)
-        context.builder.branch(end_of_loop_block)
+        instr = context.builder.branch(end_of_loop_block)
+        if context.compilation_opts.add_debug_symbols:
+            instr.set_metadata("dbg", self.add_di_location_metadata(context))
 
 @dataclass
 class PContinueStatement(PStatement):
@@ -1946,7 +1983,9 @@ class PContinueStatement(PStatement):
     def generate_llvm(self, context: CodeGenContext) -> None:
         continue_loop_block = context.loopinfo[-1].continue_loop_block
         context.leave_scope(self.depth_from_next_loop)
-        context.builder.branch(continue_loop_block)
+        instr = context.builder.branch(continue_loop_block)
+        if context.compilation_opts.add_debug_symbols:
+            instr.set_metadata("dbg", self.add_di_location_metadata(context))
 
 @dataclass
 class PAssertStatement(PStatement):
@@ -1968,6 +2007,8 @@ class PAssertStatement(PStatement):
     
     def generate_llvm(self, context: CodeGenContext) -> None:
         condition_is_false = context.builder.not_(self.condition.generate_llvm(context))
+        if context.compilation_opts.add_debug_symbols and isinstance(condition_is_false, _HasMetadata):
+            condition_is_false.set_metadata("dbg", self.add_di_location_metadata(context))
         with context.builder.if_then(condition_is_false, False):
             if self.message is not None:
                 self.exit_with_error(context, error_code=125, error_message="Assertion Failed: " + str(self.message.value))
@@ -2018,6 +2059,8 @@ class PDotAttribute(PExpression):
                 field_ptr_type = ir.PointerType(field.typer_pass_var_type.get_llvm_value_type(context))
                 field_ptr = context.builder.bitcast(field_ptr, field_ptr_type)
                 assert isinstance(field_ptr, (ir.CastInstr, ir.GEPInstr))
+                if context.compilation_opts.add_debug_symbols:
+                    field_ptr.set_metadata("dbg", self.add_di_location_metadata(context))
                 
                 if get_ptr_to_expression:
                     return field_ptr
@@ -2049,11 +2092,43 @@ class PTernaryOperation(PExpression):
         return
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
-        return context.builder.select(
-            self.condition.generate_llvm(context),
-            self.true_value.generate_llvm(context, get_ptr_to_expression),
-            self.false_value.generate_llvm(context, get_ptr_to_expression)
-        )
+        cond = self.condition.generate_llvm(context)
+        if context.compilation_opts.add_debug_symbols and isinstance(cond, _HasMetadata):
+            cond.set_metadata("dbg", self.condition.add_di_location_metadata(context))
+        true_block = context.builder.append_basic_block(f'ternary_true_{self.position.index}')
+        false_block = context.builder.append_basic_block(f'ternary_false_{self.position.index}')
+        end_block = context.builder.append_basic_block(f'after_ternary{self.position.index}')
+        
+        # Conditional branch based on left side
+        context.builder.cbranch(cond, true_block, false_block)
+
+        # True block: evaluate of condition is true
+        context.builder.position_at_end(true_block)
+        true_val = self.true_value.generate_llvm(context, get_ptr_to_expression)
+        if context.compilation_opts.add_debug_symbols and isinstance(true_val, _HasMetadata):
+            true_val.set_metadata("dbg", self.true_value.add_di_location_metadata(context))
+        #set block for phi node (in case blocks are edited for true_val, a nested ternry for example)
+        true_block_end = context.builder.block
+        assert isinstance(true_block_end, ir.Block)
+        context.builder.branch(end_block)
+        
+        context.builder.position_at_end(false_block)
+        false_val = self.false_value.generate_llvm(context, get_ptr_to_expression)
+        if context.compilation_opts.add_debug_symbols and isinstance(false_block, _HasMetadata):
+            false_block.set_metadata("dbg", self.false_value.add_di_location_metadata(context))
+        #set block for phi node (in case blocks are edited for false_val, a nested ternry for example)
+        false_block_end = context.builder.block
+        assert isinstance(false_block_end, ir.Block)
+        context.builder.branch(end_block)
+
+        # Merge block: PHI node to combine results
+        context.builder.position_at_end(end_block)
+        assert self.expr_type is not None
+        phi = context.builder.phi(self.expr_type.get_llvm_value_type(context))
+        phi.add_incoming(true_val, true_block_end)
+        phi.add_incoming(false_val, false_block_end)
+
+        return phi
 
 @dataclass
 class PObjectInstantiation(PExpression):
@@ -2090,6 +2165,9 @@ class PObjectInstantiation(PExpression):
         assert isinstance(class_ref_type, ir.types._TypedPointerType)
         allocated_ptr = context.builder.bitcast(allocated_ptr, class_ref_type)
         assert isinstance(allocated_ptr, ir.NamedValue)
+
+        if context.compilation_opts.add_debug_symbols and isinstance(allocated_ptr, _HasMetadata):
+            allocated_ptr.set_metadata("dbg", self.add_di_location_metadata(context))
         
         # Implicit constructor
         # Element is allocated
@@ -2103,6 +2181,7 @@ class PObjectInstantiation(PExpression):
                                                 ir.Constant(ir.IntType(32), field_num)
                                             ],
                                             source_etype=class_ref_type.pointee)
+            context.builder.comment(f"Initializes default value for {self.class_type.type_string}.{field.name}")
             context.builder.store(field.default_value.generate_llvm(context, get_ptr_to_expression=False),
                                   field_ptr)
         
@@ -2162,10 +2241,9 @@ class PArrayInstantiation(PExpression):
             # void* __PS_AllocateValueArray(size_t element_size, size_t num_elements)
             ptr_to_array = context.builder.call(alloc_func, [element_size, n_elements])
         
-        # return pointer to array casted to correct type
-        # assert self.expr_type is not None
-        # arr = context.builder.bitcast(ptr_to_array, self.expr_type.get_llvm_value_type(context))
-        # assert isinstance(arr, ir.CastInstr) or isinstance(arr, ir.CallInstr)
+
+        if context.compilation_opts.add_debug_symbols and isinstance(ptr_to_array, _HasMetadata):
+            ptr_to_array.set_metadata("dbg", self.add_di_location_metadata(context))
 
         return ptr_to_array
 
