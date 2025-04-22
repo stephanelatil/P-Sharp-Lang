@@ -53,13 +53,17 @@ P# stands out as a scripting-friendly language by eliminating the need for a mai
 
 ## Quick Start
 
-To start using P#, follow these simple steps:
+To start using P# on your machine, follow these simple steps, either directly on your machine or in a docker container:
 
-1. **Installation**: 
+1. **Installation on machine**: 
     - Download the P# compiler by cloning the github repo [github.com/TheD0ubleT/P-Sharp-Lang](https://github.com/TheD0ubleT/P-Sharp-Lang)<br/><br/>
     - Install the llvm & clang toolchain (>=llvm-15 and >=clang-15). Install using `sudo apt install llvm clang -y`<br/><br/>
     - Install python requirements with `python3 -m venv .venv && . .venv/bin/activate && python3 -m pip install -r requirements.txt`. <br/>**Note** that to use the compiler you need to have python linked to the venv here currently! Make sure to use the `. .venv/bin/activate` command when compiling from a new shell!
     - Make sure `pscc` is executable with `chmod +x pscc`
+    
+   **Installation in a container**:
+    - Make sure docker is installed
+    - Build Docker container `docker build . -t pscc`
 
 2. **Hello, World!**: Write your first P# program by printing "Hello, World!" to the console:
 
@@ -75,6 +79,14 @@ i32 main(){
 ```sh
 pscc -o output_executable your_program_source.psc
 ```
+
+Or if using the docker container:
+
+```sh
+docker run --rm -v .:/app pscc -o output_executable your_program_source.psc
+```
+
+The /app directory is the compiler's working directory. That's where it looks for the file to compile and where it outputs the compiled file. The pscc arguments in a docker container are the same as if it were installed on your machine. 
 
 ### Run code
 
