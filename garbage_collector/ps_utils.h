@@ -9,10 +9,6 @@
 
 int32_t print(char* string);
 
-void *__PS_DefaultToString(void* object);
-
-void *__PS_DefaultToString(void* object);
-
 void* __PS_BoolToString(bool);
 void* __PS_CharToString(uint8_t);
 void* __PS_I8ToString(int8_t);
