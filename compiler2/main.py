@@ -50,7 +50,7 @@ def setup_argparse(parser:ArgumentParser):
     parser.add_argument("-o", "--output", type=str, default="a.out", help="Output file name")
     parser.add_argument("--lib", action="store_true", help="Compile as a library (omit main function, and GC) (Unstable for now, use at your own risk!)")
     parser.add_argument("-O", '--optimize', type=OptimisationLevel, choices=[v for v in OptimisationLevel._member_map_.values()],
-                        default=0, help="Optimization level (0-3) or optimize for size -Os", dest="opt")
+                        default=OptimisationLevel.Zero, help="Optimization level (0-3) or optimize for size -Os", dest="opt")
     parser.add_argument("-g", action='store_true', dest='debug_symbols', default=False, help="Add debug symbols (Currently not available)")
     parser.add_argument("-w", "--warnings", action="store_true", default=False, help="Enable warnings (only some available for now)")
     parser.add_argument("--emit", type=OutputFormat, choices=["ir", "bc", 'asm', "obj", "exe"], default="exe",

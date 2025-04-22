@@ -25,10 +25,10 @@ class OutputFormat(StrEnum):
     Executable="exe"
     
 class OptimisationLevel(Enum):
-    Zero = 0
-    One = 1
-    Two = 2
-    Three = 3
+    Zero = '0'
+    One = '1'
+    Two = '2'
+    Three = '3'
     Size = 's'
 
 @dataclass
