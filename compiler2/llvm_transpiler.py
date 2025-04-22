@@ -241,7 +241,7 @@ class CodeGen:
     def _compile_to_output_format(self, module_bc:Path, output_file:str,
                      llvm_version:LLVM_Version, output_format:OutputFormat,
                      clang_flags:list):
-        clang_flags = ['-x', 'ir'] + clang_flags
+        clang_flags = ['-x', 'ir', '-Wno-override-module'] + clang_flags
         if output_format == OutputFormat.Assembly:
             clang_flags.append('-S')
         elif output_format == OutputFormat.Object:
