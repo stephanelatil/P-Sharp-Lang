@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Install llvm toolchain
-        run: apt update && apt install -y llvm-15
+        run: sudo apt update && sudo apt install -y llvm-15
       - name: Run tests and collect coverage
         run: pytest --cov --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
       - name: Upload coverage to Codecov
