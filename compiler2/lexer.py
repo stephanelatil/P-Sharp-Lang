@@ -41,6 +41,7 @@ class LexemeType(Enum):
     KEYWORD_CONTROL_CONTINUE = auto()
     KEYWORD_CONTROL_BREAK = auto()
     KEYWORD_CONTROL_ASSERT = auto()
+    KEYWORD_CONTROL_NAMESPACE = auto()
     KEYWORD_TYPE_MOD_UNSIGNED = auto()
     KEYWORD_OBJECT_CLASS = auto()
     KEYWORD_OBJECT_THIS = auto()
@@ -199,6 +200,7 @@ class Lexer:
             'return':LexemeType.KEYWORD_CONTROL_RETURN,
             'for':LexemeType.KEYWORD_CONTROL_FOR,
             'while':LexemeType.KEYWORD_CONTROL_WHILE,
+            'namespace':LexemeType.KEYWORD_CONTROL_NAMESPACE,
             'continue':LexemeType.KEYWORD_CONTROL_CONTINUE,
             'break':LexemeType.KEYWORD_CONTROL_BREAK,
             'assert':LexemeType.KEYWORD_CONTROL_ASSERT,
