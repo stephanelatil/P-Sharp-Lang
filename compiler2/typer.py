@@ -14,8 +14,10 @@ from parser import (TypeClass, TypeInfo, TYPE_INFO, TypingError,
                     PIfStatement, PLiteral, PMethodCall, PMethod,
                     PObjectInstantiation, PReturnStatement, PStatement,
                     PTernaryOperation, PThis,PVariableDeclaration, 
-                    PWhileStatement, PDiscard, PVoid, Typ, ArrayTyp,
-                    BlockProperties)
+                    PWhileStatement, PDiscard, PVoid, ArrayTyp,
+                    BlockProperties, IRCompatibleTyp, ValueTyp,
+                    ReferenceTyp, NamespaceTyp, SymbolNotFoundError,
+                    SymbolRedefinitionError, Symbol)
 from constants import FUNC_PRINT
 
 
@@ -60,89 +62,81 @@ def create_method(name: str, return_type: str, class_typ:str, params: List[tuple
     )
 
 # Define the built-in types with their methods and properties
-_builtin_types: Dict[str, Typ] = {
+_builtin_types: Dict[str, IRCompatibleTyp] = {
     # Numeric types
-    "i8": Typ(
+    "i8": ValueTyp(
         name="i8",
         methods={
             "ToString":create_method("ToString", "string", "i8", []),
             "Parse":create_method("Parse", "i8", "i8", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "i16": Typ(
+    "i16": ValueTyp(
         name="i16",
         methods={
             "ToString":create_method("ToString", "i16", "string", []),
             "Parse":create_method("Parse", "i16", "i16", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "i32": Typ(
+    "i32": ValueTyp(
         name="i32",
         methods={
             "ToString":create_method("ToString", "string", "i32", []),
             "Parse":create_method("Parse", "i32", "i32", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "i64": Typ(
+    "i64": ValueTyp(
         name="i64",
         methods={
             "ToString":create_method("ToString", "string", "i64", []),
             "Parse":create_method("Parse", "i64", "i64", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "u8": Typ(
+    "u8": ValueTyp(
         name="u8",
         methods={
             "ToString":create_method("ToString", "string", "u8", []),
             "Parse":create_method("Parse", "u8", "u8", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "u16": Typ(
+    "u16": ValueTyp(
         name="u16",
         methods={
             "ToString":create_method("ToString", "string", "u16", []),
             "Parse":create_method("Parse", "u16", "u16", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "u32": Typ(
+    "u32": ValueTyp(
         name="u32",
         methods={
             "ToString":create_method("ToString", "string", "u32", []),
             "Parse":create_method("Parse", "u32", "u32", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "u64": Typ(
+    "u64": ValueTyp(
         name="u64",
         methods={
             "ToString":create_method("ToString", "string", "u64", []),
             "Parse":create_method("Parse", "u64", "u64", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "f16": Typ(
+    "f16": ValueTyp(
         name="f16",
         methods={
             "ToString":create_method("ToString", "string", "f16", []),
@@ -152,10 +146,9 @@ _builtin_types: Dict[str, Typ] = {
             "Ceiling":create_method("Ceiling", "f16", "f16", [])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "f32": Typ(
+    "f32": ValueTyp(
         name="f32",
         methods={
             "ToString":create_method("ToString", "string", "f32", []),
@@ -165,10 +158,9 @@ _builtin_types: Dict[str, Typ] = {
             "Ceiling":create_method("Ceiling", "f32", "f32", [])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    "f64": Typ(
+    "f64": ValueTyp(
         name="f64",
         methods={
             "ToString":create_method("ToString", "string", "f64", []),
@@ -178,12 +170,11 @@ _builtin_types: Dict[str, Typ] = {
             "Ceiling":create_method("Ceiling", "f64", "f64", [])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
 
     # String type
-    "string": Typ(
+    "string": ReferenceTyp(
         name="string",
         methods={
             "ToString":create_method("ToString", "string", "string", []),
@@ -204,19 +195,18 @@ _builtin_types: Dict[str, Typ] = {
     ),
 
     # Boolean type
-    "bool": Typ(
+    "bool": ValueTyp(
         name="bool",
         methods={
             "ToString":create_method("ToString", "string", "bool", []),
             "Parse":create_method("Parse", "bool", "bool", [("string", "s")])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
 
     # Character type
-    "char": Typ(
+    "char": ValueTyp(
         name="char",
         methods={
             "ToString":create_method("ToString", "string", "char", []),
@@ -227,31 +217,30 @@ _builtin_types: Dict[str, Typ] = {
             "ToLower":create_method("ToLower", "char", "char", [])
         },
         fields=[],
-        is_reference_type=False,
         is_builtin=True
     ),
-    'void': Typ('void', {}, [], True, is_builtin=True),
-    '__null': Typ('null', {}, [], True, is_builtin=True)
+    'void': ReferenceTyp('void', methods={}, fields=[], is_builtin=True),
+    '__null': ReferenceTyp('null', methods={}, fields=[], is_builtin=True)
 }
 
-@dataclass
-class Symbol:
-    """Represents a symbol (variable or function) in the scope"""
-    name: str
-    type: PType
-    declaration: PStatement
-    is_function: bool = False
-    parameters: Optional[List[PVariableDeclaration]] = None
-    #checks symbol use
-    is_assigned: bool = False # Checks if a function is assigned before use (can be bypassed if global used in function)
-    is_read: bool = False # checks if a variable is read (must be after assignment)
+# @dataclass
+# class Symbol:
+#     """Represents a symbol (variable or function) in the scope"""
+#     name: str
+#     type: PType
+#     declaration: PStatement
+#     is_function: bool = False
+#     parameters: Optional[List[PVariableDeclaration]] = None
+#     #checks symbol use
+#     is_assigned: bool = False # Checks if a function is assigned before use (can be bypassed if global used in function)
+#     is_read: bool = False # checks if a variable is read (must be after assignment)
     
-    def __post_init__(self):
-        if self.name == "this":
-            # "this" is always valid in all methods
-            # Should be removed later to act as flag to send warning to make method static if "this" is not used 
-            self.is_assigned = True
-            self.is_read = True
+#     def __post_init__(self):
+#         if self.name == "this":
+#             # "this" is always valid in all methods
+#             # Should be removed later to act as flag to send warning to make method static if "this" is not used 
+#             self.is_assigned = True
+#             self.is_read = True
 
 @dataclass
 class Scope:
@@ -278,28 +267,6 @@ class Scope:
                 return current.symbols[name]
             current = current.parent
         return None
-
-class SymbolRedefinitionError(Exception):
-    """Raised when attempting to redefine a symbol in the same scope"""
-    def __init__(self, name: str, original: Symbol, new_declaration: PStatement):
-        self.name = name
-        self.original = original
-        self.new_declaration = new_declaration
-        super().__init__(
-            f"Symbol '{name}' already defined at {original.declaration.position.line}:"
-            f"{original.declaration.position.column}, cannot redefine at "
-            f"{new_declaration.position.line}:{new_declaration.position.column}"
-        )
-
-class SymbolNotFoundError(Exception):
-    """Raised when a referenced symbol cannot be found in any accessible scope"""
-    def __init__(self, name: str, reference: PStatement):
-        self.name = name
-        self.reference = reference
-        super().__init__(
-            f"Symbol '{name}' not found (referenced at {reference.position.line}:"
-            f"{reference.position.column})"
-        )
 
 @dataclass
 class ScopeManager:
@@ -358,7 +325,7 @@ class UnknownTypeError(Exception):
 
 class TypingConversionError(Exception):
     """Raised when an invalid type conversion is attempted"""
-    def __init__(self, from_type: Typ, to_type: Typ, node: PStatement):
+    def __init__(self, from_type: IRCompatibleTyp, to_type: IRCompatibleTyp, node: PStatement):
         self.from_type = from_type
         self.to_type = to_type
         self.node = node
@@ -374,7 +341,7 @@ class Typer:
         self.parser = Parser(Lexer(filename, file))
         self.known_types = deepcopy(_builtin_types)
         self._in_class:Optional[PType] = None
-        self.expected_return_type:Optional[Typ] = None
+        self.expected_return_type:Optional[IRCompatibleTyp] = None
         self._scope_manager = ScopeManager()
         self.is_assignment = False #set to true when typing an identifier to be assigned
         self.warnings: List[CompilerWarning] = []
@@ -465,9 +432,9 @@ class Typer:
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
             if isinstance(statement, PClass):
-                self.known_types[statement.name] = Typ(statement.name, 
-                                                       {m.name:m for m in statement.methods},
-                                                       statement.fields)
+                self.known_types[statement.name] = ReferenceTyp(statement.name, 
+                                                       methods={m.name:m for m in statement.methods},
+                                                       fields=statement.fields) #type: ignore python typer mistake it's valid
             elif isinstance(statement, PFunction):
                 self._scope_manager.define_function(statement)
             continue
@@ -524,7 +491,7 @@ class Typer:
                     method.position
                 ))
 
-    def _ptype_from_typ(self, typ:Typ, pos:Optional[Position]=None) -> PType|PArrayType:
+    def _ptype_from_typ(self, typ:IRCompatibleTyp, pos:Optional[Position]=None) -> PType|PArrayType:
         if pos is None:
             pos = Position.default
         if not isinstance(typ, ArrayTyp):
@@ -532,7 +499,7 @@ class Typer:
         #typ is array
         return PArrayType(self._ptype_from_typ(typ.element_typ), pos)
 
-    def get_type_info(self, type_: Typ) -> TypeInfo:
+    def get_type_info(self, type_: IRCompatibleTyp) -> TypeInfo:
         """Get TypeInfo for a given type, handling array types"""
 
         # Handle array types
@@ -548,12 +515,12 @@ class Typer:
         # Must be a custom class
         return TypeInfo(TypeClass.CLASS, is_builtin=False)
 
-    def is_numeric_type(self, type_: Union[Typ, TypeInfo]) -> bool:
+    def is_numeric_type(self, type_: Union[IRCompatibleTyp, TypeInfo]) -> bool:
         """Check if type is numeric (integer or float)"""
         info = type_ if isinstance(type_, TypeInfo) else self.get_type_info(type_)
         return info.type_class in (TypeClass.INTEGER, TypeClass.FLOAT, TypeClass.BOOLEAN)
 
-    def check_types_match(self, expected: Typ, actual: Typ) -> bool:
+    def check_types_match(self, expected: IRCompatibleTyp, actual: IRCompatibleTyp) -> bool:
         """
         Check if two types are compatible, considering implicit conversions.
         Returns True if types match or actual can be implicitly converted to expected.
@@ -585,7 +552,7 @@ class Typer:
         # Handle string conversions - anything can convert to string
         return False
 
-    def can_convert_numeric(self, from_type: Typ, to_type: Typ) -> bool:
+    def can_convert_numeric(self, from_type: IRCompatibleTyp, to_type: IRCompatibleTyp) -> bool:
         """Determine if numeric conversion is allowed between types"""
         from_info = self.get_type_info(from_type)
         to_info = self.get_type_info(to_type)
@@ -630,7 +597,7 @@ class Typer:
         # Float to integer requires explicit cast
         return False
 
-    def get_common_type(self, type1: Typ, type2: Typ) -> Optional[Typ]:
+    def get_common_type(self, type1: IRCompatibleTyp, type2: IRCompatibleTyp) -> Optional[IRCompatibleTyp]:
         """
         Find the common type that both types can be converted to.
         Used for determining result type of binary operations.
@@ -700,7 +667,7 @@ class Typer:
             return self.known_types["u32"]
         return self.known_types["u64"]
     
-    def can_do_operation_on_type(self, operation: Union[BinaryOperation, UnaryOperation], type_: Typ) -> bool:
+    def can_do_operation_on_type(self, operation: Union[BinaryOperation, UnaryOperation], type_: IRCompatibleTyp) -> bool:
         """Check if the given operation can be performed on the given type."""
         # Always allow Bool negation (a `not 0` or `not ""` will return True, and false otherwise)
         if operation == UnaryOperation.BOOL_NOT:
@@ -776,7 +743,7 @@ class Typer:
                 
         return False
 
-    def _type_statement(self, statement: PStatement) -> Optional[Typ]:
+    def _type_statement(self, statement: PStatement) -> Optional[IRCompatibleTyp]:
         """Type checks a statement (or expression) and returns its type"""
         if isinstance(statement, PExpression):
             return self._type_expression(statement)
@@ -795,7 +762,7 @@ class Typer:
         assert typer_func is not None
         return typer_func(statement)
 
-    def _type_expression(self, expression: PExpression) -> Typ:
+    def _type_expression(self, expression: PExpression) -> Union[IRCompatibleTyp, NamespaceTyp]:
         """Type checks an expression definition and returns its type"""
         assert isinstance(expression, (PArrayIndexing, PArrayInstantiation,
                                           PIdentifier, PLiteral, PBinaryOperation,
@@ -824,14 +791,16 @@ class Typer:
         
         # self._scope_manager.enter_scope()
         self._in_class = PType(class_def.name, class_def.position)
-        class_def._class_typ = self.known_types[class_def.name]
+        class_typ =  self.known_types[class_def.name]
+        assert isinstance(class_typ, ReferenceTyp)
+        class_def._class_typ = class_typ
         
         for method in class_def.methods:
             self.all_class_methods.append(method)
             self._type_function(method)
         self._in_class = None
 
-    def _type_ptype(self, ptype:PType) -> Typ:
+    def _type_ptype(self, ptype:PType) -> IRCompatibleTyp:
         """Type checks a class definition and returns its type"""
         if ptype.type_string in self.known_types:
             return self.known_types[ptype.type_string]
@@ -842,6 +811,7 @@ class Typer:
             tmp_class = self._in_class
             self._in_class = ptype
             for field in arrTyp.fields:
+                assert isinstance(field, PClassField)
                 self._type_class_property(field)
             for method in arrTyp.methods.values():
                 self._type_function(method)
@@ -856,7 +826,9 @@ class Typer:
         self._scope_manager.enter_function_scope()
         if isinstance(func, PMethod):
             assert self._in_class is not None #if method: ensure we're in a class!
-            func._class_type = self._type_ptype(self._in_class)
+            class_typ = self._type_ptype(self._in_class)
+            assert isinstance(class_typ, IRCompatibleTyp)
+            func._class_type = class_typ
         else: # function not a method
             if not func.is_builtin:
                 #ignore checks on builtins
@@ -935,7 +907,7 @@ class Typer:
         if not self.check_types_match(var_type, expr_type):
             raise TypingConversionError(var_type, expr_type, prop)
 
-    def _type_assignment(self, assignment: PAssignment) -> Typ:
+    def _type_assignment(self, assignment: PAssignment) -> IRCompatibleTyp:
         """Type checks an assignment and returns the assigned type"""
         self.is_assignment = True
         ident_type = self._type_expression(assignment.target)
@@ -950,7 +922,7 @@ class Typer:
             assignment.value = self._add_implicit_cast(assignment.value, ident_type)
         return ident_type
 
-    def _type_binary_operation(self, binop: PBinaryOperation) -> Typ:
+    def _type_binary_operation(self, binop: PBinaryOperation) -> IRCompatibleTyp:
         """Type checks a binary operation and returns its result type"""
         left_type = self._type_expression(binop.left)
         right_type = self._type_expression(binop.right)
@@ -973,7 +945,7 @@ class Typer:
         
         return binop.expr_type
 
-    def _type_unary_operation(self, unop: PUnaryOperation) -> Typ:
+    def _type_unary_operation(self, unop: PUnaryOperation) -> IRCompatibleTyp:
         """Type checks a unary operation and returns its result type"""
         operand_type = self._type_expression(unop.operand)
         if not self.can_do_operation_on_type(unop.operation, operand_type):
@@ -1028,7 +1000,7 @@ class Typer:
                                         return_stmt.value,
                                         self.expected_return_type)
 
-    def _type_function_call(self, func_call: PFunctionCall) -> Typ:
+    def _type_function_call(self, func_call: PFunctionCall) -> IRCompatibleTyp:
         """Type checks a function call and returns its return type"""
         func = func_call.function
         symbol = self._scope_manager.lookup(func.name, func)
@@ -1054,7 +1026,7 @@ class Typer:
         func_call.expr_type = self._type_ptype(symbol.type)
         return func_call.expr_type
 
-    def _type_method_call(self, method_call: PMethodCall) -> Typ:
+    def _type_method_call(self, method_call: PMethodCall) -> IRCompatibleTyp:
         """Type checks a method call and returns its return type"""
         obj_type = self._type_expression(method_call.object)
         if not method_call.method_name.name in obj_type.methods:
@@ -1074,7 +1046,7 @@ class Typer:
         method_call.expr_type = self._type_ptype(method.return_type)
         return method_call.expr_type
 
-    def _type_identifier(self, identifier: PIdentifier) -> Typ:
+    def _type_identifier(self, identifier: PIdentifier) -> IRCompatibleTyp:
         """Type checks an identifier and returns its type"""
         symbol = self._scope_manager.lookup(identifier.name, identifier)
         identifier.expr_type = self._type_ptype(symbol.type)
@@ -1089,7 +1061,7 @@ class Typer:
             symbol.is_read = True
         return identifier.expr_type
 
-    def _type_literal(self, literal: PLiteral) -> Typ:
+    def _type_literal(self, literal: PLiteral) -> IRCompatibleTyp:
         """Type checks a literal and returns its type"""
         # choses a default but can be cast if the user needs a bigger number (or suffixed)
         if literal.literal_type == 'int':
@@ -1115,14 +1087,14 @@ class Typer:
             literal.expr_type = self.known_types['f32']
         return literal.expr_type
 
-    def _type_this(self, this_keyword: PThis) -> Typ:
+    def _type_this(self, this_keyword: PThis) -> IRCompatibleTyp:
         """Type checks a cast expression and returns the target type"""
         if self._in_class is None:
             raise TypingError("'this' is not defined outside of a class")
         this_keyword.expr_type = self.known_types[self._in_class.type_string]
         return this_keyword.expr_type
 
-    def _type_cast(self, cast: PCast) -> Typ:
+    def _type_cast(self, cast: PCast) -> IRCompatibleTyp:
         """Type checks a cast expression and returns the target type"""
         expression_type = self._type_expression(cast.expression)
         target_type = self._type_ptype(cast.target_type)
@@ -1147,7 +1119,7 @@ class Typer:
             
         return cast.expr_type
 
-    def _type_array_indexing(self, array_index: PArrayIndexing) -> Typ:
+    def _type_array_indexing(self, array_index: PArrayIndexing) -> IRCompatibleTyp:
         """Type checks an array indexing expression and returns the element type"""
         index_type = self.known_types['i64'] # not unsigned to allow for negative indexing (-1 is the last element, -2 the second to last etc.)
         array_type = self._type_expression(array_index.array)
@@ -1164,12 +1136,12 @@ class Typer:
         array_index.expr_type = array_type.element_typ
         return array_type.element_typ
 
-    def _type_object_instantiation(self, obj_init: PObjectInstantiation) -> Typ:
+    def _type_object_instantiation(self, obj_init: PObjectInstantiation) -> IRCompatibleTyp:
         """Type checks an object instantiation and returns the object type"""
         obj_init.expr_type = self._type_ptype(obj_init.class_type)
         return obj_init.expr_type
 
-    def _type_array_instantiation(self, array_init: PArrayInstantiation) -> Typ:
+    def _type_array_instantiation(self, array_init: PArrayInstantiation) -> IRCompatibleTyp:
         """Type checks an array instantiation and returns the array type"""
         array_init.expr_type = self._type_ptype(PArrayType(array_init.element_type, array_init.element_type.position))
         array_size_type = self._type_expression(array_init.size)
@@ -1181,30 +1153,43 @@ class Typer:
         return array_init.expr_type
         
 
-    def _type_dot_attribute(self, dot_attr: PDotAttribute) -> Typ:
+    def _type_dot_attribute(self, dot_attr: PDotAttribute) -> Union[IRCompatibleTyp, NamespaceTyp]:
         """Type checks a dot attribute access and returns its type"""
         tmp_assignment = self.is_assignment
         self.is_assignment = False
         left_type = self._type_expression(dot_attr.left)
-        for prop in left_type.fields:
-            if prop.name == dot_attr.right.name:
-                if dot_attr.right.expr_type is None:
-                    dot_attr.right.expr_type = self._type_ptype(prop.var_type)
-                dot_attr.expr_type = dot_attr.right.expr_type
-                prop.is_assigned |= tmp_assignment
-                break
+        if isinstance(left_type, IRCompatibleTyp):
+            for field in left_type.fields:
+                assert isinstance(field, PClassField)
+                if field.name == dot_attr.right.name:
+                    if dot_attr.right.expr_type is None:
+                        dot_attr.right.expr_type = self._type_ptype(field.var_type)
+                    dot_attr.expr_type = dot_attr.right.expr_type
+                    field.is_assigned |= tmp_assignment
+                    break
+            else:
+                raise TypingError(f"'{dot_attr.right.name}' is not a known property of '{left_type}'")
+        elif isinstance(left_type, NamespaceTyp):
+            for field in left_type.fields:
+                if field.name == dot_attr.right.name:
+                    assert dot_attr.right.expr_type is not None
+                    dot_attr.expr_type = dot_attr.right.expr_type
         else:
-            raise TypingError(f"'{dot_attr.right.name}' is not a known property of '{left_type}'")
-        
+            raise TypingError(f"'Invalid symbol in {dot_attr.left.position}")
+        assert isinstance(dot_attr.expr_type, (NamespaceTyp, IRCompatibleTyp))
         return dot_attr.expr_type
 
-    def _type_ternary_operation(self, ternary: PTernaryOperation) -> Typ:
+    def _type_ternary_operation(self, ternary: PTernaryOperation) -> IRCompatibleTyp:
         """Type checks a ternary operation and returns its result type"""
         condition_type = self._type_expression(ternary.condition)
+        assert isinstance(condition_type, IRCompatibleTyp)
         if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
             raise TypingError(f"Cannot use a {condition_type} in the condition of a ternary operator. Are you missing a cast? {ternary.condition.position}")
         if_true_value_type = self._type_expression(ternary.true_value)
         if_false_value_type = self._type_expression(ternary.false_value)
+        
+        assert isinstance(if_true_value_type, IRCompatibleTyp)
+        assert isinstance(if_false_value_type, IRCompatibleTyp)
         
         ternary.expr_type = self.get_common_type(if_true_value_type, if_false_value_type)
         
@@ -1267,7 +1252,7 @@ class Typer:
         
         return False
     
-    def _add_implicit_cast(self, expression_to_cast:PExpression, target_type:Typ):
+    def _add_implicit_cast(self, expression_to_cast:PExpression, target_type:IRCompatibleTyp):
         cast = PCast(self._ptype_from_typ(target_type, expression_to_cast.position), expression_to_cast)
         cast.expr_type = target_type
         return cast

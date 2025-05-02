@@ -46,23 +46,61 @@ class LexemeStream:
         return self.pos.copy()
 
 @dataclass
-class Typ:
+class BaseTyp:
     """Represents a type in the P# language with its methods and fields"""
     name:str
-    methods: Dict[str, 'PMethod'] = field(default_factory=dict)
-    fields: List['PClassField'] = field(default_factory=list)
-    is_reference_type:bool = True
+    fields: List[Union['PClassField', 'PIdentifier']] = field(default_factory=list)
     is_builtin:bool=False
-    
-    _cached_di_type:Optional[ir.DIValue] = None
     
     def __hash__(self) -> int:
         return hash(self.name)
     
     def __eq__(self, value: object) -> bool:
-        if not isinstance(value, Typ):
+        if not isinstance(value, BaseTyp):
             return False
         return self.name == value.name
+
+    def __str__(self):
+        return self.name
+    
+    @property
+    def is_reference_type(self) -> bool:
+        return isinstance(self, ReferenceTyp)
+
+@dataclass
+class IRCompatibleTyp(BaseTyp):
+    methods: Dict[str, 'PMethod'] = field(default_factory=dict)
+    _cached_di_type:Optional[ir.DIValue] = None
+    
+    def __eq__(self, value: object) -> bool:
+        return super().__eq__(value)
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
+    def di_type(self, context:'CodeGenContext') -> Optional[ir.DIValue]:
+        raise NotImplementedError()
+    
+    def default_llvm_value(self, context:'CodeGenContext') -> ir.Constant:
+        raise NotImplementedError()
+    
+    def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
+        """Returns the llvm value-Type corresponding to the IRCompatibleTyp. All reference types will return an ir.PointerType
+
+        Returns:
+            ir.Type: The value type of this type. It's either a PointerType, VoidType, IntType or some FloatType (depending on bit-width)
+        """
+        raise NotImplementedError()
+
+@dataclass
+class ValueTyp(IRCompatibleTyp):
+    _cached_di_type:Optional[ir.DIValue] = None
+    
+    def __eq__(self, value: object) -> bool:
+        return super().__eq__(value)
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
 
     def di_type(self, context:'CodeGenContext') -> Optional[ir.DIValue]:
         if self._cached_di_type is not None:
@@ -98,79 +136,14 @@ class Typ:
                                                         "size":tinfo.bit_width,
                                                         "encoding": 4#"DW_ATE_float"
                                                      })
-            elif tinfo.type_class == TypeClass.STRING:
-                string_length_bitlength = ir.IntType(64).get_abi_size(context.target_data)*8
-                string_length = context.module.add_debug_info("DIDerivedType",
-                                                {   # string size (excluding null ptr)
-                                                    "tag":ir.DIToken("DW_TAG_member"),
-                                                    "name": "Length",
-                                                    "baseType": context.type_by_name("i64").di_type(context),
-                                                    "size": string_length_bitlength,
-                                                })
-                ditype = context.module.add_debug_info("DICompositeType",
-                                {
-                                    "tag" : ir.DIToken("DW_TAG_structure_type"),
-                                    "name": "string",
-                                    "elements":[
-                                        string_length, 
-                                        # string of chars
-                                        context.module.add_debug_info("DIDerivedType",{
-                                            "tag":ir.DIToken("DW_TAG_member"),
-                                            "name": "c-string",
-                                            "offset":string_length_bitlength,
-                                            "baseType":context.module.add_debug_info("DIStringType",{
-                                                "name":"string_value",
-                                                "stringLength": string_length
-                                            })
-                                        })
-                                    ]
-                                })
-                #pointer to string
-                ditype = context.module.add_debug_info("DIDerivedType",
-                                    {
-                                        "tag":ir.DIToken("DW_TAG_pointer_type"),
-                                        "name":f"__{self.name}_reference",
-                                        "baseType": ditype,
-                                        "size":ir.PointerType().get_abi_size(context.target_data)*8
-                                    })
             elif tinfo.type_class == TypeClass.VOID:
                 return None
-        else: #reference type Typ
-            offset = 0
-            elements = list()
-            #type field list 
-            for field in self.fields:
-                elements.append(context.module.add_debug_info("DIDerivedType",
-                                        {
-                                            "tag":ir.DIToken("DW_TAG_member"),
-                                            "name": field.name,
-                                            "offset": offset,
-                                            "baseType": field.typer_pass_var_type.di_type(context)
-                                        }))
-                corresponding_ir_type = field.typer_pass_var_type.get_llvm_value_type(context)
-                offset += 8*corresponding_ir_type.get_abi_size(context.target_data)
-                
-            ditype = context.module.add_debug_info("DICompositeType",
-                            {
-                                "tag" : ir.DIToken("DW_TAG_structure_type"),
-                                "name": self.name,
-                                "elements": elements
-                            })
-            #pointer to ref type
-            ditype = context.module.add_debug_info("DIDerivedType",
-                                {
-                                    "tag":ir.DIToken("DW_TAG_pointer_type"),
-                                    "name":f"ptr to {self.name}",
-                                    "baseType": ditype,
-                                    "size":ir.PointerType().get_abi_size(context.target_data)*8
-                                })
         #set in cache
         self._cached_di_type = ditype
         return ditype
-                
     
     def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
-        """Returns the llvm value-Type corresponding to the Typ. All reference types will return an ir.PointerType
+        """Returns the llvm value-Type corresponding to the IRCompatibleTyp. All reference types will return an ir.PointerType
 
         Returns:
             ir.Type: The value type of this type. It's either a PointerType, VoidType, IntType or some FloatType (depending on bit-width)
@@ -195,23 +168,108 @@ class Typ:
         
         if self.name in type_map:
             return type_map[self.name]
-        if self.is_reference_type:
-            if context is None:
-                return ir.PointerType()
-            else:
-                return ir.PointerType(context.type_map[self])
         raise TypingError(f"Unknown value type {self.name}")
-
-    def __str__(self):
-        return self.name
     
     def default_llvm_value(self, context:'CodeGenContext'):
         # return ir.Constant(context.type_map[self], None)
         return ir.Constant(self.get_llvm_value_type(context), None)
+
+@dataclass
+class ReferenceTyp(IRCompatibleTyp):
     
-class ArrayTyp(Typ):
-    def __init__(self, element_type:Typ):
-        self.element_typ:Typ = element_type        
+    def __eq__(self, value: object) -> bool:
+        return super().__eq__(value)
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
+   
+    def get_llvm_value_type(self, context: Optional['CodeGenContext']) -> Union[ir.IntType,
+                                                                                ir.HalfType,
+                                                                                ir.FloatType,
+                                                                                ir.DoubleType,
+                                                                                ir.VoidType,
+                                                                                ir.PointerType]:
+        if context is None:
+            return ir.PointerType()
+        else:
+            return ir.PointerType(context.type_map[self])
+        
+    def di_type(self, context:'CodeGenContext') -> Optional[ir.DIValue]:
+        if self._cached_di_type is not None:
+            return self._cached_di_type
+        
+        ditype = None
+        if self.name == 'string':
+            string_length_bitlength = ir.IntType(64).get_abi_size(context.target_data)*8
+            string_length = context.module.add_debug_info("DIDerivedType",
+                                            {   # string size (excluding null ptr)
+                                                "tag":ir.DIToken("DW_TAG_member"),
+                                                "name": "Length",
+                                                "baseType": context.type_by_name("i64").di_type(context),
+                                                "size": string_length_bitlength,
+                                            })
+            ditype = context.module.add_debug_info("DICompositeType",
+                            {
+                                "tag" : ir.DIToken("DW_TAG_structure_type"),
+                                "name": "string",
+                                "elements":[
+                                    string_length, 
+                                    # string of chars
+                                    context.module.add_debug_info("DIDerivedType",{
+                                        "tag":ir.DIToken("DW_TAG_member"),
+                                        "name": "c-string",
+                                        "offset":string_length_bitlength,
+                                        "baseType":context.module.add_debug_info("DIStringType",{
+                                            "name":"string_value",
+                                            "stringLength": string_length
+                                        })
+                                    })
+                                ]
+                            })
+            #pointer to string
+            ditype = context.module.add_debug_info("DIDerivedType",
+                                {
+                                    "tag":ir.DIToken("DW_TAG_pointer_type"),
+                                    "name":f"__{self.name}_reference",
+                                    "baseType": ditype,
+                                    "size":ir.PointerType().get_abi_size(context.target_data)*8
+                                })
+        else: # A user defined class
+            offset = 0
+            elements = list()
+            #type field list 
+            for field in self.fields:
+                assert isinstance(field, PClassField)
+                elements.append(context.module.add_debug_info("DIDerivedType",
+                                        {
+                                            "tag":ir.DIToken("DW_TAG_member"),
+                                            "name": field.name,
+                                            "offset": offset,
+                                            "baseType": field.typer_pass_var_type.di_type(context)
+                                        }))
+                corresponding_ir_type = field.typer_pass_var_type.get_llvm_value_type(context)
+                offset += 8*corresponding_ir_type.get_abi_size(context.target_data)
+                
+            ditype = context.module.add_debug_info("DICompositeType",
+                            {
+                                "tag" : ir.DIToken("DW_TAG_structure_type"),
+                                "name": self.name,
+                                "elements": elements
+                            })
+            #pointer to ref type
+            ditype = context.module.add_debug_info("DIDerivedType",
+                                {
+                                    "tag":ir.DIToken("DW_TAG_pointer_type"),
+                                    "name":f"ptr to {self.name}",
+                                    "baseType": ditype,
+                                    "size":ir.PointerType().get_abi_size(context.target_data)*8
+                                })
+        return ditype
+
+@dataclass
+class ArrayTyp(ReferenceTyp):
+    def __init__(self, element_type:IRCompatibleTyp):
+        self.element_typ:IRCompatibleTyp = element_type        
         methods:Dict[str, PMethod] = {}
         fields:List[PClassField] = [PClassField("Length",
                                         #TODO make global Const somewhere to define if array length is a i64 or i32
@@ -224,21 +282,21 @@ class ArrayTyp(Typ):
         
         super().__init__(f'{element_type.name}[]',
                          methods=methods,
-                         fields=fields,
-                         is_reference_type=True)
-    
-    def __hash__(self) -> int:
-        return super().__hash__()
+                         fields=fields) #type: ignore
     
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
     
     def di_type(self, context: 'CodeGenContext'):
         if self._cached_di_type is not None:
             return self._cached_di_type
         
         assert len(self.fields) == 1 and self.fields[0].name == "Length"
-        length_field_type:Typ = self.fields[0].typer_pass_var_type
+        assert isinstance(self.fields[0], PClassField)
+        length_field_type:IRCompatibleTyp = self.fields[0].typer_pass_var_type
         length_field_size = (length_field_type.get_llvm_value_type(context)
                                               .get_abi_size(context.target_data)*8)
         
@@ -273,6 +331,41 @@ class ArrayTyp(Typ):
                         })
         self._cached_di_type = ditype
         return ditype
+
+#TODO
+@dataclass
+class FunctionTyp(IRCompatibleTyp):
+    pass
+
+## TODO in unsafe context
+# @dataclass    
+# class PointerTyp(IRCompatibleTyp):
+#     pass
+
+# @dataclass
+# class FunctionPointerTyp(PointerType):
+#     pass
+
+# @dataclass
+# The type for 
+# class ClassTyp(BaseType):
+#     pass
+
+@dataclass
+class NamespaceTyp(BaseTyp):
+    def __init__(self, name:str, fields:List['PIdentifier']):
+        """Creates a new namespace type. The fields is used to defined what is available to import from this namespace
+
+        Args:
+            name (str): The name of this namespace
+            fields (List[PIdentifier]): The list of global vars functions and types that are usable when imported from this namespace
+        """
+        super().__init__(name, fields=fields) # type: ignore #otherwise unhappy because List[PIdentifier] is not included in List[PIdentifier | PClassField] even though it is!
+        
+    def di_type(self, context: 'CodeGenContext') -> Optional[ir.DIValue]:
+        raise NotImplementedError('A namespace does not have a type')
+    def get_llvm_value_type(self, context: Optional['CodeGenContext']):
+        raise NotImplementedError('A namespace does not have a type')
 
 class ParserError(Exception):
     """Custom exception for parser-specific errors"""
@@ -434,12 +527,9 @@ class DebugInfo:
 class CodeGenContext:
     """Context needed by various node when generating IR in the codegen pass"""
     module:ir.Module
-    scopes:Scopes
     target_data:binding.TargetData
-    # """A function that take a Typ and returns a ir.Type associated (int, float ot struct types or pointers for all other types)"""
-    # get_llvm_type: Callable[['Typ'],ir.Type]
     """A dict containing all Types known to the typer and it's corresponding ir.Type"""
-    type_map:Dict[Typ, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]]
+    type_map:Dict[IRCompatibleTyp, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]]
     #the debug information. ignored if -g flag not set
     debug_info:Optional[DebugInfo]
     """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
@@ -450,6 +540,7 @@ class CodeGenContext:
     """A Dict where for every given string there is an associated constant string PS object. constant because strings are immutable"""
     _global_string_objs:Dict[str, ir.GlobalValue] = field(default_factory=dict)
     compilation_opts:CompilationOptions = field(default_factory=CompilationOptions)
+    namespace:str = "Default"
     
     def get_string_const(self, string:str):
         if string in self._global_string_objs:
@@ -472,12 +563,12 @@ class CodeGenContext:
         string_obj = ir.GlobalVariable(module=self.module,
                                        typ=string_typ,
                                        name=f".__str_obj_{len(self._global_string_objs)}")
-        string_obj.initializer = ir.Constant(string_typ, [string_length, bytearray(string_bytes)])
+        string_obj.initializer = ir.Constant(string_typ, [string_length, bytearray(string_bytes)]) #type: ignore Trying to set to None
         #cache value to avoid saturating executable
         self._global_string_objs[string] = string_obj
         return string_obj
     
-    def type_by_name(self, name:str) -> Typ:
+    def type_by_name(self, name:str) -> IRCompatibleTyp:
         for typ in self.type_map.keys():
             if typ.name == name:
                 return typ
@@ -500,7 +591,7 @@ class CodeGenContext:
         return self.builder.gep(string_obj, [zero, one, zero], inbounds=True, source_etype=string_typ)
     
     def get_method_symbol_name(self, class_name:str, method_identifier:str):
-        return f"__{class_name}.__{method_identifier}"
+        return f"{self.namespace}.__{class_name}.__{method_identifier}"
     
     def enter_scope(self, ref_vars:int=0):
         """Enter a scope both in the GC and context scope manager"""
@@ -527,7 +618,7 @@ class CodeGenContext:
         #pop the scope we are currently leaving
         self.scopes.leave_scope()
         
-    def add_root_to_gc(self, alloca:ir.NamedValue, type_:Typ, var_name:str):
+    def add_root_to_gc(self, alloca:ir.NamedValue, type_:ReferenceTyp, var_name:str):
         """Adds variable root location to GC"""
         if type_.is_reference_type:
             if isinstance(type_, ArrayTyp):
@@ -551,6 +642,7 @@ class NodeType(Enum):
     """Enumeration of all possible node types in the parser tree"""
     EMPTY = auto()
     PROGRAM = auto()
+    NAMESPACE = auto()
     FUNCTION = auto()
     TYPE = auto()
     CLASS = auto()
@@ -608,6 +700,12 @@ class PStatement:
     """Base class for all AST nodes"""
     node_type: NodeType
     position: Position
+    
+    ##TODO add PScopeStatement (PBlock?)
+    # Add scope ans known symbols to the PScopeStatement (it's a PBlock or an if/loop,function, etc.)
+    # This can add the way to make fields in a class accessible from methods and optional variable shadowing?
+    # Add property to get scope from current node and search through known symbols or add symbols
+    # Remove typer and llvm-gen scope classes. Replace with single scope manager inside the Parser si it's easily accessible from the typer-tree
     
     def __post_init__(self):
         #add field to progress backwards though the tree
@@ -722,11 +820,11 @@ class PExpression(PStatement):
     
     def __post_init__(self):
         super().__post_init__()
-        self.expr_type:Optional[Typ] = None  # Will be set during typing pass
+        self.expr_type:Optional[BaseTyp] = None  # Will be set during typing pass
         self.is_compile_time_constant:bool = False
         self.is_lvalue = getattr(self, "is_lvalue", False)
 
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
 
 @dataclass
@@ -738,11 +836,22 @@ class PNoop(PExpression):
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a NoOp"
         return ir.Constant(ir.IntType(1), True)
+        
+class PNamespace(PStatement):
+    name:str
+    fields:Union['PIdentifier', 'PFunction', 'PClass']
+    
+    def __init__(self, parts:Optional[str]=None, lexeme:Optional[Lexeme]=None):
+        if lexeme is None:
+            lexeme = Lexeme.default
+        super().__init__(NodeType.NAMESPACE, lexeme.pos)
+        self.parts = parts or [PIdentifier("Default", Lexeme.default)]
 
 @dataclass
 class PProgram(PStatement):
     """Root node of the program"""
     statements: List[PStatement]
+    namespace_name: str
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -750,8 +859,9 @@ class PProgram(PStatement):
             yield stmt
         return
 
-    def __init__(self, statements: List[PStatement], lexeme: Lexeme):
+    def __init__(self, statements: List[PStatement], lexeme: Lexeme, namespace:Optional[str]=None):
         super().__init__(NodeType.PROGRAM, lexeme.pos)
+        self.namespace_name =  namespace or "Default"
         self.statements = statements
 
 @dataclass
@@ -762,7 +872,7 @@ class PFunction(PStatement):
     function_args: List['PVariableDeclaration']  # List of (type, name) tuples
     body: 'PBlock'
     is_called: bool = False
-    _return_typ_typed:Optional[Typ] = None
+    _return_typ_typed:Optional[IRCompatibleTyp] = None
     is_builtin:bool=False
         
     @property
@@ -786,11 +896,10 @@ class PFunction(PStatement):
         return hash(self.name) + hash(self.return_type) + sum([hash(func) for func in self.function_args])
     
     def get_linkable_name(self, context:CodeGenContext):
-        #TODO edit once namespaces are implemented
-        return self.name
+        return f"{context.namespace}.{self.name}"
     
     @property
-    def return_typ_typed(self) -> Typ:
+    def return_typ_typed(self) -> IRCompatibleTyp:
         if self._return_typ_typed is None:
             raise TypingError(f"Function has not been typed yet")
         return self._return_typ_typed
@@ -856,7 +965,7 @@ class PFunction(PStatement):
             
             if param.is_root_to_declare_to_gc:
                 context.add_root_to_gc(arg_alloca,
-                                       param.typer_pass_var_type,
+                                       param.typer_pass_var_type, #type: ignore Because the "is_root_to_declare_to_gc" checks that it's a proper ReferenceTyp already
                                        param.name)
         # run body statements
         self.body.generate_llvm(context)
@@ -906,7 +1015,7 @@ class PFunction(PStatement):
 
 @dataclass    
 class PMethod(PFunction):
-    _class_type:Optional[Typ]=None
+    _class_type:Optional[IRCompatibleTyp]=None
 
     def __init__(self, name: str, return_type: 'PType', class_type:'PType',
                  parameters: List['PVariableDeclaration'],
@@ -946,10 +1055,10 @@ class PClass(PStatement):
     name: str
     fields: List['PClassField']
     methods: List[PMethod]
-    _class_typ:Optional[Typ] = None
+    _class_typ:Optional[ReferenceTyp] = None
     
     @property
-    def class_typ(self) ->Typ:
+    def class_typ(self) ->ReferenceTyp:
         if self._class_typ is None:
             raise TypingError('Class has not been typed yet')
         return self._class_typ
@@ -975,13 +1084,13 @@ class PClassField(PStatement):
     var_type: 'PType'
     is_public: bool
     default_value: Optional[PExpression]
-    _typer_pass_var_type: Optional[Typ] = None
+    _typer_pass_var_type: Optional[IRCompatibleTyp] = None
     is_assigned: bool = False
     is_read: bool = False
     is_builtin: bool = False
     
     @property
-    def typer_pass_var_type(self) -> Typ:
+    def typer_pass_var_type(self) -> IRCompatibleTyp:
         if self._typer_pass_var_type is None:
             raise TypingError("Typer has not typed this node yet!")
         return self._typer_pass_var_type
@@ -1077,11 +1186,11 @@ class PVariableDeclaration(PStatement):
     """Variable declaration node"""
     name: str
     var_type: 'PType'
-    _typer_pass_var_type: Optional[Typ]
+    _typer_pass_var_type: Optional[IRCompatibleTyp]
     initial_value: Optional[PExpression]
     
     @property
-    def typer_pass_var_type(self) -> Typ:
+    def typer_pass_var_type(self) -> IRCompatibleTyp:
         if self._typer_pass_var_type is None:
             raise CompilerError('PVarDecl fas not been typed')
         return self._typer_pass_var_type
@@ -1119,7 +1228,7 @@ class PVariableDeclaration(PStatement):
         
         if self.is_root_to_declare_to_gc:
             context.add_root_to_gc(alloca,
-                                self.typer_pass_var_type,
+                                self.typer_pass_var_type,  #type: ignore Because the "is_root_to_declare_to_gc" checks that it's a proper ReferenceTyp already
                                 self.name)
 
         if context.compilation_opts.add_debug_symbols:
@@ -1172,7 +1281,7 @@ class PAssignment(PExpression):
         yield self.value
         return
         
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to an assignment value"
         # get ptr to assign to
         if isinstance(self.target, PIdentifier):
@@ -1306,7 +1415,7 @@ class PBinaryOperation(PExpression):
 
         return phi
 
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to an operation result"
         left = self.left.generate_llvm(context)
         if self.expr_type is None:
@@ -1419,12 +1528,12 @@ class PUnaryOperation(PExpression):
         yield self.operand
         return
 
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to an operation result"
         
         operand = self.operand.generate_llvm(context, get_ptr_to_expression=self.operand.is_lvalue)
-        assert self.operand.expr_type is not None
-        assert self.expr_type is not None
+        assert isinstance(self.operand.expr_type, IRCompatibleTyp)
+        assert isinstance(self.expr_type, IRCompatibleTyp)
         
         ret_val = None
         typeinfo = TYPE_INFO.get(self.operand.expr_type.name, TypeInfo(TypeClass.CLASS))
@@ -1657,7 +1766,7 @@ class PReturnStatement(PStatement):
         # if we are within the module's main function
         if context.global_exit_block is not None:
             #make sure the main function returns the correct return type
-            assert self.value.expr_type is not None
+            assert isinstance(self.value.expr_type, IRCompatibleTyp)
             assert self.value.expr_type.get_llvm_value_type(context) == ir.IntType(32)
             exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME).alloca
             assert exit_code is not None
@@ -1704,7 +1813,7 @@ class PFunctionCall(PExpression):
             yield stmt
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a function result"
         # get function pointer
         fun = self.function.generate_llvm(context)
@@ -1740,7 +1849,7 @@ class PMethodCall(PExpression):
             yield stmt
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a function return value"
         assert self.object.expr_type is not None
         # TODO: get method function pointer from a v-table
@@ -1775,7 +1884,7 @@ class PIdentifier(PExpression):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
         self.name = name
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         variable = context.scopes.get_symbol(self.name)
         if variable.is_function:
             assert variable.func_ptr is not None
@@ -1784,7 +1893,7 @@ class PIdentifier(PExpression):
         if get_ptr_to_expression:
             return variable.alloca
         else:
-            assert self.expr_type is not None
+            assert isinstance(self.expr_type, IRCompatibleTyp)
             var_type = self.expr_type.get_llvm_value_type(context)
             return context.builder.load(variable.alloca, typ=var_type)
 
@@ -1794,10 +1903,10 @@ class PThis(PExpression):
     def __init__(self, lexeme:Lexeme):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         this = context.scopes.get_symbol('this').alloca
         assert this is not None
-        assert self.expr_type is not None
+        assert isinstance(self.expr_type, IRCompatibleTyp)
         var_type = self.expr_type.get_llvm_value_type(context)
         if get_ptr_to_expression:
             return this
@@ -1824,7 +1933,7 @@ class PLiteral(PExpression):
         
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Constant:
         assert not get_ptr_to_expression, "Cannot get pointer to a literal value"
-        assert self.expr_type is not None
+        assert isinstance(self.expr_type, IRCompatibleTyp)
         const_typ = self.expr_type.get_llvm_value_type(context)
         if self.literal_type == "string":
             string_obj = context.get_string_const(self.value)
@@ -1853,12 +1962,13 @@ class PCast(PExpression):
         yield self.expression
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a casted value"
         expr = self.expression.generate_llvm(context)
         original_type = self.expression.expr_type
         target_type = self.expr_type
-        assert original_type is not None and target_type is not None
+        assert isinstance(original_type, IRCompatibleTyp)
+        assert isinstance(target_type, IRCompatibleTyp)
 
         original_type_info = TYPE_INFO.get(original_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
         target_type_info = TYPE_INFO.get(target_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
@@ -2031,43 +2141,52 @@ class PDotAttribute(PExpression):
         yield self.right
         return
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
-        # left**
-        left_mem_loc = self.left.generate_llvm(context, get_ptr_to_expression=True)
-        assert isinstance(left_mem_loc, ir.NamedValue)
-        assert self.left.expr_type is not None
-        left_type = self.left.expr_type.get_llvm_value_type(context)
-        assert isinstance(left_type, ir.types._TypedPointerType)
-        # left* (a pointer to the object on the heap/stack)
-        left_ptr = context.builder.load(left_mem_loc, typ=left_type)
-        #Do null check here
-        null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
-        assert null_check_func is not None
-        context.builder.call(null_check_func, [left_ptr, context.get_char_ptr_from_string(self.position.filename),
-                                               ir.Constant(ir.IntType(32), self.position.line),
-                                               ir.Constant(ir.IntType(32), self.position.column)])
-        
-        assert isinstance(left_ptr.type, ir.PointerType)
-        for i, field in enumerate(self.left.expr_type.fields):
-            if field.name == self.right.name:
-                # found the correct field
-                field_ptr = context.builder.gep(left_ptr, [ir.Constant(ir.IntType(32), 0), # *left
-                                                           ir.Constant(ir.IntType(32), i) #(*left).ith element
-                                                           ],
-                                                source_etype=left_type.pointee)
-                #fix typing of the element gotten
-                field_ptr_type = ir.PointerType(field.typer_pass_var_type.get_llvm_value_type(context))
-                field_ptr = context.builder.bitcast(field_ptr, field_ptr_type)
-                assert isinstance(field_ptr, (ir.CastInstr, ir.GEPInstr))
-                if context.compilation_opts.add_debug_symbols:
-                    field_ptr.set_metadata("dbg", self.add_di_location_metadata(context))
-                
-                if get_ptr_to_expression:
-                    return field_ptr
-                else:
-                    return context.builder.load(field_ptr,
-                                                typ=field.typer_pass_var_type.get_llvm_value_type(context))
-        raise TypingError(f"Cannot find field {self.right.name} in type {self.left.expr_type}")
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+        # It's an actual variable we're trying to access
+        if isinstance(self.left.expr_type, IRCompatibleTyp):
+            # left**
+            left_mem_loc = self.left.generate_llvm(context, get_ptr_to_expression=True)
+            assert isinstance(left_mem_loc, ir.NamedValue)
+            assert self.left.expr_type is not None
+            left_type = self.left.expr_type.get_llvm_value_type(context)
+            assert isinstance(left_type, ir.types._TypedPointerType)
+            # left* (a pointer to the object on the heap/stack)
+            left_ptr = context.builder.load(left_mem_loc, typ=left_type)
+            #Do null check here
+            null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
+            assert null_check_func is not None
+            context.builder.call(null_check_func, [left_ptr, context.get_char_ptr_from_string(self.position.filename),
+                                                ir.Constant(ir.IntType(32), self.position.line),
+                                                ir.Constant(ir.IntType(32), self.position.column)])
+            
+            assert isinstance(left_ptr.type, ir.PointerType)
+            for i, field in enumerate(self.left.expr_type.fields):
+                if field.name == self.right.name:
+                    assert isinstance(field, PClassField)
+                    # found the correct field
+                    field_ptr = context.builder.gep(left_ptr, [ir.Constant(ir.IntType(32), 0), # *left
+                                                            ir.Constant(ir.IntType(32), i) #(*left).ith element
+                                                            ],
+                                                    source_etype=left_type.pointee)
+                    #fix typing of the element gotten
+                    field_ptr_type = ir.PointerType(field.typer_pass_var_type.get_llvm_value_type(context))
+                    field_ptr = context.builder.bitcast(field_ptr, field_ptr_type)
+                    assert isinstance(field_ptr, (ir.CastInstr, ir.GEPInstr))
+                    if context.compilation_opts.add_debug_symbols:
+                        field_ptr.set_metadata("dbg", self.add_di_location_metadata(context))
+                    
+                    if get_ptr_to_expression:
+                        return field_ptr
+                    else:
+                        return context.builder.load(field_ptr,
+                                                    typ=field.typer_pass_var_type.get_llvm_value_type(context))
+            raise TypingError(f"Cannot find field {self.right.name} in type {self.left.expr_type}")
+        elif isinstance(self.left, PNamespace):
+            #TODO handle imported symbol here (or builtin)
+            raise NotImplementedError()
+        else: 
+            # Here for static Class access
+            raise NotImplementedError()
 
 @dataclass
 class PTernaryOperation(PExpression):
@@ -2091,7 +2210,7 @@ class PTernaryOperation(PExpression):
         yield self.false_value
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         cond = self.condition.generate_llvm(context)
         if context.compilation_opts.add_debug_symbols and isinstance(cond, _HasMetadata):
             cond.set_metadata("dbg", self.condition.add_di_location_metadata(context))
@@ -2123,7 +2242,7 @@ class PTernaryOperation(PExpression):
 
         # Merge block: PHI node to combine results
         context.builder.position_at_end(end_block)
-        assert self.expr_type is not None
+        assert isinstance(self.expr_type, IRCompatibleTyp)
         phi = context.builder.phi(self.expr_type.get_llvm_value_type(context))
         phi.add_incoming(true_val, true_block_end)
         phi.add_incoming(false_val, false_block_end)
@@ -2151,7 +2270,7 @@ class PObjectInstantiation(PExpression):
         yield self.class_type
         return
     
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
         
         assert not get_ptr_to_expression, "Cannot get ptr to Object reference"
@@ -2160,7 +2279,7 @@ class PObjectInstantiation(PExpression):
         assert self.expr_type is not None
         allocated_ptr = context.builder.call(alloc_func,
             [ir.Constant(size_t_type, context.type_ids[self.expr_type.name])])
-        assert self.expr_type is not None
+        assert isinstance(self.expr_type, IRCompatibleTyp)
         class_ref_type = self.expr_type.get_llvm_value_type(context)
         assert isinstance(class_ref_type, ir.types._TypedPointerType)
         allocated_ptr = context.builder.bitcast(allocated_ptr, class_ref_type)
@@ -2173,6 +2292,7 @@ class PObjectInstantiation(PExpression):
         # Element is allocated
         # Now we need to allocate all of its fields
         for field_num, field in enumerate(self.expr_type.fields):
+            assert isinstance(field, PClassField)
             if field.default_value is None:
                 continue #not set it's a null_ptr (zero-ed out field for value types)
             field_ptr = context.builder.gep(allocated_ptr, 
@@ -2192,7 +2312,7 @@ class PArrayInstantiation(PExpression):
     """Represents array instantiation like new int[10]"""
     element_type: 'PType'  # The base type of array elements
     size: PExpression  # The size expression for the array
-    _element_type_typ:Optional[Typ] = None
+    _element_type_typ:Optional[IRCompatibleTyp] = None
     
     @property
     def element_type_typ(self):
@@ -2219,7 +2339,7 @@ class PArrayInstantiation(PExpression):
         yield self.element_type
         return
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get ptr to array reference"
         n_elements = self.size.generate_llvm(context)
         
@@ -2250,7 +2370,7 @@ class PArrayInstantiation(PExpression):
 @dataclass
 class PType(PStatement):
     type_string:str
-    expr_type:Optional[Typ]
+    expr_type:Optional[BaseTyp]
 
     def __init__(self, base_type:str, lexeme_pos:Union[Lexeme,Position]):
         super().__init__(NodeType.TYPE, lexeme_pos if isinstance(lexeme_pos, Position) else lexeme_pos.pos)
@@ -2331,10 +2451,10 @@ class PArrayIndexing(PExpression):
         yield self.index
         return
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.NamedValue:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         #get type of array
-        assert self.array.expr_type is not None
-        assert self.expr_type is not None
+        assert isinstance(self.array.expr_type, ArrayTyp)
+        assert isinstance(self.expr_type, IRCompatibleTyp)
         array_struct_type = self.array.expr_type.get_llvm_value_type(context)
         assert isinstance(array_struct_type, ir.types._TypedPointerType)
         array_element_type = self.expr_type.get_llvm_value_type(context)
@@ -2489,11 +2609,16 @@ class Parser:
         """Parse the entire program"""
         statements = []
         start_lexeme = self.current_lexeme
+        namespace = "Default"
+        
+        if self._match(LexemeType.KEYWORD_CONTROL_NAMESPACE):
+            #handle namespace decleration
+            namespace = self._parse_namespace_name()
 
         while self.current_lexeme and self.current_lexeme.type != LexemeType.EOF:
             statements.append(self._parse_statement(BlockProperties()))
 
-        pprogram = PProgram(statements, start_lexeme)
+        pprogram = PProgram(statements, start_lexeme, namespace)
         return pprogram
 
     def _parse_object_instantiation(self) -> Union[PObjectInstantiation,PArrayInstantiation]:
@@ -2530,6 +2655,23 @@ class Parser:
         else:
             raise ParserError("Invalid Lexeme: Expected opening bracket or opening parenthesis", self.current_lexeme)
 
+    def _parse_namespace_name(self) -> str:
+        namespace_lexeme = self._expect(LexemeType.KEYWORD_CONTROL_NAMESPACE)
+        parts:List[str] = []
+        #handle top level of namspace
+        ident = self._expect(LexemeType.IDENTIFIER)
+        parts.append(ident.value)
+        
+        #handle namspace sub-levels
+        while self._match(LexemeType.OPERATOR_DOT):
+            self._expect(LexemeType.OPERATOR_DOT)
+            ident = self._expect(LexemeType.IDENTIFIER)
+            parts.append(ident.value)
+        #ensure properly terminated
+        self._expect(LexemeType.PUNCTUATION_SEMICOLON)
+        
+        return '.'.join(parts)
+        
     def _parse_statement(self, block_properties:BlockProperties) -> PStatement:
         """Parse a single statement"""
         if self.current_lexeme is Lexeme.default:

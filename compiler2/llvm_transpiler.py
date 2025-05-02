@@ -7,10 +7,11 @@ llvmlite.ir_layer_typed_pointers_enabled = False
 llvmlite.opaque_pointers_enabled = True
 
 from typer import Typer, TypeClass, TypingError, CompilerWarning
-from parser import (PClass,PFunction,PProgram, Typ, ArrayTyp,
+from parser import (PClass,PFunction,PProgram, IRCompatibleTyp,
+                    ArrayTyp, PClassField,
                     PReturnStatement, PVariableDeclaration,
                     PLiteral, CodeGenContext, Scopes,
-                    CompilerError, DebugInfo, Position)
+                    CompilerError, DebugInfo, ReferenceTyp)
 from subprocess import Popen, PIPE
 from tempfile import TemporaryDirectory
 from typing import TextIO, Dict, Optional, Union
@@ -88,13 +89,14 @@ class CodeGen:
         clang_flags = clang_flags or list()
         # Initializes module & typer
         filename = filepath.name
-        self.module = ir.Module(name=filename.removesuffix('.psc'))
-        self.module.triple = Target.from_default_triple().triple
         self.typer = Typer(filename, file)
         # Lex, Parse and Type code
         typed_abstract_syntax_tree = self.typer.type_program(self.use_warnings)
+        self.module = ir.Module(name=typed_abstract_syntax_tree.namespace_name+'-'+
+                                filepath.stem)
+        self.module.triple = Target.from_default_triple().triple
         #Init type list map. Initially all reference type fields are just pointers. On subsequent passes they are converter to _TypedPointers
-        type_map:Dict[Typ, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]] = {
+        type_map:Dict[IRCompatibleTyp, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]] = {
             typ:self.get_llvm_struct(typ, None)
             for typ in self.typer.known_types.values()
         }
@@ -142,7 +144,7 @@ class CodeGen:
                                         self.module.add_debug_info("DINamespace",
                                                                    {
                                                                        "scope":di_compile_unit,
-                                                                       "name":"Default", #TODO fix once namespaces are included
+                                                                       "name":typed_abstract_syntax_tree.namespace_name
                                                                    })
                                     ])
         else:
@@ -152,11 +154,12 @@ class CodeGen:
                                 target_data=self.target.target_data,
                                 type_map=type_map,
                                 debug_info=debug_info,
-                                compilation_opts=compiler_opts)
+                                compilation_opts=compiler_opts,
+                                namespace=typed_abstract_syntax_tree.namespace_name)
         # Setup type_ids
         type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
         for typ, ir_type in context.type_map.items():
-            assert isinstance(typ, Typ)
+            assert isinstance(typ, IRCompatibleTyp)
             if not isinstance(ir_type, ir.LiteralStructType):
                 continue
             if not typ.is_reference_type or isinstance(typ, ArrayTyp) or typ.name in ['void','null']:
@@ -286,7 +289,7 @@ class CodeGen:
                                        name=EXIT_CODE_GLOBAL_VAR_NAME)
         context.scopes.declare_var(EXIT_CODE_GLOBAL_VAR_NAME, global_var.value_type, global_var)
         if not is_library:
-            global_var.initializer = ir.Constant(global_var.value_type, default_value)
+            global_var.initializer = ir.Constant(global_var.value_type, default_value) #type: ignore Initializer is always none according to the typer
         
     def _generate_main_function(self, ast:PProgram, context:CodeGenContext, reference_type_globals_count:int=0):
         """Generates the main function context in the current module.
@@ -353,7 +356,7 @@ class CodeGen:
                     {
                         "name": FUNC_POPULATE_GLOBALS,
                         #TODO edit linkable name with namespace info
-                        "linkageName": FUNC_POPULATE_GLOBALS,
+                        "linkageName": f"{context.namespace}.{FUNC_POPULATE_GLOBALS}",
                         "line":0,
                         "file":None,
                         "type": subroutine_type,
@@ -371,6 +374,7 @@ class CodeGen:
                 assert global_var is not None
                 context.builder.store(statement.initial_value.generate_llvm(context),
                                       global_var)
+                assert isinstance(statement.typer_pass_var_type, ReferenceTyp)
                 context.add_root_to_gc(global_var,
                                        statement.typer_pass_var_type,
                                        statement.name)
@@ -407,7 +411,7 @@ class CodeGen:
         type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
         #size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name)
         for typ, ir_type in context.type_map.items():
-            assert isinstance(typ, Typ)
+            assert isinstance(typ, IRCompatibleTyp)
             if not isinstance(ir_type, ir.LiteralStructType):
                 continue
             if not typ.is_reference_type or isinstance(typ, ArrayTyp) or typ.name in ['void','null']:
@@ -482,8 +486,8 @@ class CodeGen:
                 for arg in statement.function_args
             ]
             func_type = ir.FunctionType(return_type, arg_types)
-            func_ptr = ir.Function(context.module, func_type, statement.name)
-            context.scopes.declare_func(statement.name, return_type, func_ptr)
+            func_ptr = ir.Function(context.module, func_type, statement.get_linkable_name(context))
+            context.scopes.declare_func(statement.get_linkable_name(context), return_type, func_ptr)
         
     def _declare_module_class_methods(self, ast:PProgram, context:CodeGenContext):
         # TODO here we should also add the imports
@@ -516,9 +520,9 @@ class CodeGen:
             var_type = statement.typer_pass_var_type.get_llvm_value_type(context)
             global_var = ir.GlobalVariable(context.module, var_type,statement.name)
             if isinstance(statement.initial_value, PLiteral) and statement.initial_value.literal_type != "string":
-                global_var.initializer = statement.initial_value.generate_llvm(context)
+                global_var.initializer = statement.initial_value.generate_llvm(context) #type: ignore
             else:
-                global_var.initializer = statement.typer_pass_var_type.default_llvm_value(context)
+                global_var.initializer = statement.typer_pass_var_type.default_llvm_value(context) #type: ignore
             if context.compilation_opts.add_debug_symbols:
                 assert context.debug_info is not None
                 debug_info = context.module.add_debug_info("DIGlobalVariable",
@@ -661,7 +665,7 @@ class CodeGen:
                                         return_type=func.return_value.type,
                                         function_ptr=func)
 
-    def get_llvm_struct(self, typ: Typ, context:Optional[CodeGenContext]) -> Union[ir.IntType,
+    def get_llvm_struct(self, typ: IRCompatibleTyp, context:Optional[CodeGenContext]) -> Union[ir.IntType,
                                                    ir.HalfType,
                                                    ir.FloatType,
                                                    ir.DoubleType,
@@ -691,7 +695,7 @@ class CodeGen:
         if type_info.type_class == TypeClass.CLASS:
             field_types = [
                 prop.typer_pass_var_type.get_llvm_value_type(context)
-                for prop in typ.fields
+                for prop in typ.fields if isinstance(prop, PClassField)
             ]
             return ir.LiteralStructType(field_types)
             
