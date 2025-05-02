@@ -2,12 +2,12 @@ import pytest
 from io import StringIO
 from lexer import Position, Lexeme
 from parser import (PProgram, PType, PArrayType, PVariableDeclaration,
-                    PExpression, PMethodCall, PCast, PClass,
+                    PExpression, PMethodCall, PCast, PClass, PClassField,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
                     PWhileStatement, PForStatement, PTernaryOperation)
-from typer import (Typer, TypeClass, Typ, ArrayTyp,
+from typer import (Typer, TypeClass, ReferenceTyp, ArrayTyp, ValueTyp,
                   UnknownTypeError, TypingError, TypingConversionError,
-                  SymbolNotFoundError, SymbolRedefinitionError)
+                  SymbolNotFoundError, SymbolRedefinitionError, IRCompatibleTyp)
 
 class TestTypeConversions:
     """Test type conversion logic and compatibility checks"""
@@ -124,8 +124,8 @@ class TestTypeConversions:
         ])
     def test_array_type_compatibility(self, type1, type2, expected):
         """Test array type compatibility checks"""
-        self.typer.known_types["MyClass"] = Typ("MyClass", {}, [])
-        self.typer.known_types["OtherClass"] = Typ("OtherClass", {}, [])
+        self.typer.known_types["MyClass"] = ReferenceTyp("MyClass", methods={}, fields=[])
+        self.typer.known_types["OtherClass"] = ReferenceTyp("OtherClass", methods={}, fields=[])
         
         actual = self.typer.check_types_match(
             self.typer._type_ptype(type1),
@@ -242,7 +242,7 @@ class TestTypeInfoHandling:
     def test_array_type_info(self, var_decl):
         """Test TypeInfo for array types"""
         self.typer = Typer('text.cs', StringIO(var_decl))
-        self.typer.known_types["MyClass"] = Typ("MyClass", {}, [])
+        self.typer.known_types["MyClass"] = ReferenceTyp("MyClass", methods={}, fields=[])
         ast = self.typer.type_program()
         assert isinstance(ast.statements[0], PVariableDeclaration)
         assert isinstance(ast.statements[0].var_type, PArrayType)
@@ -256,7 +256,7 @@ class TestTypeInfoHandling:
     def test_custom_class_type_info(self, class_name):
         """Test TypeInfo for custom class types"""
         # Add some custom classes
-        self.typer.known_types[class_name] = Typ(class_name, {}, [])
+        self.typer.known_types[class_name] = ReferenceTyp(class_name, methods={}, fields=[])
 
         info = self.typer.get_type_info(self.typer.known_types[class_name])
         assert info.type_class == TypeClass.CLASS
@@ -373,10 +373,10 @@ class TestTyperBasicDeclarations:
             self.parse_and_type(source)
 
     @pytest.mark.parametrize("source, expected_type",[
-            ("i32[] numbers = new i32[10];", ArrayTyp(Typ('i32'))),
-            ("string[] names = new string[5];", ArrayTyp(Typ('string'))),
-            ("bool[] flags = new bool[3];", ArrayTyp(Typ('bool'))),
-            ("i32[][] matrix = new i32[3][];", ArrayTyp(ArrayTyp(Typ('i32'))))
+            ("i32[] numbers = new i32[10];", ArrayTyp(ValueTyp('i32'))),
+            ("string[] names = new string[5];", ArrayTyp(ReferenceTyp('string'))),
+            ("bool[] flags = new bool[3];", ArrayTyp(ValueTyp('bool'))),
+            ("i32[][] matrix = new i32[3][];", ArrayTyp(ArrayTyp(ValueTyp('i32'))))
         ])
     def test_valid_array_declarations(self, source, expected_type):
         """Test valid array declarations"""
@@ -384,7 +384,6 @@ class TestTyperBasicDeclarations:
         var_decl = prog.statements[0]
         assert isinstance(var_decl, PVariableDeclaration)
         assert isinstance(var_decl.initial_value, PExpression)
-        assert isinstance(var_decl.initial_value.expr_type, Typ)
         assert isinstance(var_decl.initial_value.expr_type, ArrayTyp)
         assert var_decl.initial_value.expr_type == expected_type
 
@@ -563,11 +562,13 @@ class TestTyperClassDeclarations:
         self.parse_and_type(source)
         assert 'Point' in self.typer.known_types
         typ = self.typer.known_types['Point']
-        assert isinstance(typ, Typ)
+        assert isinstance(typ, ReferenceTyp)
         assert not isinstance(typ, ArrayTyp)
         assert typ.is_reference_type
         assert len(typ.methods) == 0
         assert len(typ.fields) == 2
+        assert isinstance(typ.fields[0], PClassField)
+        assert isinstance(typ.fields[1], PClassField)
         assert typ.fields[0].var_type.type_string == "i32"
         assert typ.fields[1].var_type.type_string == "i32"
 
@@ -1048,9 +1049,9 @@ class TestTyperImplicitConversions:
         for statement in prog.statements:
             assert isinstance(statement, PVariableDeclaration)
             assert statement.initial_value is not None
-            assert statement.initial_value.expr_type is not None
+            assert isinstance(statement.initial_value.expr_type, ValueTyp)
             assert self.typer.can_convert_numeric(statement.initial_value.expr_type,
-                                                      self.typer.known_types[statement.var_type.type_string])
+                                                  self.typer.known_types[statement.var_type.type_string])
 
     def test_valid_float_promotions(self):
         """Test valid float type promotions"""
@@ -1062,7 +1063,7 @@ class TestTyperImplicitConversions:
         for statement in prog.statements:
             assert isinstance(statement, PVariableDeclaration)
             assert statement.initial_value is not None
-            assert statement.initial_value.expr_type is not None
+            assert isinstance(statement.initial_value.expr_type, ValueTyp)
             assert self.typer.can_convert_numeric(statement.initial_value.expr_type,
                                                       self.typer.known_types[statement.var_type.type_string])
 

@@ -1341,3 +1341,39 @@ class TestParserClassDefinitions(TestParserBase):
         assert isinstance(ast.statements[3].var_type, PArrayType)
         assert isinstance(ast.statements[3].var_type.element_type, PArrayType)
         assert isinstance(ast.statements[3].initial_value, PArrayInstantiation)
+        
+
+class TestParserNamespace(TestParserBase):
+    """Test suite for `namespace` declarations."""
+
+    def test_default_namespace(self):
+        """When no namespace is declared, PProgram.namespace should be 'Default'."""
+        program = self.parse_source("")
+        assert program.namespace_name == "Default"
+
+    def test_valid_namespace_declaration(self):
+        """A single namespace at the top should be parsed correctly."""
+        src = "namespace Alpha.Beta.Gamma; i32 x = 42;"
+        program = self.parse_source(src)
+        assert program.namespace_name == "Alpha.Beta.Gamma"
+        # also make sure parsing continues normally
+        assert isinstance(program.statements[0], PVariableDeclaration)
+
+    @pytest.mark.parametrize("src", [
+        # more than one namespace
+        "namespace A; namespace B;",
+        # namespace not at top
+        "i32 x = 1; namespace A.B;",
+        # missing semicolon
+        "namespace A.B.C",
+        # leading dot
+        "namespace .Foo.Bar;",
+        # trailing dot
+        "namespace Foo.Bar.;",
+        # empty segment
+        "namespace Foo..Bar;",
+    ])
+    def test_invalid_namespace_syntax(self, src):
+        """These should all raise ParserError."""
+        with pytest.raises(ParserError):
+            self.parse_source(src)

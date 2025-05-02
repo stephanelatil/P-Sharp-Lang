@@ -568,3 +568,49 @@ class TestLexer:
         lexer = Lexer('test.ps', StringIO(expr))
         lexemes = tuple(lexeme.type for lexeme in lexer.lex())
         assert lexemes == expected_ops
+
+        # Add these tests to the TestLexer class
+
+    @pytest.mark.parametrize("namespace_declaration, expected_lexemes", [
+        # Valid namespace declarations
+        ("namespace Test;", [
+            (LexemeType.KEYWORD_CONTROL_NAMESPACE, "namespace"),
+            (LexemeType.IDENTIFIER, "Test"),
+            (LexemeType.PUNCTUATION_SEMICOLON, ";")
+        ]),
+        ("namespace MyApp.Entities;", [
+            (LexemeType.KEYWORD_CONTROL_NAMESPACE, "namespace"),
+            (LexemeType.IDENTIFIER, "MyApp"),
+            (LexemeType.OPERATOR_DOT, "."),
+            (LexemeType.IDENTIFIER, "Entities"),
+            (LexemeType.PUNCTUATION_SEMICOLON, ";")
+        ]),
+        ("namespace A.B.C.D;", [
+            (LexemeType.KEYWORD_CONTROL_NAMESPACE, "namespace"),
+            (LexemeType.IDENTIFIER, "A"),
+            (LexemeType.OPERATOR_DOT, "."),
+            (LexemeType.IDENTIFIER, "B"),
+            (LexemeType.OPERATOR_DOT, "."),
+            (LexemeType.IDENTIFIER, "C"),
+            (LexemeType.OPERATOR_DOT, "."),
+            (LexemeType.IDENTIFIER, "D"),
+            (LexemeType.PUNCTUATION_SEMICOLON, ";")
+        ]),
+        # With underscores and numbers (valid identifiers)
+        ("namespace Data_2023.Core_v1;", [
+            (LexemeType.KEYWORD_CONTROL_NAMESPACE, "namespace"),
+            (LexemeType.IDENTIFIER, "Data_2023"),
+            (LexemeType.OPERATOR_DOT, "."),
+            (LexemeType.IDENTIFIER, "Core_v1"),
+            (LexemeType.PUNCTUATION_SEMICOLON, ";")
+        ]),
+    ])
+    def test_valid_namespace_declaration(self, namespace_declaration, expected_lexemes):
+        """Test valid namespace declarations at the top of the file."""
+        lexer = Lexer('test.ps', StringIO(namespace_declaration))
+        lexemes = list(lexer.lex())
+        
+        assert len(lexemes) == len(expected_lexemes)
+        for idx, (expected_type, expected_val) in enumerate(expected_lexemes):
+            assert lexemes[idx].type == expected_type
+            assert lexemes[idx].value == expected_val
