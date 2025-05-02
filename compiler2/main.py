@@ -1,11 +1,9 @@
-from argparse import ArgumentParser, ArgumentError, Namespace
+from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from llvm_transpiler import CodeGen
 from objs import (OutputFormat, LLVM_Version, CompilationOptions,
                   OptimisationLevel)
-from typing import Union
 from os import environ
-from warnings import filterwarnings
 import sys
 #avoid including full traceback in the exception messages
 sys.tracebacklimit = -1
@@ -53,7 +51,7 @@ def setup_argparse(parser:ArgumentParser):
                         default=OptimisationLevel.Zero, help="Optimization level (0-3) or optimize for size -Os", dest="opt")
     parser.add_argument("-g", action='store_true', dest='debug_symbols', default=False, help="Add debug symbols (Currently not available)")
     parser.add_argument("-w", "--warnings", action="store_true", default=False, help="Enable warnings (only some available for now)")
-    parser.add_argument("--emit", type=OutputFormat, choices=["ir", "bc", 'asm', "obj", "exe"], default="exe",
+    parser.add_argument("--emit", type=OutputFormat, choices=["ir", "bc", 'asm', "obj", "exe"], default=OutputFormat.Executable,
                         help="""Select output type (default exe):
                         ir : builds to LLVM Intermediate Representation and outputs a human readable .ll file
                         bc : builds to LLVM Intermediate Representation and outputs a machine readable bitcode .bc file
