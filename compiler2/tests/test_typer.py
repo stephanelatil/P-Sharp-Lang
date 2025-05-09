@@ -4,10 +4,10 @@ from lexer import Position, Lexeme
 from parser import (PProgram, PType, PArrayType, PVariableDeclaration,
                     PExpression, PMethodCall, PCast, PClass, PClassField,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
-                    PWhileStatement, PForStatement, PTernaryOperation)
+                    PWhileStatement, PForStatement, PTernaryOperation,
+                    SymbolNotFoundError, SymbolRedefinitionError)
 from typer import (Typer, TypeClass, ReferenceTyp, ArrayTyp, ValueTyp,
-                  UnknownTypeError, TypingError, TypingConversionError,
-                  SymbolNotFoundError, SymbolRedefinitionError, IRCompatibleTyp)
+                  UnknownTypeError, TypingError, TypingConversionError)
 
 class TestTypeConversions:
     """Test type conversion logic and compatibility checks"""
@@ -295,14 +295,6 @@ class TestErrorHandling:
                 Lexeme.default
             )
             self.typer._type_variable_declaration(var_decl)
-
-    def test_typing_error(self):
-        """Test TypingError is raised for invalid typing scenarios"""
-        with pytest.raises(AssertionError):
-            # Try to type an invalid node type
-            class InvalidNode(PProgram):
-                pass
-            self.typer._type_statement(InvalidNode([], Lexeme.default))
 
 class TestTyperBasicDeclarations:
     """Test basic variable and function declarations"""

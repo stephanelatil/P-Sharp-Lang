@@ -16,8 +16,9 @@ from parser import (TypeClass, TypeInfo, TYPE_INFO, TypingError,
                     PTernaryOperation, PThis,PVariableDeclaration, 
                     PWhileStatement, PDiscard, PVoid, ArrayTyp,
                     BlockProperties, IRCompatibleTyp, ValueTyp,
-                    ReferenceTyp, NamespaceTyp, SymbolNotFoundError,
-                    SymbolRedefinitionError, Symbol)
+                    ReferenceTyp, NamespaceTyp, NodeType, Symbol,
+                    PFunctionType, LocalScope, ScopeType,
+                    FunctionTyp, BaseTyp)
 from constants import FUNC_PRINT
 
 
@@ -40,7 +41,7 @@ def create_property(name: str, type_str: str) -> PClassField:
         is_builtin=True
     )
 
-def create_method(name: str, return_type: str, class_typ:str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
+def create_method(name: str, return_type: str, class_type_string:str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
     """Helper function to create a method"""
     def typestring_to_ptype(typestring:str) -> PType:
         if typestring.endswith('[]'):
@@ -48,17 +49,33 @@ def create_method(name: str, return_type: str, class_typ:str, params: List[tuple
         return PType(typestring, Lexeme.default)
     
     
-    parameters = [PVariableDeclaration(n, typestring_to_ptype(t), None, Lexeme.default) for t, n in params]
+    arguments = [PVariableDeclaration(n, typestring_to_ptype(t), None, Lexeme.default) for t, n in params]
+    function_scope = LocalScope(ScopeType.FunctionScope,
+                                symbols={
+                                    arg.name:Symbol(arg.name, arg.position, arg.var_type)
+                                    for arg in arguments
+                                })
+    function_symbol = Symbol(name=PMethod.get_linkable_name(name,'__Builtin', class_type_string),
+                             declaration_position=Position.default,
+                             ptype=PFunctionType(
+                                 typestring_to_ptype(return_type),
+                                 Lexeme.default,
+                                 [arg.var_type for arg in arguments]
+                             ),
+                             arguments=arguments
+                             )
     return PMethod(
+        node_type=NodeType.FUNCTION,
+        position=Position.default,
         name=name,
         return_type=typestring_to_ptype(return_type),
-        class_type=typestring_to_ptype(class_typ),
-        parameters=parameters,
+        function_args=arguments,
         body=PBlock([], Lexeme.default,
                     block_properties=BlockProperties(is_class=True, is_top_level=False,
-                                                     in_function=True, block_vars=parameters)),
-        lexeme=Lexeme.default,
-        is_builtin=builtin
+                                                     in_function=True)),
+        is_builtin=builtin,
+        scope=function_scope,
+        symbol=function_symbol
     )
 
 # Define the built-in types with their methods and properties
@@ -219,7 +236,7 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
         fields=[],
         is_builtin=True
     ),
-    'void': ReferenceTyp('void', methods={}, fields=[], is_builtin=True),
+    'void': IRCompatibleTyp.default,
     '__null': ReferenceTyp('null', methods={}, fields=[], is_builtin=True)
 }
 
@@ -242,79 +259,79 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
 #             self.is_assigned = True
 #             self.is_read = True
 
-@dataclass
-class Scope:
-    """Represents a single scope level with its symbols"""
-    parent: Optional['Scope'] = None
-    symbols: Dict[str, Symbol] = field(default_factory=dict)
+# @dataclass
+# class Scope:
+#     """Represents a single scope level with its symbols"""
+#     parent: Optional['Scope'] = None
+#     symbols: Dict[str, Symbol] = field(default_factory=dict)
 
-    def define(self, name: str, type_: PType, declaration: PStatement,
-               is_function: bool = False,
-               parameters: Optional[List[PVariableDeclaration]] = None) -> Symbol:
-        """Define a new symbol in the current scope"""
+#     def define(self, name: str, type_: PType, declaration: PStatement,
+#                is_function: bool = False,
+#                parameters: Optional[List[PVariableDeclaration]] = None) -> Symbol:
+#         """Define a new symbol in the current scope"""
 
-        #ensure one does not yet exist
-        if (symbol:=self.lookup(name)) is not None:
-            raise SymbolRedefinitionError(name,  symbol, declaration)
-        self.symbols[name] = Symbol(name, type_, declaration, is_function, parameters)
-        return self.symbols[name]
+#         #ensure one does not yet exist
+#         if (symbol:=self.lookup(name)) is not None:
+#             raise SymbolRedefinitionError(name,  symbol, declaration)
+#         self.symbols[name] = Symbol(name, type_, declaration, is_function, parameters)
+#         return self.symbols[name]
 
-    def lookup(self, name: str) -> Optional[Symbol]:
-        """Look up a symbol in this scope or any parent scope"""
-        current = self
-        while current is not None:
-            if name in current.symbols:
-                return current.symbols[name]
-            current = current.parent
-        return None
+#     def lookup(self, name: str) -> Optional[Symbol]:
+#         """Look up a symbol in this scope or any parent scope"""
+#         current = self
+#         while current is not None:
+#             if name in current.symbols:
+#                 return current.symbols[name]
+#             current = current.parent
+#         return None
 
-@dataclass
-class ScopeManager:
-    """Manages the hierarchy of scopes during type checking"""
-    current_scope: Scope = field(default_factory=Scope)
-    _function_scope_stack:List = field(default_factory=list)
+# @dataclass
+# class ScopeManager:
+#     """Manages the hierarchy of scopes during type checking"""
+#     current_scope: Scope = field(default_factory=Scope)
+#     _function_scope_stack:List = field(default_factory=list)
     
-    def enter_function_scope(self):
-        self._function_scope_stack.append(self.current_scope)
-        global_scope = self.current_scope
-        while global_scope.parent is not None:
-            global_scope = global_scope.parent
-        self.current_scope = Scope(parent=global_scope)
+#     def enter_function_scope(self):
+#         self._function_scope_stack.append(self.current_scope)
+#         global_scope = self.current_scope
+#         while global_scope.parent is not None:
+#             global_scope = global_scope.parent
+#         self.current_scope = Scope(parent=global_scope)
 
-    def enter_scope(self) -> None:
-        """Enter a new scope"""
-        new_scope = Scope(parent=self.current_scope)
-        self.current_scope = new_scope
+#     def enter_scope(self) -> None:
+#         """Enter a new scope"""
+#         new_scope = Scope(parent=self.current_scope)
+#         self.current_scope = new_scope
         
-    def exit_function_scope(self):
-        self.current_scope = self._function_scope_stack.pop()
+#     def exit_function_scope(self):
+#         self.current_scope = self._function_scope_stack.pop()
 
-    def exit_scope(self) -> None:
-        """Exit the current scope"""
-        if self.current_scope.parent is None:
-            raise RuntimeError("Cannot exit global scope")
-        self.current_scope = self.current_scope.parent
+#     def exit_scope(self) -> None:
+#         """Exit the current scope"""
+#         if self.current_scope.parent is None:
+#             raise RuntimeError("Cannot exit global scope")
+#         self.current_scope = self.current_scope.parent
 
-    def define_variable(self, var_decl: PVariableDeclaration) -> Symbol:
-        """Define a variable in the current scope"""
-        return self.current_scope.define(var_decl.name, var_decl.var_type, var_decl)
+#     def define_variable(self, var_decl: PVariableDeclaration) -> Symbol:
+#         """Define a variable in the current scope"""
+#         return self.current_scope.define(var_decl.name, var_decl.var_type, var_decl)
 
-    def define_function(self, function: PFunction) -> Symbol:
-        """Define a function in the current scope"""
-        return self.current_scope.define(
-            function.name,
-            function.return_type,
-            function,
-            is_function=True,
-            parameters=function.function_args
-        )
+#     def define_function(self, function: PFunction) -> Symbol:
+#         """Define a function in the current scope"""
+#         return self.current_scope.define(
+#             function.name,
+#             function.return_type,
+#             function,
+#             is_function=True,
+#             parameters=function.function_args
+#         )
 
-    def lookup(self, name: str, statement:PStatement) -> Symbol:
-        """Look up a symbol in the current scope hierarchy"""
-        symbol = self.current_scope.lookup(name)
-        if symbol is None:
-            raise SymbolNotFoundError(name, statement)
-        return symbol
+#     def lookup(self, name: str, statement:PStatement) -> Symbol:
+#         """Look up a symbol in the current scope hierarchy"""
+#         symbol = self.current_scope.lookup(name)
+#         if symbol is None:
+#             raise SymbolNotFoundError(name, statement)
+#         return symbol
 
 class UnknownTypeError(Exception):
     def __init__(self, type_:PType) -> None:
@@ -336,13 +353,16 @@ class TypingConversionError(Exception):
 class Typer:
     default:'Typer'
     
+    def _error_if_not_ir_type(self, typ:BaseTyp, position:Position) -> None:
+        if not isinstance(typ, IRCompatibleTyp):
+            raise TypingError(f"Type {typ} is not valid at {position}\nDid you mean to reference a sub-type in the {typ} namespace?")
+    
     """Handles type checking and returns a Typed AST"""
     def __init__(self, filename:str, file:TextIO):
         self.parser = Parser(Lexer(filename, file))
         self.known_types = deepcopy(_builtin_types)
         self._in_class:Optional[PType] = None
         self.expected_return_type:Optional[IRCompatibleTyp] = None
-        self._scope_manager = ScopeManager()
         self.is_assignment = False #set to true when typing an identifier to be assigned
         self.warnings: List[CompilerWarning] = []
         self._ast: Optional[PProgram] = None
@@ -386,7 +406,7 @@ class Typer:
 
             # Class related
             PClass: self._type_class,
-            PClassField: self._type_class_property,
+            PClassField: self._type_class_field,
             PDotAttribute: self._type_dot_attribute,
             PObjectInstantiation: self._type_object_instantiation,
 
@@ -407,6 +427,7 @@ class Typer:
     def _print_warnings(self):
         for warning in self.warnings:
             print(str(warning))
+        
 
     def type_program(self, warnings:bool = False) -> PProgram:
         """Type check the entire source code and return the typed AST"""
@@ -414,16 +435,19 @@ class Typer:
             self._print_warnings()
             return self._ast
         self._ast = self.parser.parse()
+        # make tree traversable in both directions
+        self._ast._setup_parents()
         
-        self._scope_manager.define_function(PFunction(FUNC_PRINT, PType('i32', Position.default),
-                                                      [PVariableDeclaration('s', PType("string", Lexeme.default), None, Lexeme.default)],
-                                                      PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
+        #TODO print function should be imported for stdlib
+        # self._scope_manager.define_function(PFunction(FUNC_PRINT, PType('i32', Position.default),
+        #                                               [PVariableDeclaration('s', PType("string", Lexeme.default), None, Lexeme.default)],
+        #                                               PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
 
         #type builtin methods
         for typ in list(self.known_types.values()):
             if typ.name in ['void', 'null']:
                 continue
-            #make sure to say whe class we're in
+            #make sure to say the class we're in
             self._in_class = self._ptype_from_typ(typ)
             for elem in [*typ.fields, *typ.methods.values()]:
                 self._type_statement(elem)
@@ -435,8 +459,6 @@ class Typer:
                 self.known_types[statement.name] = ReferenceTyp(statement.name, 
                                                        methods={m.name:m for m in statement.methods},
                                                        fields=statement.fields) #type: ignore python typer mistake it's valid
-            elif isinstance(statement, PFunction):
-                self._scope_manager.define_function(statement)
             continue
 
         # Full tree traversal pass
@@ -447,8 +469,6 @@ class Typer:
 
         self._print_warnings()
         self._cfg_check(self._ast)
-        # make tree traversable in both directions
-        self._ast._setup_parents()
         return self._ast
 
     def _check_unused_symbols(self):
@@ -457,7 +477,7 @@ class Typer:
             if not symbol.is_read and not symbol.is_function:
                 self.warnings.append(CompilerWarning(
                     f"Variable '{symbol.name}' is declared but never read",
-                    symbol.declaration.position
+                    symbol.declaration_position
                 ))
         # Check functions
         for func in self.all_functions:
@@ -743,7 +763,7 @@ class Typer:
                 
         return False
 
-    def _type_statement(self, statement: PStatement) -> Optional[IRCompatibleTyp]:
+    def _type_statement(self, statement: PStatement) -> Optional[IRCompatibleTyp|NamespaceTyp]:
         """Type checks a statement (or expression) and returns its type"""
         if isinstance(statement, PExpression):
             return self._type_expression(statement)
@@ -787,7 +807,7 @@ class Typer:
     def _type_class(self, class_def: PClass) -> None:
         """Type checks a class definition and returns its type"""
         for prop in class_def.fields:
-            self._type_class_property(prop)
+            self._type_class_field(prop)
         
         # self._scope_manager.enter_scope()
         self._in_class = PType(class_def.name, class_def.position)
@@ -812,7 +832,7 @@ class Typer:
             self._in_class = ptype
             for field in arrTyp.fields:
                 assert isinstance(field, PClassField)
-                self._type_class_property(field)
+                self._type_class_field(field)
             for method in arrTyp.methods.values():
                 self._type_function(method)
             #return to prev state
@@ -823,7 +843,6 @@ class Typer:
 
     def _type_function(self, func: PFunction|PMethod) -> None:
         """Type checks a function definition"""
-        self._scope_manager.enter_function_scope()
         if isinstance(func, PMethod):
             assert self._in_class is not None #if method: ensure we're in a class!
             class_typ = self._type_ptype(self._in_class)
@@ -836,19 +855,24 @@ class Typer:
         
         for arg in func.function_args:
             self._type_variable_declaration(arg)
-            symbol = self._scope_manager.lookup(arg.name, arg)
-            assert not symbol.is_function
+            symbol = arg.symbol
             # Function args are always assigned
             symbol.is_assigned = True
             if func.is_builtin:
-                #ignore checks on builtins
+                # ignore checks on builtins
                 # TODO: Do the same on imported, maybe consider builtin = imported?
                 symbol.is_read = True
         
         func._return_typ_typed = self._type_ptype(func.return_type)
+        func.symbol.typ = FunctionTyp(func.symbol.ptype.type_string,
+                                    is_builtin=False,
+                                    return_type=func.return_typ_typed,
+                                    arguments=[arg.typer_pass_var_type for arg in func.function_args])
         if not func.is_builtin:
-            self.expected_return_type = func._return_typ_typed 
+            # TODO with namespaces this is not useful anymore?
             #ignore body for builtin functions (just a declaration)
+            assert self.expected_return_type is None
+            self.expected_return_type = func._return_typ_typed
             self._type_block(func.body)
 
             #add implicit return at the end of a void function if there isn't one already
@@ -861,30 +885,27 @@ class Typer:
                         PReturnStatement.implicit_return(
                             func.body.statements[-1].position))
             self.expected_return_type = None
-            
-        self._scope_manager.exit_function_scope()
-        
 
     def _type_block(self, block: PBlock) -> None:
         """Type checks a block of statements, optionally verifying return type"""
-        self._scope_manager.enter_scope()
-
         for statement in block.statements:
             self._type_statement(statement)
-        self._scope_manager.exit_scope()
 
     def _type_variable_declaration(self, var_decl: PVariableDeclaration) -> None:
         """Type checks a variable declaration"""
-        symbol = self._scope_manager.define_variable(var_decl)
+        symbol = var_decl.symbol
         self.all_symbols.append(symbol)
         var_type = self._type_ptype(var_decl.var_type)
         var_decl._typer_pass_var_type = var_type
+        symbol.typ = var_type
 
         if var_decl.initial_value is None:
             return
         
         symbol.is_assigned = True
         expr_type = self._type_expression(var_decl.initial_value)
+        assert isinstance(expr_type, IRCompatibleTyp)
+        #TODO if check fails here add to errors and suppose it's fine, continue
         if not self.check_types_match(var_type, expr_type):
             raise TypingConversionError(expr_type, var_type, var_decl)
         if expr_type != var_type:
@@ -894,9 +915,10 @@ class Typer:
     def _type_discard(self, discard:PDiscard) -> None:
         self._type_expression(discard.expression)
 
-    def _type_class_property(self, prop:PClassField) -> None:
-        """Type checks a variable declaration"""
+    def _type_class_field(self, prop:PClassField) -> None:
+        """Type checks a class field"""
         var_type = self._type_ptype(prop.var_type)
+        self._error_if_not_ir_type(var_type, prop.var_type.position)
         prop._typer_pass_var_type = var_type
         self.all_class_properties.append(prop)
 
@@ -904,6 +926,8 @@ class Typer:
             return
         prop.is_assigned = True
         expr_type = self._type_expression(prop.default_value)
+        assert isinstance(expr_type, IRCompatibleTyp)     
+               
         if not self.check_types_match(var_type, expr_type):
             raise TypingConversionError(var_type, expr_type, prop)
 
@@ -914,6 +938,8 @@ class Typer:
         self.is_assignment = False
         assignment.expr_type = ident_type
         expression_type = self._type_expression(assignment.value)
+        assert isinstance(ident_type, IRCompatibleTyp)
+        assert isinstance(expression_type, IRCompatibleTyp)
         
         if not self.check_types_match(ident_type, expression_type):
             raise TypingConversionError(expression_type, ident_type, assignment)
@@ -926,6 +952,8 @@ class Typer:
         """Type checks a binary operation and returns its result type"""
         left_type = self._type_expression(binop.left)
         right_type = self._type_expression(binop.right)
+        assert isinstance(left_type, IRCompatibleTyp)
+        assert isinstance(right_type, IRCompatibleTyp)
         common = self.get_common_type(left_type, right_type)
         if common is None:
             raise TypingError(f"Type {left_type} and {right_type} are not compatible")
@@ -948,6 +976,7 @@ class Typer:
     def _type_unary_operation(self, unop: PUnaryOperation) -> IRCompatibleTyp:
         """Type checks a unary operation and returns its result type"""
         operand_type = self._type_expression(unop.operand)
+        assert isinstance(operand_type, IRCompatibleTyp)
         if not self.can_do_operation_on_type(unop.operation, operand_type):
             raise TypingError(f"Cannot perform Unary Operation {unop.operation.name} on type {operand_type}")
         
@@ -960,6 +989,7 @@ class Typer:
     def _type_if_statement(self, if_stmt: PIfStatement) -> None:
         """Type checks an if statement"""
         condition_type = self._type_expression(if_stmt.condition)
+        assert isinstance(condition_type, IRCompatibleTyp)
         if not self.get_type_info(condition_type).type_class == TypeClass.BOOLEAN:
             raise TypingConversionError(condition_type, self.known_types['bool'], if_stmt.condition)
         self._type_block(if_stmt.then_block)
@@ -969,6 +999,7 @@ class Typer:
     def _type_while_statement(self, while_stmt: PWhileStatement) -> None:
         """Type checks a while loop"""
         condition_type = self._type_expression(while_stmt.condition)
+        assert isinstance(condition_type, IRCompatibleTyp)
         if not self.get_type_info(condition_type).type_class == TypeClass.BOOLEAN:
             raise TypingConversionError(condition_type, self.known_types['bool'], while_stmt.condition)
         self._type_block(while_stmt.body)
@@ -979,6 +1010,7 @@ class Typer:
         
         if not isinstance(for_stmt.condition, PNoop):
             condition_type = self._type_expression(for_stmt.condition)
+            assert isinstance(condition_type, IRCompatibleTyp)
             if not self.get_type_info(condition_type).type_class == TypeClass.BOOLEAN:
                 raise TypingConversionError(condition_type, self.known_types['bool'], for_stmt.condition)
         else:
@@ -992,6 +1024,7 @@ class Typer:
         """Type checks a return statement against expected return type"""
         assert self.expected_return_type is not None
         expression_type = self._type_expression(return_stmt.value)
+        assert isinstance(expression_type, IRCompatibleTyp)
         if not self.check_types_match(self.expected_return_type, expression_type):
             raise TypingConversionError(expression_type, self.expected_return_type, return_stmt)
         
@@ -1002,28 +1035,30 @@ class Typer:
 
     def _type_function_call(self, func_call: PFunctionCall) -> IRCompatibleTyp:
         """Type checks a function call and returns its return type"""
-        func = func_call.function
-        symbol = self._scope_manager.lookup(func.name, func)
+        func_ident = func_call.function
+        symbol = func_call.parent_scope.get_symbol(func_ident.name, func_ident.position)
         
-        if not symbol.is_function or symbol.parameters is None:
-            raise TypingError(f"Symbol {symbol.name} is {symbol.type.type_string} and not a function at location {func_call.position}")
+        if not symbol.is_function:
+            raise TypingError(f"Symbol {symbol.name} of type '{symbol.typ}' is not callable at {func_call.position}")
         
-        assert isinstance(symbol.declaration, PFunction)
-        symbol.declaration.is_called = True
+        symbol.is_read = True
+        assert symbol.arguments is not None
         
-        if len(symbol.parameters) != len(func_call.arguments):
-            raise TypingError(f"The function expects {len(func_call.arguments)} arguments but got {len(symbol.parameters)}"+\
+        if len(symbol.arguments) != len(func_call.arguments):
+            raise TypingError(f"The function expects {len(func_call.arguments)} arguments but got {len(symbol.arguments)}"+\
                               f" at location {func_call.position}")
         
-        for i, (expected_param, actual) in enumerate(zip(symbol.parameters, func_call.arguments)):
+        for i, (expected_param, actual) in enumerate(zip(symbol.arguments, func_call.arguments)):
             expected_type = self._type_ptype(expected_param.var_type)
             actual_type = self._type_expression(actual)
+            assert isinstance(actual_type, IRCompatibleTyp)
             if not self.check_types_match(expected_type, actual_type):
                 raise TypingConversionError(actual_type, expected_type, actual)
             if expected_type != actual_type:
                 func_call.arguments[i] = self._add_implicit_cast(actual, expected_type)
         
-        func_call.expr_type = self._type_ptype(symbol.type)
+        assert isinstance(symbol.typ, FunctionTyp)
+        func_call.expr_type = symbol.typ.return_type
         return func_call.expr_type
 
     def _type_method_call(self, method_call: PMethodCall) -> IRCompatibleTyp:
@@ -1040,6 +1075,7 @@ class Typer:
         for expected_param, actual in zip(method.explicit_arguments, method_call.arguments):
             expected_type = self._type_ptype(expected_param.var_type)
             actual_type = self._type_expression(actual)
+            assert isinstance(actual_type, IRCompatibleTyp)
             if not self.check_types_match(expected_type, actual_type):
                 raise TypingConversionError(actual_type, expected_type, actual)
         
@@ -1048,8 +1084,8 @@ class Typer:
 
     def _type_identifier(self, identifier: PIdentifier) -> IRCompatibleTyp:
         """Type checks an identifier and returns its type"""
-        symbol = self._scope_manager.lookup(identifier.name, identifier)
-        identifier.expr_type = self._type_ptype(symbol.type)
+        symbol = identifier.parent_scope.get_symbol(identifier.name, identifier.position)
+        identifier.expr_type = self._type_ptype(symbol.ptype)
         if self.is_assignment:
             symbol.is_assigned = True
         else:
@@ -1100,9 +1136,12 @@ class Typer:
         target_type = self._type_ptype(cast.target_type)
         target_type_info = self.get_type_info(target_type)
         
+        assert isinstance(expression_type, IRCompatibleTyp)
+        
         if expression_type.name == target_type.name:
             self.warnings.append(CompilerWarning(f"Unnecessary Cast", cast.position))
             cast.expr_type = target_type
+
         elif self.is_numeric_type(expression_type) and self.is_numeric_type(target_type_info):
             cast.expr_type = target_type
         elif target_type_info.type_class == TypeClass.BOOLEAN:
@@ -1127,6 +1166,7 @@ class Typer:
             raise TypingError(f"Expected array type but got '{array_type.name}'")    
         
         index = self._type_expression(array_index.index)
+        assert isinstance(index, IRCompatibleTyp)
         if self.get_type_info(index).type_class != TypeClass.INTEGER:
             raise TypingError(f"The index must be an integer type not '{index}'")
         if array_index.expr_type != index_type:
@@ -1145,6 +1185,7 @@ class Typer:
         """Type checks an array instantiation and returns the array type"""
         array_init.expr_type = self._type_ptype(PArrayType(array_init.element_type, array_init.element_type.position))
         array_size_type = self._type_expression(array_init.size)
+        assert isinstance(array_size_type, IRCompatibleTyp)
         if self.get_type_info(array_size_type).type_class != TypeClass.INTEGER:
             raise TypingError(f"Expected an array size of type Integer but got '{array_size_type}'")
         if array_size_type != self.known_types['u64']:
@@ -1209,11 +1250,13 @@ class Typer:
     def _type_assert_statement(self, assert_stmt: PAssertStatement) -> None:
         """Type checks an assert statement"""
         condition_type = self._type_expression(assert_stmt.condition)
+        assert isinstance(condition_type, IRCompatibleTyp)
         if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
             raise TypingError(f"An assertion expression must be a boolean. Are you missing a cast? {assert_stmt.condition.position}")
         
         if assert_stmt.message is not None:
             message_type = self._type_expression(assert_stmt.message)
+            assert isinstance(message_type, IRCompatibleTyp)
             if self.get_type_info(message_type).type_class != TypeClass.STRING:
                 raise TypingError(f"An assertion message must be a string!")
             

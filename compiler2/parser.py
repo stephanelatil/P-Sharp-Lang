@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any, Union, Generator
+from typing import List, Optional, Dict, Any, Union, Generator, ClassVar
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -50,6 +50,8 @@ class BaseTyp:
     """Represents a type in the P# language with its methods and fields"""
     name:str
     fields: List[Union['PClassField', 'PIdentifier']] = field(default_factory=list)
+    methods: Dict[str, 'PMethod'] = field(default_factory=dict)
+    method_pointers: Dict[str, ir.Function] = field(default_factory=dict)
     is_builtin:bool=False
     
     def __hash__(self) -> int:
@@ -69,7 +71,7 @@ class BaseTyp:
 
 @dataclass
 class IRCompatibleTyp(BaseTyp):
-    methods: Dict[str, 'PMethod'] = field(default_factory=dict)
+    default:ClassVar['IRCompatibleTyp']
     _cached_di_type:Optional[ir.DIValue] = None
     
     def __eq__(self, value: object) -> bool:
@@ -92,10 +94,14 @@ class IRCompatibleTyp(BaseTyp):
         """
         raise NotImplementedError()
 
+IRCompatibleTyp.default = IRCompatibleTyp("void",
+                                          fields=[],
+                                          methods={},
+                                          method_pointers={},
+                                          is_builtin=True)
+
 @dataclass
-class ValueTyp(IRCompatibleTyp):
-    _cached_di_type:Optional[ir.DIValue] = None
-    
+class ValueTyp(IRCompatibleTyp):    
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
     
@@ -176,7 +182,6 @@ class ValueTyp(IRCompatibleTyp):
 
 @dataclass
 class ReferenceTyp(IRCompatibleTyp):
-    
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
     
@@ -335,7 +340,28 @@ class ArrayTyp(ReferenceTyp):
 #TODO
 @dataclass
 class FunctionTyp(IRCompatibleTyp):
-    pass
+    return_type:IRCompatibleTyp = IRCompatibleTyp.default
+    arguments:List[IRCompatibleTyp] = field(default_factory=list)
+    
+    def __eq__(self, value: object) -> bool:
+        return super().__eq__(value)
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
+    def di_type(self, context:'CodeGenContext') -> Optional[ir.DIValue]:
+        raise NotImplementedError()
+    
+    def default_llvm_value(self, context:'CodeGenContext') -> ir.Constant:
+        raise NotImplementedError()
+    
+    def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
+        """Returns the llvm value-Type corresponding to the IRCompatibleTyp. All reference types will return an ir.PointerType
+
+        Returns:
+            ir.Type: The value type of this type. It's either a PointerType, VoidType, IntType or some FloatType (depending on bit-width)
+        """
+        raise NotImplementedError()
 
 ## TODO in unsafe context
 # @dataclass    
@@ -421,83 +447,282 @@ TYPE_INFO: Dict[str, TypeInfo] = {
     "f64": TypeInfo(TypeClass.FLOAT, 64),
 }
 
-
 @dataclass
-class VarInfo:
+class Symbol:
     name:str
-    type_:ir.Type
-    alloca:Optional[ir.NamedValue]=None
-    func_ptr:Optional[ir.Function]=None
+    declaration_position:Position
+    ptype:'PType'
+    ir_alloca:Optional[ir.NamedValue]=None
+    ir_func:Optional[ir.Function]=None
+    _typ:Optional[BaseTyp] = None
+    arguments:Optional[List['PVariableDeclaration']] = None # only used if it's a callable
+    #useCheck
+    is_assigned: bool = False # Checks if a function is assigned before use (Automatically True if it's a global or if it's a function param)
+    is_read: bool = False # checks if a variable is read (must be after assignment)
     
     @property
-    def is_function(self) -> bool:
-        return self.func_ptr is not None
-
-class ScopeVars:
-    def __init__(self):
-        self.scope_vars = {}
-        
-    def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
-        if name in self.scope_vars:
-            raise CompilerError(f"Variable already exists!")
-        self.scope_vars[name] = VarInfo(name, return_type, func_ptr=function_ptr)
-        
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
-        if name in self.scope_vars:
-            raise CompilerError(f"Variable already exists!")
-        self.scope_vars[name] = VarInfo(name, type_, alloca=alloca)
-        
-    def get_symbol(self, name:str) -> Optional[VarInfo]:
-        return self.scope_vars.get(name, None)
-
-class Scopes:
-    def __init__(self):
-        self.scopes:List[ScopeVars] = []
-        self.tmp_func_stack = []
+    def typ(self) -> BaseTyp:
+        if self._typ is None:
+            raise TypingError('Symbol not typed yet')
+        return self._typ
+    
+    @typ.setter
+    def typ(self, value:BaseTyp):
+        assert isinstance(value, BaseTyp)
+        self._typ = value
         
     @property
-    def current_function_scope_depth(self):
-        depth = len(self.scopes) - 1 #1 is the global scope where the global functions and global vars are defined
-        assert depth > 0
-        return depth
+    def is_function(self):
+        return isinstance(self.typ, FunctionTyp)
+    
+    @property
+    def is_namespace(self):
+        return isinstance(self.typ, NamespaceTyp)
+    
+    @property
+    def is_variable(self):
+        return isinstance(self.typ, (ReferenceTyp, ValueTyp))
 
-    def enter_scope(self):
-        self.scopes.append(ScopeVars())
+class SymbolRedefinitionError(Exception):
+    """Raised when attempting to redefine a symbol in the same scope"""
+    def __init__(self, name: str, original_position: Position, new_declaration_position: Position):
+        self.name = name
+        self.original = original_position
+        self.new_declaration = new_declaration_position
+        super().__init__(
+            f"Symbol '{name}' already defined at {original_position.line}:"
+            f"{original_position.column}, cannot redefine at "
+            f"{new_declaration_position.line}:{new_declaration_position.column}"
+        )
 
-    def leave_scope(self):
-        self.scopes.pop()
+class SymbolNotFoundError(Exception):
+    """Raised when a referenced symbol cannot be found in any accessible scope"""
+    def __init__(self, name: str, position: Position):
+        self.name = name
+        self.position = position
+        super().__init__(
+            f"Symbol '{name}' not found (referenced at {position.line}:{position.column})")
 
-    def declare_var(self, name:str, type_:ir.Type, alloca:ir.NamedValue):
-        self.scopes[-1].declare_var(name, type_, alloca)
+class ScopeType(Enum):
+    GlobalScope = auto()
+    ClassScope = auto()
+    LoopScope = auto()
+    FunctionScope = auto()
+    BlockScope = auto()
 
-    def declare_func(self, name:str, return_type:ir.Type, function_ptr:ir.Function):
-        self.scopes[-1].declare_func(name, return_type, function_ptr)
-        
-    def has_symbol(self, name:str) -> bool:
-        """Checks if a given symbol is known
+@dataclass    
+class LocalScope:
+    """The current scope of the block. It lists known symbols"""
+    
+    scope_type:ScopeType = ScopeType.BlockScope
+    """The type of scope"""
+    parent:Optional['LocalScope'] = None
+    """The parent scope to this one (None if it's a global scope)"""
+    symbols:Dict[str, Symbol] = field(default_factory=dict)
+    """The symbol map containing the known scopes. Can be variables or functions (and classes or namespaces for global scopes)"""
+    
+    def __init__(self,
+                 scope_type:ScopeType,
+                 parent:Optional['LocalScope']=None,
+                 symbols:Optional[Dict[str, Symbol]]=None):
+        self.scope_type = scope_type
+        self.parent = parent
+        self.symbols = symbols or dict()
+    
+    def has_local_or_global_symbol(self, name:str) -> bool:
+        if isinstance(self, LocalScope):
+            for symbol_name in self.symbols.keys():
+                if symbol_name == name:
+                    return True
+        if self.parent is not None:
+            return self.parent.has_local_or_global_symbol(name)
+        return False
+    
+    def has_class_symbol(self, name:str) -> bool:
+        if isinstance(self, ClassScope):
+            for symbol_name in self.symbols.keys():
+                if symbol_name == name:
+                    return True
+            return False
+        if self.parent is not None:
+            return self.parent.has_class_symbol(name)
+        return False
+    
+    def has_imported_symbol(self, name):
+        if isinstance(self, GlobalScope):
+            for symbol in self.imported_symbols:
+                pass
+            return False
+        if self.parent is not None:
+            return self.parent.has_imported_symbol(name)
+        return False
+    
+    def get_symbol(self, name:str, position:Position) -> Symbol:
+        """Fetches the symbol with the specified name from local/global symbols.
+        If none is found, check the class methods/fields
+        If none is found, check the imports
+        Similar search to c# symbols
 
         Args:
-            name (str): _description_
+            name (str): The symbol to look for
+            position (Position): Where the symbol is searched for
 
         Returns:
-            bool: _description_
+            Symbol: the found symbols
+            
+        Raises:
+            SymbolNotFoundError of no symbol with this name is found
         """
-        for scope in self.scopes[::-1]:
-            var_info = scope.get_symbol(name)
-            if var_info is not None:
-                return True
-        return False
-
-    def get_symbol(self, name:str) -> VarInfo:
-        for scope in self.scopes[::-1]:
-            var_info = scope.get_symbol(name)
-            if var_info is not None:
-                return var_info
-        
-        raise CompilerError(f"Unable to find variable {name}")
+        #todo optimize search to have only one pass
+        try:
+            return self.get_local_or_global_symbol(name, position)
+        except:
+            pass
+        try:
+            return self.get_class_symbol(name, position)
+        except:
+            pass
+        return self.get_imported_symbol(name, position)
     
-    def get_global_scope(self):
-        return self.scopes[0]
+    def get_local_or_global_symbol(self, name:str, symbol_query_pos:Position) -> Symbol:
+        if isinstance(self, LocalScope):
+            for symbol_name, symbol in self.symbols.items():
+                if symbol_name == name:
+                    return symbol
+        if self.parent is not None:
+            return self.parent.get_local_or_global_symbol(name, symbol_query_pos)
+        raise SymbolNotFoundError(name, symbol_query_pos)
+    
+    def get_class_symbol(self, name:str, symbol_query_pos:Position) -> Symbol:
+        if isinstance(self, ClassScope):
+            for symbol_name, symbol in self.symbols.items():
+                if symbol_name == name:
+                    return symbol
+        if self.parent is not None:
+            return self.parent.get_class_symbol(name, symbol_query_pos)
+        raise SymbolNotFoundError(name, symbol_query_pos)
+    
+    def get_imported_symbol(self, name:str, symbol_query_pos:Position) -> Symbol:
+        if isinstance(self, GlobalScope):
+            for symbol_name, symbol in self.symbols.items():
+                if symbol_name == name:
+                    return symbol
+        if self.parent is not None:
+            return self.parent.get_imported_symbol(name, symbol_query_pos)
+        raise SymbolNotFoundError(name, symbol_query_pos)
+    
+    def declare_local(self, symbol:Symbol) -> None:
+        if self.has_local_or_global_symbol(symbol.name):
+            raise SymbolRedefinitionError(symbol.name,
+                                          self.get_symbol(symbol.name, Position.default).declaration_position,
+                                          symbol.declaration_position)
+        self.symbols[symbol.name] = symbol
+        
+    @property
+    def num_ref_vars_declared_in_scope(self) -> int:
+        return sum((isinstance(symbol.typ, ReferenceTyp) for symbol in self.symbols.values()))
+    
+    @property
+    def gc_scope_should_be_defined(self) -> bool:
+        """Whether this scope should be notified to the GC as a scope.
+        For now it's just a bool check if there are reference variables defined"""
+        return self.num_ref_vars_declared_in_scope > 0
+
+    def generate_gc_scope_entry(self, context:'CodeGenContext'):
+        """Generates LLVM-ir for garbage collection on scope entry. Notes the number of ref vars in the local scope no declare"""
+        if not self.gc_scope_should_be_defined:
+            #noop if no reference type root-vars are declared in this scope
+            return
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
+        enter_scope_func = self.get_local_or_global_symbol(FUNC_GC_ENTER_SCOPE, Position.default).ir_func
+        assert enter_scope_func is not None
+        context.builder.call(enter_scope_func, [ir.Constant(size_t_type, self.num_ref_vars_declared_in_scope)])
+        
+    def generate_gc_scope_leave(self, context:'CodeGenContext', num_user_scopes_to_leave:int=1):
+        """Generates LLVM-ir ot notify to the garbage collector to leave N scopes.
+        Also keeps in mind skipped scopes where the GC was not notified (in case no Ref vars were declared)"""
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
+        leave_scope_func = self.get_local_or_global_symbol(FUNC_GC_LEAVE_SCOPE, Position.default).ir_func
+        assert leave_scope_func is not None
+        
+        #calculate number of GC scopes to leave
+        curr_scope, num_gc_scopes_to_leave  = self,0
+        while num_user_scopes_to_leave > 0:
+            num_gc_scopes_to_leave += curr_scope.gc_scope_should_be_defined
+            num_user_scopes_to_leave -= 1
+            if num_user_scopes_to_leave > 0:
+                assert curr_scope.parent is not None, 'Cannot leave a scope that has not been declared to the GC previously'
+                curr_scope = curr_scope.parent
+        
+        context.builder.call(leave_scope_func, 
+                             [ir.Constant(size_t_type, num_gc_scopes_to_leave)])
+
+    def add_root_to_gc(self, context:'CodeGenContext', var_name:str, pos:Position):
+        """Adds variable root location to GC"""
+        symbol:Symbol = self.get_local_or_global_symbol(var_name, pos)
+        type_ = symbol.typ
+        assert isinstance(type_, ReferenceTyp)
+        assert symbol.ir_alloca is not None
+        if type_.is_reference_type:
+            if isinstance(type_, ArrayTyp):
+                if type_.element_typ.is_reference_type:
+                    type_id = REFERENCE_ARRAY_TYPE_ID
+                else:
+                    type_id = VALUE_ARRAY_TYPE_ID
+            else:
+                type_id = context.type_ids[type_.name]
+            
+            size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data) * 8)
+            register_root_func = self.get_local_or_global_symbol(FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE, pos).ir_func
+            assert register_root_func is not None
+            context.builder.call(register_root_func,
+                                 [symbol.ir_alloca, #location of root in memory. (ptr to the held ref vars)
+                                  ir.Constant(size_t_type, type_id), #type id
+                                  context.get_char_ptr_from_string(var_name) #variable name TODO: remove this. It should be in the debug symbols!
+                                  ])
+
+@dataclass
+class GlobalScope(LocalScope):
+    """The symbols imported from another namespace. Can be global vars, classes or functions"""
+    imported_symbols:Dict[str, Symbol] = field(default_factory=dict)
+    
+    def __init__(self, module_symbols:Optional[Dict[str, Symbol]] = None,
+                       imported_symbols:Optional[Dict[str, Symbol]] = None):
+        super().__init__(ScopeType.GlobalScope,
+                         None,
+                         module_symbols or None)
+        self.imported_symbols = imported_symbols or dict()
+    
+    def declare_import(self, symbol:Symbol):
+        if self.has_imported_symbol(symbol.name):
+            raise SymbolRedefinitionError(symbol.name,
+                                          self.imported_symbols[symbol.name].declaration_position,
+                                          symbol.declaration_position)
+        self.imported_symbols[symbol.name] = symbol
+
+@dataclass
+class ClassScope(LocalScope):
+    class_ptype:'PType' = field(default_factory=lambda:PType('', Position.default))
+    _class_typ:Optional['ReferenceTyp'] = None
+    
+    def __init__(self, parent:LocalScope, class_ptype:'PType'):
+        super().__init__(scope_type=ScopeType.ClassScope,
+                         parent=parent)
+        self.class_ptype = class_ptype
+        
+    def declare_field_or_function(self, symbol:Symbol):
+        return self.declare_local(symbol)
+    
+    @property
+    def class_typ(self) -> ReferenceTyp:
+        if self._class_typ is None:
+            raise TypingError('Untyped Class scope error')
+        return self._class_typ
+    
+    @class_typ.setter
+    def class_typ(self, value:ReferenceTyp):
+        assert isinstance(value, ReferenceTyp)
+        self._class_typ = value
 
 class CompilerError(Exception):
     def __init__(self, msg):
@@ -590,53 +815,50 @@ class CodeGenContext:
         one = ir.Constant(ir.IntType(32), 1)
         return self.builder.gep(string_obj, [zero, one, zero], inbounds=True, source_etype=string_typ)
     
-    def get_method_symbol_name(self, class_name:str, method_identifier:str):
-        return f"{self.namespace}.__{class_name}.__{method_identifier}"
+    # def enter_scope(self, ref_vars:int=0):
+    #     """Enter a scope both in the GC and context scope manager"""
+    #     # scope manager enters scope
+    #     self.scopes.enter_scope()
+    #     # GC create scope
+    #     size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
+    #     enter_scope_func = self.scopes.get_symbol(FUNC_GC_ENTER_SCOPE).func_ptr
+    #     assert enter_scope_func is not None
+    #     self.builder.call(enter_scope_func,
+    #                          [ir.Constant(size_t_type, ref_vars)])
     
-    def enter_scope(self, ref_vars:int=0):
-        """Enter a scope both in the GC and context scope manager"""
-        # scope manager enters scope
-        self.scopes.enter_scope()
-        # GC create scope
-        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
-        enter_scope_func = self.scopes.get_symbol(FUNC_GC_ENTER_SCOPE).func_ptr
-        assert enter_scope_func is not None
-        self.builder.call(enter_scope_func,
-                             [ir.Constant(size_t_type, ref_vars)])
-    
-    def leave_scope(self, scopes_to_leave:int=1):            
-        """Leave N scopes both in the GC and a single one in the context scope manager.
-        The context scope if popped only once because we will continue to parse other statement in the parent block"""
-        if scopes_to_leave < 1:
-            return
-        size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
-        leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
-        assert leave_scope_func is not None
-        self.builder.call(leave_scope_func,
-                          #leave a single scope
-                          [ir.Constant(size_t_type, scopes_to_leave)])
-        #pop the scope we are currently leaving
-        self.scopes.leave_scope()
+    # def leave_scope(self, scopes_to_leave:int=1):            
+    #     """Leave N scopes both in the GC and a single one in the context scope manager.
+    #     The context scope if popped only once because we will continue to parse other statement in the parent block"""
+    #     if scopes_to_leave < 1:
+    #         return
+    #     size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
+    #     leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
+    #     assert leave_scope_func is not None
+    #     self.builder.call(leave_scope_func,
+    #                       #leave a single scope
+    #                       [ir.Constant(size_t_type, scopes_to_leave)])
+    #     #pop the scope we are currently leaving
+    #     self.scopes.leave_scope()
         
-    def add_root_to_gc(self, alloca:ir.NamedValue, type_:ReferenceTyp, var_name:str):
-        """Adds variable root location to GC"""
-        if type_.is_reference_type:
-            if isinstance(type_, ArrayTyp):
-                if type_.element_typ.is_reference_type:
-                    type_id = REFERENCE_ARRAY_TYPE_ID
-                else:
-                    type_id = VALUE_ARRAY_TYPE_ID
-            else:
-                type_id = self.type_ids[type_.name]
+    # def add_root_to_gc(self, alloca:ir.NamedValue, type_:ReferenceTyp, var_name:str):
+    #     """Adds variable root location to GC"""
+    #     if type_.is_reference_type:
+    #         if isinstance(type_, ArrayTyp):
+    #             if type_.element_typ.is_reference_type:
+    #                 type_id = REFERENCE_ARRAY_TYPE_ID
+    #             else:
+    #                 type_id = VALUE_ARRAY_TYPE_ID
+    #         else:
+    #             type_id = self.type_ids[type_.name]
             
-            size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data) * 8)
-            register_root_func = self.scopes.get_symbol(FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE).func_ptr
-            assert register_root_func is not None
-            self.builder.call(register_root_func,
-                                 [alloca, #location of root in memory. (ptr to the held ref vars)
-                                  ir.Constant(size_t_type, type_id), #type id
-                                  self.get_char_ptr_from_string(var_name) #variable name TODO: remove this. It should be in the debug symbols!
-                                  ])
+    #         size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data) * 8)
+    #         register_root_func = self.scopes.get_symbol(FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE).func_ptr
+    #         assert register_root_func is not None
+    #         self.builder.call(register_root_func,
+    #                              [alloca, #location of root in memory. (ptr to the held ref vars)
+    #                               ir.Constant(size_t_type, type_id), #type id
+    #                               self.get_char_ptr_from_string(var_name) #variable name TODO: remove this. It should be in the debug symbols!
+    #                               ])
 
 class NodeType(Enum):
     """Enumeration of all possible node types in the parser tree"""
@@ -674,26 +896,29 @@ class NodeType(Enum):
 @dataclass
 class BlockProperties:
     """The properties of the current block to be passed to statements and lower blocks"""
-    
-    """Whether the block is contained in a class"""
+
     is_class:bool = False
-    """Whether this block is the top level block of the module"""
+    """Whether the block is contained in a class"""
     is_top_level:bool = True
-    """Whether this block is contained in a loop (Note that this keeps the value True if nested multiple loops deep and is False only if it's not within a loop)"""
+    """Whether this block is the top level block of the module"""
     is_loop:bool = False
-    """Whether this block is contained inside a function block"""
+    """Whether this block is contained in a loop (Note that this keeps the value True if nested multiple loops deep and is False only if it's not within a loop)"""
     in_function:bool = False
-    """The list of variables declared in this scope"""
-    block_vars:List['PVariableDeclaration'] = field(default_factory=list)
+    """Whether this block is contained inside a function block"""
+    current_scope:LocalScope = field(default_factory=GlobalScope)
+    """The current scope containing the known variables"""
 
     def copy_with(self, is_loop:bool=False,
-                  is_class:bool=False, in_function:bool=False,
-                  is_top_level:bool=False):
+                  is_class:bool=False,
+                  in_function:bool=False,
+                  is_top_level:bool=False,
+                  scope:Optional[LocalScope]=None):
         return BlockProperties(
             is_loop=self.is_loop or is_loop,
             is_class= self.is_class or is_class,
             is_top_level= self.is_top_level and is_top_level,
-            in_function=in_function or self.in_function)
+            in_function=in_function or self.in_function,
+            current_scope=scope or self.current_scope)
 
 @dataclass
 class PStatement:
@@ -730,32 +955,26 @@ class PStatement:
         """How many scopes deep this statement is from the above loop
         a loop has a depth of 0. Any statement inside has a depth of 1 (or more if scoped within)
         This is used to count how many scopes to leave when breaking/continuing from a loop"""
-        if isinstance(self, (PWhileStatement, PForStatement)):
-            return 0 #At the loop level
-            # Here it's still 0 even for a for loop which has an extra scope encompassing it
-            # because it leaves the for-scope at the first instruction at the loop exit block
-        elif isinstance(self, PBlock):
-            # In a block increase scope by 1 and look above
-            return self.parent.depth_from_next_loop + 1
-        return self.parent.depth_from_next_loop
+        depth = 1
+        scope = self.parent_scope
+        while scope.scope_type != ScopeType.LoopScope:
+            depth += 1
+            scope = scope.parent
+            assert scope is not None
+        return depth
     
     @property
     def depth_from_next_function(self) -> int:
         """How many scopes deep this statement is within a function
         A statement in a function's top scope has a depth of 1 including its params
         This is used to calculate how many scopes to leave when returning from a function"""
-        if isinstance(self, (PFunction)):
-            return 1 #At the Function level (1 scope for the parameters!)
-        elif isinstance(self, (PForStatement, PBlock)):
-            # In a block increase scope by 1 and look above
-            # (for) Loops also create an intermediate scope for the initializer
-            return self.parent.depth_from_next_function + 1
-        return self.parent.depth_from_next_function
-    
-    #TODO: Convert to method with checks with given depth
-        # that way you can allocate a GC scope larger than a single scope to avoid nesting too many
-        # use a heuristic to evaluate how deep to go.
-        # NB: will need to reevaluate how the "depth_from_next_XX" is calculated
+        depth = 1
+        scope = self.parent_scope
+        while scope.scope_type != ScopeType.FunctionScope:
+            depth += 1
+            scope = scope.parent
+            assert scope is not None
+        return depth
     
     @property
     def count_ref_vars_declared_in_scope(self) -> int:
@@ -772,10 +991,14 @@ class PStatement:
     def generate_llvm(self, context:CodeGenContext) -> Optional[ir.Value]:
         raise NotImplementedError(f"Code generation for {type(self)} is not yet implemented")
     
+    @property
+    def parent_scope(self) -> LocalScope:
+        return self.parent.parent_scope
+    
     def exit_with_error(self, context:CodeGenContext, error_code:int=1, error_message:str="Error "):
-        printf = context.scopes.get_symbol("printf").func_ptr
+        printf = self.parent_scope.get_local_or_global_symbol("printf", Position.default).ir_func
+        exit_func = self.parent_scope.get_local_or_global_symbol("exit", Position.default).ir_func
         assert printf is not None
-        exit_func = context.scopes.get_symbol("exit").func_ptr
         assert exit_func is not None
         error_message += f" in file %s at line %d:%d\n"
         error_message_c_str_with_format = context.get_char_ptr_from_string(error_message)
@@ -812,7 +1035,14 @@ class PStatement:
         assert context.debug_info is not None
         
         return self.add_di_location_metadata(context)
-        
+
+@dataclass
+class PScopeStatement(PStatement):
+    scope:LocalScope
+    
+    @property
+    def parent_scope(self):
+        return self.scope
 
 @dataclass
 class PExpression(PStatement):
@@ -848,7 +1078,7 @@ class PNamespace(PStatement):
         self.parts = parts or [PIdentifier("Default", Lexeme.default)]
 
 @dataclass
-class PProgram(PStatement):
+class PProgram(PScopeStatement):
     """Root node of the program"""
     statements: List[PStatement]
     namespace_name: str
@@ -859,17 +1089,19 @@ class PProgram(PStatement):
             yield stmt
         return
 
-    def __init__(self, statements: List[PStatement], lexeme: Lexeme, namespace:Optional[str]=None):
-        super().__init__(NodeType.PROGRAM, lexeme.pos)
+    def __init__(self, statements: List[PStatement], lexeme: Lexeme,
+                 scope:GlobalScope, namespace:Optional[str]=None):
+        super().__init__(NodeType.PROGRAM, lexeme.pos, scope)
         self.namespace_name =  namespace or "Default"
         self.statements = statements
 
 @dataclass
-class PFunction(PStatement):
+class PFunction(PScopeStatement):
     """Function definition node"""
     name: str
     return_type: 'PType'
     function_args: List['PVariableDeclaration']  # List of (type, name) tuples
+    symbol:Symbol
     body: 'PBlock'
     is_called: bool = False
     _return_typ_typed:Optional[IRCompatibleTyp] = None
@@ -894,9 +1126,12 @@ class PFunction(PStatement):
     
     def __hash__(self) -> int:
         return hash(self.name) + hash(self.return_type) + sum([hash(func) for func in self.function_args])
-    
-    def get_linkable_name(self, context:CodeGenContext):
-        return f"{context.namespace}.{self.name}"
+
+    @staticmethod
+    def get_linkable_name(function_name:str,
+                          namespace:str,
+                          class_name:str=''):
+        return f"{namespace}.{function_name}"
     
     @property
     def return_typ_typed(self) -> IRCompatibleTyp:
@@ -905,23 +1140,31 @@ class PFunction(PStatement):
         return self._return_typ_typed
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
-                 body: 'PBlock', lexeme: Lexeme, is_builtin:bool=False):
-        super().__init__(NodeType.FUNCTION, lexeme.pos)
+                 body: 'PBlock', lexeme: Lexeme, scope:LocalScope, is_builtin:bool=False):
+        super().__init__(NodeType.FUNCTION, lexeme.pos, scope)
         self.name = name
         self.return_type = return_type
         self.function_args = parameters
         self.body = body
         self.is_builtin = is_builtin
+        self.symbol= Symbol(
+            name, 
+            lexeme.pos,
+            PFunctionType(return_type,
+                          lexeme.pos,
+                          [param.var_type for param in parameters]),
+            arguments=parameters,
+            is_assigned=self.body is not None
+        )
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        func_name = self.get_linkable_name(context)
-        assert context.scopes.has_symbol(func_name), "The function should be declared already"
-        func = context.scopes.get_symbol(func_name).func_ptr
+        func_name = self.get_linkable_name(self.name, context.namespace)
+        func = self.parent_scope.get_symbol(func_name, self.position).ir_func
         assert func is not None
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
 
-        context.enter_scope(self.count_ref_vars_declared_in_scope)
+        self.parent_scope.generate_gc_scope_entry(context)
         
         if context.compilation_opts.add_debug_symbols and isinstance(func, _HasMetadata):
             func.set_metadata("dbg", self.add_debug_info(context))
@@ -959,14 +1202,9 @@ class PFunction(PStatement):
                 call.set_metadata('dbg', self.add_di_location_metadata(context))
                 
             context.builder.store(arg_value, arg_alloca)
-            context.scopes.declare_var(param.name,
-                                       param.typer_pass_var_type.get_llvm_value_type(context),
-                                       arg_alloca)
             
             if param.is_root_to_declare_to_gc:
-                context.add_root_to_gc(arg_alloca,
-                                       param.typer_pass_var_type, #type: ignore Because the "is_root_to_declare_to_gc" checks that it's a proper ReferenceTyp already
-                                       param.name)
+                self.parent_scope.add_root_to_gc(context, param.name, param.position)
         # run body statements
         self.body.generate_llvm(context)
         
@@ -983,8 +1221,6 @@ class PFunction(PStatement):
                         context.builder.ret(self.return_typ_typed.default_llvm_value(context))
 
         # GC scope leaving handled by the return instruction (implicit for void methods)
-        # but still need to go up a scope outside of the function block
-        context.scopes.leave_scope()
         
     def di_type(self, context:CodeGenContext):
         return [self.return_typ_typed.di_type(context)] + [
@@ -1002,7 +1238,9 @@ class PFunction(PStatement):
         di_subprogram = context.module.add_debug_info("DISubprogram",
                 {
                     "name": self.name,
-                    "linkageName": self.get_linkable_name(context),
+                    "linkageName": self.get_linkable_name(self.name,
+                                                          context.namespace,
+                                                          self.class_type.name if isinstance(self, PMethod) else ''),
                     **self.di_location(context),
                     "type": subroutine_type,
                     "isDefinition": True,
@@ -1016,24 +1254,44 @@ class PFunction(PStatement):
 @dataclass    
 class PMethod(PFunction):
     _class_type:Optional[IRCompatibleTyp]=None
-
-    def __init__(self, name: str, return_type: 'PType', class_type:'PType',
-                 parameters: List['PVariableDeclaration'],
-                 body: 'PBlock', lexeme: Lexeme, is_builtin:bool = False):
-        super().__init__(name, return_type, parameters, body, lexeme, is_builtin=is_builtin)
+        
+    @staticmethod
+    def fromPFunction(pfunc:PFunction, class_type:'PType'):
+        """Converts a PFunction to a PMethod, updating it's symbol in the scope tree as well and adding the implicit "this" argument"""
         
         # Add implicit "this" argument
         # TODO: Do not include for static methods!
-        self.function_args.insert(0, PVariableDeclaration('this', class_type,
-                                                          None, class_type.position))
+        this = PVariableDeclaration(PThis.NAME, class_type,
+                                    None, class_type.position)
+        pfunc.function_args.insert(0, this)
+        #update symbol 
+        pfunc.symbol.arguments = pfunc.function_args
+        assert isinstance(pfunc.symbol.ptype, PFunctionType)
+        pfunc.symbol.ptype.argument_ptypes = [arg.var_type for arg in pfunc.function_args]
+        #declare symbol in scope
+        pfunc.scope.declare_local(this.symbol)
+        #ignore warnings for implicit symbol
+        this.symbol.is_assigned = True
+        this.symbol.is_read = True
         
+        return PMethod(pfunc.node_type,
+                       pfunc.position,
+                       pfunc.scope,
+                       pfunc.name,
+                       pfunc.return_type,
+                       pfunc.function_args,
+                       pfunc.symbol,
+                       pfunc.body)
+
     @property
     def explicit_arguments(self):
         return self.function_args[1:]
     
-    def get_linkable_name(self, context: CodeGenContext):
-        return context.get_method_symbol_name(self.class_type.name,
-                                              self.name)
+    @staticmethod
+    def get_linkable_name(function_name:str,
+                          namespace:str,
+                          class_name:str=''):
+        return f"{namespace}.__{class_name}.__{function_name}"
     
     @property
     def class_type(self):
@@ -1050,7 +1308,7 @@ class PMethod(PFunction):
         return super().__eq__(value)
 
 @dataclass
-class PClass(PStatement):
+class PClass(PScopeStatement):
     """Class definition node"""
     name: str
     fields: List['PClassField']
@@ -1071,8 +1329,10 @@ class PClass(PStatement):
         return
 
     def __init__(self, name: str, fields: List['PClassField'],
-                 methods: List[PMethod], lexeme: Lexeme):
-        super().__init__(NodeType.CLASS, lexeme.pos)
+                 methods: List[PMethod], lexeme: Lexeme,
+                 scope:ClassScope):
+        
+        super().__init__(NodeType.CLASS, lexeme.pos, scope)
         self.name = name
         self.fields = fields
         self.methods = methods
@@ -1120,13 +1380,14 @@ class PClassField(PStatement):
         return self.name == value.name and self.var_type == value.var_type
 
 @dataclass
-class PBlock(PStatement):
+class PBlock(PScopeStatement):
     """Block of statements"""
     statements: List[PStatement]
     block_properties:BlockProperties
 
-    def __init__(self, statements: List[PStatement], lexeme: Lexeme, block_properties:BlockProperties):
-        super().__init__(NodeType.BLOCK, lexeme.pos)
+    def __init__(self, statements: List[PStatement], lexeme: Lexeme,
+                 block_properties:BlockProperties):
+        super().__init__(NodeType.BLOCK, lexeme.pos, block_properties.current_scope)
         self.statements = statements
         self.block_properties = block_properties
         
@@ -1161,7 +1422,7 @@ class PBlock(PStatement):
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
             context.debug_info.di_scope.append(self.add_debug_info(context))
-        context.enter_scope(self.count_ref_vars_declared_in_scope)
+        self.parent_scope.generate_gc_scope_entry(context)
         for stmt in self.statements:
             stmt.generate_llvm(context)
             assert isinstance(context.builder.block, ir.Block)
@@ -1170,7 +1431,7 @@ class PBlock(PStatement):
                 break
         else:
             #otherwise leave the current scope for the block if the block has not been terminated by a return, break or continue
-            context.leave_scope()
+            self.parent_scope.generate_gc_scope_leave(context)
             
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
@@ -1188,6 +1449,7 @@ class PVariableDeclaration(PStatement):
     var_type: 'PType'
     _typer_pass_var_type: Optional[IRCompatibleTyp]
     initial_value: Optional[PExpression]
+    symbol:Symbol
     
     @property
     def typer_pass_var_type(self) -> IRCompatibleTyp:
@@ -1212,6 +1474,11 @@ class PVariableDeclaration(PStatement):
         self.name = name
         self.var_type = var_type
         self.initial_value = initial_value
+        
+        self.symbol = Symbol(self.name,
+                             self.position,
+                             self.var_type,
+                             is_assigned=self.initial_value is not None)
     
     def __hash__(self) -> int:
         return hash(self.name) + hash(self.var_type)
@@ -1224,12 +1491,11 @@ class PVariableDeclaration(PStatement):
     def generate_llvm(self, context: CodeGenContext) -> None:        
         type_ = self.typer_pass_var_type.get_llvm_value_type(context)
         alloca = context.builder.alloca(type_,name=self.name)
-        context.scopes.declare_var(self.name, type_, alloca)
+        symbol = self.parent_scope.get_symbol(self.name, self.position)
+        symbol.ir_alloca = alloca
         
         if self.is_root_to_declare_to_gc:
-            context.add_root_to_gc(alloca,
-                                self.typer_pass_var_type,  #type: ignore Because the "is_root_to_declare_to_gc" checks that it's a proper ReferenceTyp already
-                                self.name)
+            self.parent_scope.add_root_to_gc(context, self.name, self.position)
 
         if context.compilation_opts.add_debug_symbols:
             self.add_debug_info(context)
@@ -1254,7 +1520,7 @@ class PVariableDeclaration(PStatement):
                                                 **self.di_location(context),
                                                 "type": self.typer_pass_var_type.di_type(context)
                                             })
-        alloca = context.scopes.get_symbol(self.name).alloca
+        alloca = self.parent_scope.get_symbol(self.name, self.position).ir_alloca
         assert alloca is not None
         call = context.builder.call(context.debug_info.dbg_declare_func,
                              [alloca, #alloca Metadata
@@ -1285,7 +1551,7 @@ class PAssignment(PExpression):
         assert not get_ptr_to_expression, "Cannot get pointer to an assignment value"
         # get ptr to assign to
         if isinstance(self.target, PIdentifier):
-            target = context.scopes.get_symbol(self.target.name).alloca
+            target = self.parent_scope.get_symbol(self.target.name, self.position).ir_alloca
         elif isinstance(self.target, (PDotAttribute, PArrayIndexing)):
             #should return GEP ptr value
             target = self.target.generate_llvm(context, get_ptr_to_expression=True)
@@ -1676,7 +1942,7 @@ class PWhileStatement(PStatement):
         context.loopinfo.pop()
 
 @dataclass
-class PForStatement(PStatement):
+class PForStatement(PScopeStatement):
     """For loop node"""
     initializer: Union[PVariableDeclaration, PAssignment, PNoop]
     condition: Union[PExpression, PNoop]
@@ -1684,8 +1950,8 @@ class PForStatement(PStatement):
     body: PBlock
 
     def __init__(self, initializer: Union[PVariableDeclaration, PAssignment, PNoop], condition: Union[PExpression, PNoop],
-                 increment: Union[PStatement, PNoop], body: PBlock, lexeme: Lexeme):
-        super().__init__(NodeType.FOR_STATEMENT, lexeme.pos)
+                 increment: Union[PStatement, PNoop], body: PBlock, lexeme: Lexeme, scope:LocalScope):
+        super().__init__(NodeType.FOR_STATEMENT, lexeme.pos, scope)
         self.initializer = initializer
         self.condition = condition
         self.increment = increment
@@ -1704,7 +1970,7 @@ class PForStatement(PStatement):
         if isinstance(self.initializer, PVariableDeclaration):
             for_initializer_ref_vars = int(self.initializer.typer_pass_var_type.is_reference_type)
         
-        context.enter_scope(for_initializer_ref_vars)
+        self.parent_scope.generate_gc_scope_entry(context)
         
         init = self.initializer.generate_llvm(context)
         if context.compilation_opts.add_debug_symbols and isinstance(init, _HasMetadata):
@@ -1745,7 +2011,7 @@ class PForStatement(PStatement):
         #pop loop info, we're leaving block
         context.loopinfo.pop()
         #remove initializer scope
-        context.leave_scope()
+        self.parent_scope.generate_gc_scope_leave(context)
 
 @dataclass
 class PReturnStatement(PStatement):
@@ -1768,7 +2034,7 @@ class PReturnStatement(PStatement):
             #make sure the main function returns the correct return type
             assert isinstance(self.value.expr_type, IRCompatibleTyp)
             assert self.value.expr_type.get_llvm_value_type(context) == ir.IntType(32)
-            exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME).alloca
+            exit_code = self.parent_scope.get_local_or_global_symbol(EXIT_CODE_GLOBAL_VAR_NAME, self.position).ir_alloca
             assert exit_code is not None
             instr = context.builder.store(self.value.generate_llvm(context), exit_code)
             # leave all scopes not needed as GC cleanup will handle destroying all scopes
@@ -1776,11 +2042,11 @@ class PReturnStatement(PStatement):
             context.builder.branch(context.global_exit_block)
             
         elif isinstance(self.value, PVoid):
-            context.leave_scope(self.depth_from_next_function)
+            self.parent_scope.generate_gc_scope_leave(context, self.depth_from_next_function)
             instr = context.builder.ret_void()
         else:
             ret_val = self.value.generate_llvm(context)
-            context.leave_scope(self.depth_from_next_function)
+            self.parent_scope.generate_gc_scope_leave(context, self.depth_from_next_function)
             instr = context.builder.ret(ret_val)
 
         if context.compilation_opts.add_debug_symbols:
@@ -1856,14 +2122,14 @@ class PMethodCall(PExpression):
         this = self.object.generate_llvm(context, False)
         # null_check on "this" ONLY if it's a reference type
         if self.object.expr_type.is_reference_type:
-            null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
+            null_check_func = self.parent_scope.get_local_or_global_symbol(FUNC_NULL_REF_CHECK,
+                                                                           self.position).ir_func
             assert null_check_func is not None
             context.builder.call(null_check_func, [this, context.get_char_ptr_from_string(self.position.filename),
                                                 ir.Constant(ir.IntType(32), self.position.line),
                                                 ir.Constant(ir.IntType(32), self.position.column)])
 
-        method_name = context.get_method_symbol_name(self.object.expr_type.name, self.method_name.name)
-        fun = context.scopes.get_symbol(method_name).func_ptr
+        fun = self.object.expr_type.method_pointers[self.method_name.name]
         assert isinstance(fun, ir.Function)
         #setup arguments
         args = [this] + [a.generate_llvm(context) for a in self.arguments]
@@ -1885,26 +2151,31 @@ class PIdentifier(PExpression):
         self.name = name
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
-        variable = context.scopes.get_symbol(self.name)
+        variable = self.parent_scope.get_symbol(self.name, self.position)
+        
         if variable.is_function:
-            assert variable.func_ptr is not None
-            return variable.func_ptr
-        assert variable.alloca is not None
+            assert variable.ir_func is not None
+            return variable.ir_func
+        assert variable.ir_alloca is not None
         if get_ptr_to_expression:
-            return variable.alloca
+            return variable.ir_alloca
         else:
             assert isinstance(self.expr_type, IRCompatibleTyp)
             var_type = self.expr_type.get_llvm_value_type(context)
-            return context.builder.load(variable.alloca, typ=var_type)
+            return context.builder.load(variable.ir_alloca, typ=var_type)
 
 @dataclass
 class PThis(PExpression):
     """This node: reference to the current instance"""
+    
+    """string representation of 'this'. Used to avoid magic values"""
+    NAME:ClassVar[str] = "this"
+    
     def __init__(self, lexeme:Lexeme):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
-        this = context.scopes.get_symbol('this').alloca
+        this = self.parent_scope.get_local_or_global_symbol(self.NAME, self.position).ir_alloca
         assert this is not None
         assert isinstance(self.expr_type, IRCompatibleTyp)
         var_type = self.expr_type.get_llvm_value_type(context)
@@ -2078,7 +2349,7 @@ class PBreakStatement(PStatement):
         
     def generate_llvm(self, context: CodeGenContext) -> None:
         end_of_loop_block = context.loopinfo[-1].end_of_loop_block
-        context.leave_scope(self.depth_from_next_loop)
+        self.parent_scope.generate_gc_scope_leave(context, self.depth_from_next_loop)
         instr = context.builder.branch(end_of_loop_block)
         if context.compilation_opts.add_debug_symbols:
             instr.set_metadata("dbg", self.add_di_location_metadata(context))
@@ -2092,7 +2363,8 @@ class PContinueStatement(PStatement):
         
     def generate_llvm(self, context: CodeGenContext) -> None:
         continue_loop_block = context.loopinfo[-1].continue_loop_block
-        context.leave_scope(self.depth_from_next_loop)
+        self.parent_scope.generate_gc_scope_leave(context, 
+                                                  self.depth_from_next_loop-1) # -1 to stay within the loop scope
         instr = context.builder.branch(continue_loop_block)
         if context.compilation_opts.add_debug_symbols:
             instr.set_metadata("dbg", self.add_di_location_metadata(context))
@@ -2153,7 +2425,7 @@ class PDotAttribute(PExpression):
             # left* (a pointer to the object on the heap/stack)
             left_ptr = context.builder.load(left_mem_loc, typ=left_type)
             #Do null check here
-            null_check_func = context.scopes.get_symbol(FUNC_NULL_REF_CHECK).func_ptr
+            null_check_func = self.parent_scope.get_local_or_global_symbol(FUNC_NULL_REF_CHECK, self.position).ir_func
             assert null_check_func is not None
             context.builder.call(null_check_func, [left_ptr, context.get_char_ptr_from_string(self.position.filename),
                                                 ir.Constant(ir.IntType(32), self.position.line),
@@ -2274,7 +2546,7 @@ class PObjectInstantiation(PExpression):
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
         
         assert not get_ptr_to_expression, "Cannot get ptr to Object reference"
-        alloc_func = context.scopes.get_symbol(FUNC_GC_ALLOCATE_OBJECT).func_ptr
+        alloc_func = self.parent_scope.get_local_or_global_symbol(FUNC_GC_ALLOCATE_OBJECT, self.position).ir_func
         assert alloc_func is not None
         assert self.expr_type is not None
         allocated_ptr = context.builder.call(alloc_func,
@@ -2345,7 +2617,7 @@ class PArrayInstantiation(PExpression):
         
         if self.element_type_typ.is_reference_type:
             # Each element is a reference type
-            alloc_func = context.scopes.get_symbol(FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY).func_ptr
+            alloc_func = self.parent_scope.get_local_or_global_symbol(FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY, self.position).ir_func
             assert alloc_func is not None
             # void* __PS_AllocateRefArray(size_t num_elements)
             ptr_to_array = context.builder.call(alloc_func, [n_elements])
@@ -2356,7 +2628,7 @@ class PArrayInstantiation(PExpression):
                                                                 context.module.context)
             assert element_size in [1,2,4,8]
             element_size = ir.Constant(ir.IntType(8), element_size)
-            alloc_func = context.scopes.get_symbol(FUNC_GC_ALLOCATE_VALUE_ARRAY).func_ptr
+            alloc_func = self.parent_scope.get_local_or_global_symbol(FUNC_GC_ALLOCATE_VALUE_ARRAY, self.position).ir_func
             assert alloc_func is not None
             # void* __PS_AllocateValueArray(size_t element_size, size_t num_elements)
             ptr_to_array = context.builder.call(alloc_func, [element_size, n_elements])
@@ -2389,6 +2661,32 @@ class PType(PStatement):
         if not isinstance(value, PType):
             return False
         return str(self) == str(value)
+
+@dataclass
+class PFunctionType(PType):
+    argument_ptypes:List[PType]
+    return_ptype:PType
+    
+    @staticmethod
+    def string_representation(return_ptype:PType, argument_ptypes:List[PType]):
+        return (f"({','.join([t.type_string for t in argument_ptypes])})" +
+                f"->{return_ptype}")
+    
+    def __init__(self, return_ptype:PType, lexeme_pos:Union[Lexeme,Position], argument_ptypes:Optional[List[PType]]=None):
+        self.argument_ptypes = argument_ptypes or []
+        self.return_ptype = return_ptype
+        super().__init__(self.string_representation(self.return_ptype,
+                                                    self.argument_ptypes),
+                         lexeme_pos=lexeme_pos)
+        
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
+    def __eq__(self, value: object) -> bool:
+        return super().__eq__(value)
+    
+    def __str__(self):
+        return super().__str__()
 
 @dataclass
 class PArrayType(PType):
@@ -2465,9 +2763,9 @@ class PArrayIndexing(PExpression):
         array_element_size_in_bytes = ir.Constant(ir.IntType(8), array_element_size_in_bytes)
         index = self.index.generate_llvm(context, False)
         
-        element_fetch_function = context.scopes.get_symbol(FUNC_GET_ARRAY_ELEMENT_PTR)
-        assert element_fetch_function.func_ptr is not None
-        array_element_ptr = context.builder.call(element_fetch_function.func_ptr,
+        element_fetch_function = self.parent_scope.get_local_or_global_symbol(FUNC_GET_ARRAY_ELEMENT_PTR, self.position).ir_func
+        assert element_fetch_function is not None
+        array_element_ptr = context.builder.call(element_fetch_function,
                                                  [
                                                      array_obj, #the array ref
                                                      array_element_size_in_bytes, #the element size (should be 1,2,4 or 8)
@@ -2614,11 +2912,15 @@ class Parser:
         if self._match(LexemeType.KEYWORD_CONTROL_NAMESPACE):
             #handle namespace decleration
             namespace = self._parse_namespace_name()
+        block_properties = BlockProperties()
 
         while self.current_lexeme and self.current_lexeme.type != LexemeType.EOF:
-            statements.append(self._parse_statement(BlockProperties()))
+            statements.append(self._parse_statement(block_properties))
 
-        pprogram = PProgram(statements, start_lexeme, namespace)
+        assert isinstance(block_properties.current_scope, GlobalScope)
+        pprogram = PProgram(statements, start_lexeme,
+                            scope=block_properties.current_scope,
+                            namespace=namespace)
         return pprogram
 
     def _parse_object_instantiation(self) -> Union[PObjectInstantiation,PArrayInstantiation]:
@@ -2679,13 +2981,17 @@ class Parser:
 
         # Match statement type
         if self._match(*self.type_keywords):
-            return self._parse_declaration(block_properties)
+            decl = self._parse_declaration(block_properties)
+            block_properties.current_scope.declare_local(decl.symbol)
+            return decl
         elif (self._match(LexemeType.IDENTIFIER)
               and (self._peek_matches(1, LexemeType.IDENTIFIER) \
                    or (self._peek_matches(1, LexemeType.PUNCTUATION_OPENBRACKET)
                        and self._peek_matches(2, LexemeType.PUNCTUATION_CLOSEBRACKET)))):
             #starts with a type 
-            return self._parse_declaration(block_properties)
+            decl = self._parse_declaration(block_properties)
+            block_properties.current_scope.declare_local(decl.symbol)
+            return decl
         elif self._match(LexemeType.KEYWORD_CONTROL_IF):
             return self._parse_if_statement(block_properties.copy_with(is_top_level=False))
         elif self._match(LexemeType.KEYWORD_CONTROL_WHILE):
@@ -2714,7 +3020,10 @@ class Parser:
             return self._parse_class_definition(block_properties.copy_with(is_class=True,
                                                                            is_top_level=False))
         elif self._match(LexemeType.PUNCTUATION_OPENBRACE):
-            return self._parse_block(block_properties.copy_with(is_top_level=False))
+            block_scope = LocalScope(ScopeType.BlockScope,
+                                     block_properties.current_scope)
+            return self._parse_block(block_properties.copy_with(is_top_level=False,
+                                                                scope=block_scope))
 
         # Expression statement (assignment, function call, etc.)
         expr = self._parse_expression()
@@ -2738,7 +3047,9 @@ class Parser:
             return self._parse_function_declaration(name, var_type, type_lexeme,
                                                     block_properties.copy_with(
                                                         is_top_level=False,
-                                                        in_function=True))
+                                                        in_function=True,
+                                                        scope=LocalScope(parent=block_properties.current_scope,
+                                                                         scope_type=ScopeType.FunctionScope)))
 
         # Variable declaration
         initial_value = None
@@ -2757,6 +3068,7 @@ class Parser:
         """Parse a function declaration"""
         self._expect(LexemeType.PUNCTUATION_OPENPAREN)
         parameters:List[PVariableDeclaration] = []
+        function_scope = block_properties.current_scope
 
         # Parse parameters
         if not self._match(LexemeType.PUNCTUATION_CLOSEPAREN):
@@ -2767,6 +3079,11 @@ class Parser:
 
                 param_name_lexeme = self._expect(LexemeType.IDENTIFIER)
                 parameters.append(PVariableDeclaration(param_name_lexeme.value, param_type, None, param_name_lexeme))
+                param_symbol = Symbol(name=param_name_lexeme.value,
+                                      declaration_position=param_name_lexeme.pos,
+                                      ptype=param_type,
+                                      is_assigned=True) #function param is always assigned
+                function_scope.declare_local(param_symbol)
 
                 if not self._match(LexemeType.PUNCTUATION_COMMA):
                     break # Arrived at the end of the params
@@ -2774,9 +3091,10 @@ class Parser:
                 self._expect(LexemeType.PUNCTUATION_COMMA)
 
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
-        body = self._parse_block(block_properties)
+        body = self._parse_block(block_properties.copy_with(scope=function_scope))
 
-        return PFunction(name, return_type, parameters, body, start_lexeme)
+        return PFunction(name, return_type, parameters, body,
+                         start_lexeme, scope=function_scope)
 
     def _parse_block(self, block_properties:BlockProperties) -> PBlock:
         """Parse a block of statements"""
@@ -3169,26 +3487,32 @@ class Parser:
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
 
         # Then block can be a single statement or be a {braced block}
+        then_block_scope = LocalScope(ScopeType.BlockScope,
+                                        parent=block_properties.current_scope)
+        then_block_props = block_properties.copy_with(scope=then_block_scope)
         if self._match(LexemeType.PUNCTUATION_OPENBRACE):
-            then_block = self._parse_block(block_properties)
+            then_block = self._parse_block(then_block_props)
         else:
             start_lexeme = self.current_lexeme
-            then_block = self._parse_statement(block_properties)
+            then_block = self._parse_statement(then_block_props)
             then_block = PBlock([then_block], start_lexeme,
-                                block_properties=block_properties)
+                                block_properties=then_block_props)
 
         else_block = None
 
         if self._match(LexemeType.KEYWORD_CONTROL_ELSE):
             self.lexeme_stream.advance()
+            else_block_scope = LocalScope(ScopeType.BlockScope,
+                                        parent=block_properties.current_scope)
+            else_block_props = block_properties.copy_with(scope=else_block_scope)
             # Then block can be a single statement or be a {braced block}
             if self._match(LexemeType.PUNCTUATION_OPENBRACE):
-                else_block = self._parse_block(block_properties)
+                else_block = self._parse_block(else_block_props)
             else:
                 start_lexeme = self.current_lexeme
-                else_block = self._parse_statement(block_properties)
+                else_block = self._parse_statement(else_block_props)
                 else_block = PBlock([else_block], start_lexeme,
-                                    block_properties=block_properties)
+                                    block_properties=else_block_props)
 
         return PIfStatement(condition, then_block, else_block, if_lexeme)
 
@@ -3199,12 +3523,15 @@ class Parser:
         condition = self._parse_expression()
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
 
+        block_properties = block_properties.copy_with(is_loop=True,
+                                                      scope=LocalScope(scope_type=ScopeType.LoopScope,
+                                                                       parent=block_properties.current_scope))
 
         if self._match(LexemeType.PUNCTUATION_OPENBRACE):
-            body = self._parse_block(block_properties.copy_with(is_loop=True))
+            body = self._parse_block(block_properties)
         else:
             start_lexeme = self.current_lexeme
-            body = PBlock([self._parse_statement(block_properties.copy_with(is_loop=True))],
+            body = PBlock([self._parse_statement(block_properties)],
                           start_lexeme,
                           block_properties=block_properties)
         return PWhileStatement(condition, body, while_lexeme)
@@ -3213,6 +3540,11 @@ class Parser:
         """Parse a for loop statement"""
         for_lexeme = self._expect(LexemeType.KEYWORD_CONTROL_FOR)
         self._expect(LexemeType.PUNCTUATION_OPENPAREN)
+        
+        for_scope = LocalScope(ScopeType.LoopScope,
+                               parent=block_properties.current_scope)
+        block_properties = block_properties.copy_with(is_loop=True,
+                                                      scope=for_scope)
 
         # Initialize statement (optional)
         if self._match(LexemeType.PUNCTUATION_SEMICOLON):
@@ -3238,14 +3570,15 @@ class Parser:
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
 
         if self._match(LexemeType.PUNCTUATION_OPENBRACE):
-            body = self._parse_block(block_properties.copy_with(is_loop=True))
+            body = self._parse_block(block_properties)
         else:
             start_lexeme = self.current_lexeme
             body = PBlock([self._parse_statement(block_properties)],
                           start_lexeme,
                           block_properties=block_properties)
 
-        return PForStatement(initializer, condition, increment, body, for_lexeme)
+        return PForStatement(initializer, condition, increment, body,
+                             for_lexeme, scope=for_scope)
 
     def _parse_return_statement(self) -> PReturnStatement:
         """Parse a return statement"""
@@ -3294,6 +3627,13 @@ class Parser:
         self._expect(LexemeType.PUNCTUATION_OPENBRACE)
         fields: List[PClassField] = []
         methods: List[PMethod] = []
+        
+        class_ptype = PType(class_name_lexeme.value, class_name_lexeme)
+        class_scope = ClassScope(block_properties.current_scope,
+                                 class_ptype)
+        
+        block_properties = block_properties.copy_with(is_class=True,
+                                                      scope=class_scope)
 
         while not self._match(LexemeType.PUNCTUATION_CLOSEBRACE):
             if self._match(*self.type_keywords, LexemeType.IDENTIFIER):
@@ -3307,11 +3647,10 @@ class Parser:
                 if self._match(LexemeType.PUNCTUATION_OPENPAREN):
                     # Method
                     method = self._parse_function_declaration(member_name, type_name, type_lexeme,
-                                                              block_properties.copy_with(is_class=True,
-                                                                                         in_function=True))
-                    methods.append(
-                        PMethod(method.name, method.return_type, PType(class_name_lexeme.value, class_name_lexeme),
-                                method.function_args, method.body, name_lexeme))
+                                                              block_properties.copy_with(in_function=True,
+                                                                                         scope=LocalScope(parent=block_properties.current_scope,
+                                                                                                          scope_type=ScopeType.FunctionScope)))
+                    methods.append(PMethod.fromPFunction(method, class_ptype))
                 else:
                     # Property
                     is_public = True  # TODO: Handle visibility modifiers
@@ -3332,7 +3671,8 @@ class Parser:
                     int(p.var_type.type_string in ['bool', 'char', 'i8', 'u8', 'i16', 'u16', 'f16', 
                                                     'i32', 'u32', 'f32', 'i64', 'u64', 'f64'])
             )
-        return PClass(class_name_lexeme.value, fields, methods, class_lexeme)
+        return PClass(class_name_lexeme.value, fields, methods,
+                      class_lexeme, scope=class_scope)
 
     def _parse_ternary_operation(self, condition) -> PTernaryOperation:
         """Parse a ternary operation (condition ? true_value : false_value)"""
