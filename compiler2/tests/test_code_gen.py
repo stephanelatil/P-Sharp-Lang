@@ -56,8 +56,12 @@ class CodeGenTestCase:
             with open(outfile, 'rb') as bc:
                 return parse_bitcode(bc.read())
     
-    def get_function_ir(self, module:ModuleRef, func_name:str='main'):
-        func = module.get_function(func_name)
+    def get_function_ir(self, module:ModuleRef, func_name:str='main', namespace:str='Default'):
+        try:
+            func = module.get_function(f"{namespace}.{func_name}")
+        except:
+            #TODO fix once imports come
+            func = module.get_function(func_name)
         blocks = func.blocks
         return '\n'.join([str(block) for block in blocks])
     
@@ -91,14 +95,10 @@ class TestCodeGeneratorBasicDeclarations(CodeGenTestCase):
     """Test basic variable and function declarations"""
 
     @pytest.mark.parametrize("source, var_name",[
-            ("i32 x = 42;", "x"),
-            ("f64 pi = 3.14159;", "pi"),
-            ("bool flag = true;", "flag"),
-            ("char c = 'a';", "c"),
             ("string msg = \"hello\";", "msg")
         ])
     def test_valid_primitive_global_literal_declarations(self, source, var_name):
-        """Test valid primitive type declarations"""
+        """Test valid global init for reference types"""
         module = self.generate_module(source)
         global_ir = str(module)
         main_ir = self.get_function_ir(module, FUNC_POPULATE_GLOBALS)
@@ -1215,21 +1215,21 @@ class TestCodeGeneratorGCScope(CodeGenTestCase):
     def test_scope_management_code_after_return(self):
         source = """
         i32 f()
-        //enter scope for params
+        //no enter scope (no ref-params)
         {
             //enter scope
-            i32 x;
+            i32[] x;
             { //enter scope
-                i32 y;
+                i32[] y;
                 { //enter scope
-                    i32 z = 0;
+                    i32[] z;
                     { //enter scope
-                        //leave 4 scopes
+                        //leave 3 scopes
                         return 1;
                     }// leave 1 scope
                 }// leave 1 scope
             }// leave 1 scope
-        }// leave 1 scope
+        }// leave no scopes
         i32 main(){
             return f();
         }
@@ -1239,43 +1239,60 @@ class TestCodeGeneratorGCScope(CodeGenTestCase):
         assert result == expected
         #count the number of enter/leave scopes
         ir_code = self.get_function_ir(self.generate_module(source), "f")
-        assert ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}') == 5
-        assert f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 5)' in ir_code
+        assert ir_code.count(f'call void @{FUNC_GC_ENTER_SCOPE}') == 3
+        assert f'call void @{FUNC_GC_LEAVE_SCOPE}(i64 3)' in ir_code
         
     @pytest.mark.parametrize("source, scope_enter_count, scope_leave_counts",[
         ("""
-        bool f()//enter param scope
+        bool f()//no enter param scope (no ref params)
         {
-            //enter body scope
-            return false; //leave twice
+            //not enter body scope (no ref vars)
+            return false; //leave none
         }
-        """, 2, [2]),
+        """, 0, []),
         ("""
-        f32 f()//enter param scope
+        bool f()//no enter param scope (no ref params)
+        {
+            for (i32[] arr;;)//enter for scope
+            {
+                return false; //leave once
+            }
+            return true;
+        }
+        """, 1, [1]),
+        ("""
+        f32 f()//no enter param scope (no ref var params)
         {
             //enter body scope
+            i32 [] arr;
             if (1 == 1) //enter if scope
-                return 0.0; //leave 3 scopes
-            return 1.0; //leave 2 scopes
+            {
+                i32[] arr2;
+                return 0.0; //leave 2 scopes
+            }
+            return 1.0; //leave 1 scopes
         }
-        """, 3, [2,3]),
+        """, 2, [1,2]),
         ("""
-        bool f()//enter param scope
+        bool f(bool[] arr1)//enter param scope
         {
-            //enter body scope
+            //no enter body scope (no ref vars)
             if (true){ //enter if scope
-                for (;;) //enter for init scope
-                    //enter for body scope
+                i32[] arr2;
+                for (;;) //no enter for scope
                     while (true) //enter while scope
-                        return true; //leave 6 scopes
-                        //leave 
+                    {
+                        i32[] arr3;
+                        return true; //leave 3 scopes
+                    }
+                return true; //leave 2 scopes
             }
-            else{ //enter else scope
-                return false; //leave 3 scopes
+            else{ //no enter else scope
+                return false; //leave 1 scopes
             }
-            return false; //leave 2 scopes
+            return false; //leave 1 scopes
         }
-        """, 7, [2, 3, 6]),
+        """, 3, [1,2,3]),
         ])
     def test_enter_as_many_scopes_as_we_leave(self, source, scope_enter_count, scope_leave_counts):
         main = """
@@ -1484,9 +1501,9 @@ class DebugSymbolTestCase:
         var_pattern = re.compile(r"!DIGlobalVariable\(.*name\s*:\s*\"" + var_name + r"\"")
         assert var_pattern.search(ir_code), f"Debug info for variable '{var_name}' not found"
     
-    def assert_function_debug_info(self, ir_code, func_name):
+    def assert_function_debug_info(self, ir_code, func_name, namespace:str="Default"):
         """Check if debug info for a specific function exists"""
-        func_pattern = re.compile(r"!DISubprogram\(.*linkageName\s*:\s*\"" + func_name + r"\"")
+        func_pattern = re.compile(rf"!DISubprogram\(.*linkageName\s*:\s*\"{namespace}.{func_name}\"")
         assert func_pattern.search(ir_code), f"Debug info for function '{func_name}' not found"
     
     def assert_debug_location(self, ir_code, line_num):
