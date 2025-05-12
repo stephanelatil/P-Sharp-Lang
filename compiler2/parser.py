@@ -693,7 +693,8 @@ class LocalScope:
             if num_user_scopes_to_leave > 0:
                 assert curr_scope.parent is not None, 'Cannot leave a scope that has not been declared to the GC previously'
                 curr_scope = curr_scope.parent
-        
+        if num_gc_scopes_to_leave <= 0:
+            return
         context.builder.call(leave_scope_func, 
                              [ir.Constant(size_t_type, num_gc_scopes_to_leave)])
 
@@ -720,6 +721,44 @@ class LocalScope:
                                   ir.Constant(size_t_type, type_id), #type id
                                   context.get_char_ptr_from_string(var_name) #variable name TODO: remove this. It should be in the debug symbols!
                                   ])
+
+class NullScope(LocalScope):
+    """Similar to a local scope but won't actually be compiled to a GC scope. it's a passthrough to the parent"""
+    def get_symbol(self, name: str, position: Position = Position.default) -> Symbol:
+        assert self.parent is not None
+        return self.parent.get_symbol(name=name,
+                                      position=position)
+    
+    def declare_local(self, symbol:Symbol) -> None:
+        assert self.parent is not None
+        self.parent.declare_local(symbol)
+        
+    def has_symbol(self, name:str, position:Position=Position.default) -> bool:
+        """Checks if the given symbol exists
+        If none is found, check the class methods/fields
+        If none is found, check the imports
+        Similar search to c# symbols
+
+        Args:
+            name (str): The symbol to look for
+            position (Position): Where the symbol is searched for
+
+        Returns:
+            bool: if the symbol exists
+        """
+        assert self.parent is not None
+        return self.parent.has_symbol(name=name,
+                                      position=position)
+    
+    @property
+    def num_ref_vars_declared_in_scope(self) -> int:
+        return 0
+    
+    @property
+    def gc_scope_should_be_defined(self) -> bool:
+        """Whether this scope should be notified to the GC as a scope.
+        For now it's just a bool check if there are reference variables defined"""
+        return False
 
 @dataclass
 class GlobalScope(LocalScope):
@@ -967,12 +1006,6 @@ class PStatement:
     node_type: NodeType
     position: Position
     
-    ##TODO add PScopeStatement (PBlock?)
-    # Add scope ans known symbols to the PScopeStatement (it's a PBlock or an if/loop,function, etc.)
-    # This can add the way to make fields in a class accessible from methods and optional variable shadowing?
-    # Add property to get scope from current node and search through known symbols or add symbols
-    # Remove typer and llvm-gen scope classes. Replace with single scope manager inside the Parser si it's easily accessible from the typer-tree
-    
     def __post_init__(self):
         #add field to progress backwards though the tree
         self._parent: Optional["PStatement"] = None
@@ -1082,8 +1115,10 @@ class PScopeStatement(PStatement):
     scope:LocalScope
     
     @property
-    def parent_scope(self):
-        return self.scope
+    def parent_scope(self) -> LocalScope:
+        if self.scope is not None:
+            return self.scope
+        return super().parent_scope
     
     def _setup_parents(self):
         return super()._setup_parents()
@@ -1091,7 +1126,7 @@ class PScopeStatement(PStatement):
     @property
     def count_ref_vars_declared_in_scope(self) -> int:
         """Returns the number of reference variables defined in the scope defined by this block"""
-        return self.scope.num_ref_vars_declared_in_scope
+        return self.parent_scope.num_ref_vars_declared_in_scope
 
 @dataclass
 class PExpression(PStatement):
@@ -1203,7 +1238,7 @@ class PFunction(PScopeStatement):
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
 
-        self.scope.generate_gc_scope_entry(context)
+        self.parent_scope.generate_gc_scope_entry(context)
         
         if context.compilation_opts.add_debug_symbols and isinstance(func, _HasMetadata):
             func.set_metadata("dbg", self.add_debug_info(context))
@@ -1309,7 +1344,7 @@ class PMethod(PFunction):
         assert isinstance(pfunc.symbol.ptype, PFunctionType)
         pfunc.symbol.ptype.argument_ptypes = [arg.var_type for arg in pfunc.function_args]
         #declare symbol in scope
-        pfunc.scope.declare_local(this.symbol)
+        pfunc.parent_scope.declare_local(this.symbol)
         #ignore warnings for implicit symbol
         this.symbol.is_assigned = True
         this.symbol.is_read = True
@@ -1449,7 +1484,7 @@ class PBlock(PScopeStatement):
             yield stmt
         return
     
-    def generate_llvm(self, context: CodeGenContext, build_gc_scope=True) -> None:
+    def generate_llvm(self, context: CodeGenContext) -> None:
         """Generates the llvm IR code for this PBlock
 
         Args:
@@ -1465,7 +1500,8 @@ class PBlock(PScopeStatement):
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
             context.debug_info.di_scope.append(self.add_debug_info(context))
-        self.parent_scope.generate_gc_scope_entry(context)
+        if not isinstance(self.scope, NullScope):
+            self.scope.generate_gc_scope_entry(context)
         for stmt in self.statements:
             stmt.generate_llvm(context)
             assert isinstance(context.builder.block, ir.Block)
@@ -1474,7 +1510,8 @@ class PBlock(PScopeStatement):
                 break
         else:
             #otherwise leave the current scope for the block if the block has not been terminated by a return, break or continue
-            self.parent_scope.generate_gc_scope_leave(context)
+            if not isinstance(self.scope, NullScope):
+                self.scope.generate_gc_scope_leave(context)
             
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
@@ -3135,7 +3172,9 @@ class Parser:
                 self._expect(LexemeType.PUNCTUATION_COMMA)
 
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
-        body = self._parse_block(block_properties.copy_with(scope=function_scope))
+        body = self._parse_block(block_properties.copy_with(
+                                    scope=NullScope(scope_type=ScopeType.BlockScope,
+                                                    parent=function_scope)))
 
         return PFunction(name, return_type, parameters, body,
                          start_lexeme, scope=function_scope)
@@ -3588,7 +3627,8 @@ class Parser:
         for_scope = LocalScope(ScopeType.LoopScope,
                                parent=block_properties.current_scope)
         block_properties = block_properties.copy_with(is_loop=True,
-                                                      scope=for_scope)
+                                                      scope=NullScope(ScopeType.BlockScope,
+                                                                      parent=for_scope))
 
         # Initialize statement (optional)
         if self._match(LexemeType.PUNCTUATION_SEMICOLON):

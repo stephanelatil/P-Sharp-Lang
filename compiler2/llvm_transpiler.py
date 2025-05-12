@@ -379,16 +379,18 @@ class CodeGen:
         for statement in ast.statements:
             if isinstance(statement, PVariableDeclaration) and statement.initial_value is not None:
                 # It's a global definition and initialize value
-                # Only initialize if it's a reference type and not null, otherwise it will have already been done when declaring the global var
-                if not isinstance(statement.typer_pass_var_type, ReferenceTyp):
-                    continue
                 global_var = context.global_scope.get_symbol(statement.name).ir_alloca
                 assert global_var is not None
                 context.builder.store(statement.initial_value.generate_llvm(context),
                                       global_var)
+                # Don't add value types to GC
+                if not isinstance(statement.typer_pass_var_type, ReferenceTyp):
+                    continue
+
                 context.global_scope.add_root_to_gc(context, statement.name)
                 if statement.typer_pass_var_type.is_reference_type:
                     globals_ref_type_count += 1
+
         context.builder.ret_void()
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
