@@ -20,25 +20,25 @@ FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY = "__PS_AllocateRefArray"
 FUNC_GC_PRINT_HEAP_STATS = "__PS_PrintHeapStats"
 FUNC_PRINT = "print"
 
+FUNC_GET_ARRAY_ELEMENT_PTR = "__PS_GetPtrToArrayElement"
 """ Gets a pointer to the nth element of the given array
 void* __PS_GetPtrToArrayElement(void* array, int8_t element_size_in_bytes, int64_t index, char* filename, int32_t position_line, int32_t position_column)"""
-FUNC_GET_ARRAY_ELEMENT_PTR = "__PS_GetPtrToArrayElement"
+FUNC_NULL_REF_CHECK = "__PS_NullCheckObject"
 """Does a null_reference check on the object you're trying to dereference (field, method or array access)
 void __PS_NullCheckObject(void* object, char* filename, int32_t position_line, int32_t position_column)"""
-FUNC_NULL_REF_CHECK = "__PS_NullCheckObject"
 
 # Special setup hooks called before or after the garbage collector init/cleanups
+FUNC_HOOK_PRE_GC_INIT = "__PS_PreGcInitHook"
 """Function called before the GC initializes.
 The `new` keyword should not be used here (before the GC initializes), it's undefined behavior and may crash"""
-FUNC_HOOK_PRE_GC_INIT = "__PS_PreGcInitHook"
-"""Function called after the GC initializes and before any code in the main function. Globals may or may not be properly initialized"""
 FUNC_HOOK_POST_GC_INIT = "__PS_PostGcInitHook"
-"""Function called after all code in the main function and before the GC cleanup and after a GC pass. Use it to check for memory leaks and GC errors."""
+"""Function called after the GC initializes and before any code in the main function. Globals may or may not be properly initialized"""
 FUNC_HOOK_PRE_GC_CLEANUP = "__PS_PreGcCleanupHook"
+"""Function called after all code in the main function and before the GC cleanup and after a GC pass. Use it to check for memory leaks and GC errors."""
+FUNC_HOOK_POST_GC_CLEANUP = "__PS_PostGcCleanupHook"
 """Function called after the GC runs its cleanup.
 ALL reference variables, defined before and in this function are considered cleaned up and accessing them will lead to undefined behavior
 The `new` keyword should not be used here"""
-FUNC_HOOK_POST_GC_CLEANUP = "__PS_PostGcCleanupHook"
 
-"""The name of the global symbol that holds the program exit code"""
 EXIT_CODE_GLOBAL_VAR_NAME = "__PS_ExitCodeValue"
+"""The name of the global symbol that holds the program exit code"""
