@@ -8,10 +8,11 @@ llvmlite.opaque_pointers_enabled = True
 
 from typer import Typer, TypeClass, TypingError, CompilerWarning
 from parser import (PClass,PFunction,PProgram, IRCompatibleTyp,
-                    ArrayTyp, PClassField,
+                    ArrayTyp, PClassField, GlobalScope,
                     PReturnStatement, PVariableDeclaration,
-                    PLiteral, CodeGenContext, Scopes,
-                    CompilerError, DebugInfo, ReferenceTyp)
+                    PLiteral, CodeGenContext, Symbol, PType,
+                    CompilerError, DebugInfo, ReferenceTyp,
+                    FunctionTyp, Position, PFunctionType)
 from subprocess import Popen, PIPE
 from tempfile import TemporaryDirectory
 from typing import TextIO, Dict, Optional, Union
@@ -150,11 +151,13 @@ class CodeGen:
         else:
             debug_info = None
         self.module.add_named_metadata("llvm.ident", [f"pscc {self._COMPILER_VERSION}/llvmlite {llvmlite._version.version_version}"])
-        context = CodeGenContext(module=self.module, scopes=Scopes(),
+        assert isinstance(typed_abstract_syntax_tree.scope, GlobalScope)
+        context = CodeGenContext(module=self.module,
                                 target_data=self.target.target_data,
                                 type_map=type_map,
                                 debug_info=debug_info,
                                 compilation_opts=compiler_opts,
+                                global_scope = typed_abstract_syntax_tree.scope,
                                 namespace=typed_abstract_syntax_tree.namespace_name)
         # Setup type_ids
         type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
@@ -173,8 +176,6 @@ class CodeGen:
                 typ:self.get_llvm_struct(typ, context)
                 for typ in self.typer.known_types.values()
             }
-        #Enter global scope
-        context.scopes.enter_scope()
         #initialize builtin function prototypes
         self._init_builtin_functions_prototypes(context)
         
@@ -287,7 +288,10 @@ class CodeGen:
         default_value:int = 0
         global_var = ir.GlobalVariable(module=context.module, typ=ir.IntType(32),
                                        name=EXIT_CODE_GLOBAL_VAR_NAME)
-        context.scopes.declare_var(EXIT_CODE_GLOBAL_VAR_NAME, global_var.value_type, global_var)
+        exit_symbol = Symbol.fromIr(EXIT_CODE_GLOBAL_VAR_NAME,
+                                    typ=self.typer.known_types['i32'])
+        exit_symbol.ir_alloca = global_var
+        context.global_scope.declare_local(exit_symbol)
         if not is_library:
             global_var.initializer = ir.Constant(global_var.value_type, default_value) #type: ignore Initializer is always none according to the typer
         
@@ -344,7 +348,12 @@ class CodeGen:
         globals_ref_type_count = 0
         func_type = ir.FunctionType(ir.VoidType(), [])
         func = ir.Function(context.module, func_type, FUNC_POPULATE_GLOBALS)
-        context.scopes.declare_func(FUNC_POPULATE_GLOBALS, ir.VoidType(), func)
+        symbol = Symbol.fromIr(FUNC_POPULATE_GLOBALS,
+                               typ=FunctionTyp('()->void',
+                                               return_type=IRCompatibleTyp.default,
+                                               arguments=[]))
+        symbol.ir_func = func
+        context.global_scope.declare_local(symbol)
         context.builder.position_at_start(func.append_basic_block(FUNC_POPULATE_GLOBALS+'_entry'))
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
@@ -370,14 +379,14 @@ class CodeGen:
         for statement in ast.statements:
             if isinstance(statement, PVariableDeclaration) and statement.initial_value is not None:
                 # It's a global definition and initialize value
-                global_var = context.scopes.get_symbol(statement.name).alloca
+                # Only initialize if it's a reference type and not null, otherwise it will have already been done when declaring the global var
+                if not isinstance(statement.typer_pass_var_type, ReferenceTyp):
+                    continue
+                global_var = context.global_scope.get_symbol(statement.name).ir_alloca
                 assert global_var is not None
                 context.builder.store(statement.initial_value.generate_llvm(context),
                                       global_var)
-                assert isinstance(statement.typer_pass_var_type, ReferenceTyp)
-                context.add_root_to_gc(global_var,
-                                       statement.typer_pass_var_type,
-                                       statement.name)
+                context.global_scope.add_root_to_gc(context, statement.name)
                 if statement.typer_pass_var_type.is_reference_type:
                     globals_ref_type_count += 1
         context.builder.ret_void()
@@ -393,20 +402,20 @@ class CodeGen:
             context (CodeGenContext): The code gen context with the current module
         """
         # Run pre-GC-init hook if one is defined
-        if context.scopes.has_symbol(FUNC_HOOK_PRE_GC_INIT):
-            hook = context.scopes.get_symbol(FUNC_HOOK_PRE_GC_INIT).func_ptr
+        if context.global_scope.has_local_or_global_symbol(FUNC_HOOK_PRE_GC_INIT):
+            hook = context.global_scope.get_symbol(FUNC_HOOK_PRE_GC_INIT).ir_func
             assert hook is not None
             context.builder.call(hook, [])
 
         # Initialize type registry with correct size
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
         # void __PS_InitTypeRegistry(size_t initial_capacity)
-        init_type_registry_func = context.scopes.get_symbol(FUNC_GC_INITIALIZE_TYPE_REGISTRY).func_ptr
+        init_type_registry_func = context.global_scope.get_symbol(FUNC_GC_INITIALIZE_TYPE_REGISTRY).ir_func
         context.builder.call(init_type_registry_func,
                              [ir.Constant(size_t_type, max(context.type_ids.values()))])
         
         # Populate type registry
-        register_type_func = context.scopes.get_symbol(FUNC_GC_REGISTER_TYPE).func_ptr
+        register_type_func = context.global_scope.get_symbol(FUNC_GC_REGISTER_TYPE).ir_func
         assert register_type_func is not None
         type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
         #size_t __PS_RegisterType(size_t size, size_t num_pointers, const char* type_name)
@@ -430,13 +439,13 @@ class CodeGen:
         
         #init root tracking (tracking reference type vars)
         # void __PS_InitRootTracking(void)
-        init_root_tracking_func = context.scopes.get_symbol(FUNC_GC_INITIALIZE_ROOT_VARIABLE_TRACKING).func_ptr
+        init_root_tracking_func = context.global_scope.get_symbol(FUNC_GC_INITIALIZE_ROOT_VARIABLE_TRACKING).ir_func
         assert init_root_tracking_func is not None
         context.builder.call(init_root_tracking_func, [])
 
         # Run post-GC-init hook if one is defined
-        if context.scopes.has_symbol(FUNC_HOOK_POST_GC_INIT):
-            hook = context.scopes.get_symbol(FUNC_HOOK_POST_GC_INIT).func_ptr
+        if context.global_scope.has_local_or_global_symbol(FUNC_HOOK_POST_GC_INIT):
+            hook = context.global_scope.get_symbol(FUNC_HOOK_POST_GC_INIT).ir_func
             assert hook is not None
             context.builder.call(hook, [])
         
@@ -448,28 +457,30 @@ class CodeGen:
         """
         
         # Run pre-GC-cleanup hook if one is defined
-        if context.scopes.has_symbol(FUNC_HOOK_PRE_GC_INIT):
-            hook = context.scopes.get_symbol(FUNC_HOOK_PRE_GC_INIT).func_ptr
+        if context.global_scope.has_symbol(FUNC_HOOK_PRE_GC_INIT):
+            hook = context.global_scope.get_symbol(FUNC_HOOK_PRE_GC_INIT).ir_func
             assert hook is not None
             context.builder.call(hook, [])
         
         
         # void __PS_InitTypeRegistry(size_t initial_capacity)
-        init_type_registry_func = context.scopes.get_symbol(FUNC_GC_CLEANUP_BEFORE_PROGRAM_SHUTDOWN).func_ptr
+        init_type_registry_func = context.global_scope.get_symbol(FUNC_GC_CLEANUP_BEFORE_PROGRAM_SHUTDOWN).ir_func
         assert init_type_registry_func is not None
         # void __PS_CollectGarbage(void)
         context.builder.call(init_type_registry_func,[])
 
         # Run post-GC-cleanup hook if one is defined
-        if context.scopes.has_symbol(FUNC_HOOK_POST_GC_CLEANUP):
-            hook = context.scopes.get_symbol(FUNC_HOOK_POST_GC_CLEANUP).func_ptr
+        if context.global_scope.has_symbol(FUNC_HOOK_POST_GC_CLEANUP):
+            hook = context.global_scope.get_symbol(FUNC_HOOK_POST_GC_CLEANUP).ir_func
             assert hook is not None
             context.builder.call(hook, [])
             
-        exit_code = context.scopes.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME)
+        exit_code = context.global_scope.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME)
 
-        assert exit_code.alloca is not None
-        context.builder.ret(context.builder.load(exit_code.alloca, typ=exit_code.type_))
+        assert exit_code.ir_alloca is not None
+        assert isinstance(exit_code.typ, IRCompatibleTyp)
+        context.builder.ret(context.builder.load(exit_code.ir_alloca,
+                                                 typ=exit_code.typ.get_llvm_value_type(context)))
         
         
     def _declare_module_functions(self, ast:PProgram, context:CodeGenContext):
@@ -486,8 +497,10 @@ class CodeGen:
                 for arg in statement.function_args
             ]
             func_type = ir.FunctionType(return_type, arg_types)
-            func_ptr = ir.Function(context.module, func_type, statement.get_linkable_name(context))
-            context.scopes.declare_func(statement.get_linkable_name(context), return_type, func_ptr)
+            linkable_name = statement.get_linkable_name(statement.name,
+                                                        context.namespace)
+            func_ptr = ir.Function(context.module, func_type, linkable_name)
+            context.global_scope.get_symbol(statement.name).ir_func = func_ptr
         
     def _declare_module_class_methods(self, ast:PProgram, context:CodeGenContext):
         # TODO here we should also add the imports
@@ -496,16 +509,16 @@ class CodeGen:
                 continue
             for method in statement.methods:
                 # TODO: use vtable instead of defining as a global symbol
-                method_name = context.get_method_symbol_name(statement.class_typ.name, method.name)
+                linkable_name = method.linkable_name
                 return_type = method.return_typ_typed.get_llvm_value_type(context)
                 assert return_type is not None
-                #set "this" as first argument
+                #set "this" as first argumwent
                 arg_types = []
                 for arg in method.function_args:
                     arg_types.append(arg.typer_pass_var_type.get_llvm_value_type(context))
                 func_type = ir.FunctionType(return_type, arg_types)
-                func_ptr = ir.Function(context.module, func_type, method_name)
-                context.scopes.declare_func(method_name, return_type, func_ptr)
+                func_ptr = ir.Function(context.module, func_type, linkable_name)
+                method.symbol.ir_func = func_ptr
         
     def _declare_module_globals(self, ast:PProgram, context:CodeGenContext):
         """Declares global variables.
@@ -540,7 +553,7 @@ class CodeGen:
                 global_var.set_metadata("dbg", debug_info)
             else:
                 debug_info = None
-            context.scopes.declare_var(global_var.name, var_type, global_var)
+            statement.symbol.ir_alloca = global_var
         
     def _compile_module_functions(self, ast:PProgram, context:CodeGenContext):
         for statement in ast.statements:
@@ -596,16 +609,13 @@ class CodeGen:
                                     'Please write your code inside the i32 main() function')
 
         if main_func_stmt is not None:
-            #count the number of defined reference value variables in this scope
-            main_scope_ref_var_count = 0
-            for stmt in main_func_stmt.body.statements:
-                if isinstance(stmt, PVariableDeclaration) and stmt.typer_pass_var_type.is_reference_type:
-                    main_scope_ref_var_count += 1
+            #Enter global scope for ref vars & main
+            #TODO also count imported global ref_vars
+            self._generate_scope_entry(context,
+                                       global_ref_var_count + main_func_stmt.count_ref_vars_declared_in_scope)
 
-            #enter main function scope and build
-            context.enter_scope(main_scope_ref_var_count + global_ref_var_count)
             # make sure to populate globals first and add them to the GC
-            populate_globals_func = context.scopes.get_symbol(FUNC_POPULATE_GLOBALS).func_ptr
+            populate_globals_func = context.global_scope.get_symbol(FUNC_POPULATE_GLOBALS).ir_func
             assert populate_globals_func is not None
             context.builder.call(populate_globals_func,[])
             main_function_returned = False
@@ -625,6 +635,14 @@ class CodeGen:
         else:
             warn("No main function",
                  CompilerWarning)
+            
+    def _generate_scope_entry(self, context:CodeGenContext, num_vars:int):
+        if num_vars <= 0:
+            return
+        size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
+        enter_scope_func = context.global_scope.get_symbol(FUNC_GC_ENTER_SCOPE).ir_func
+        assert enter_scope_func is not None
+        context.builder.call(enter_scope_func, [ir.Constant(size_t_type, num_vars)])
 
     def _init_builtin_functions_prototypes(self, context:CodeGenContext):
         """Adds builtin functions to the global scope"""
@@ -651,6 +669,12 @@ class CodeGen:
         # Retrieve and declare builtins from the runtime
         with open(self._RUNTIME_LIB, 'rb') as runtime_bc:
             runtime_mod = parse_bitcode(runtime_bc.read())
+            
+        #TODO temporary before imports
+        str_to_type_map = {
+            f'__{typ.name}':typ for typ in context.type_map.keys()
+        }
+        
         for runtime_func in runtime_mod.functions:
             #convert TypeRef to Type
             element_types = [typeref_to_type(typeref) for typeref in runtime_func.global_value_type.elements]
@@ -661,9 +685,22 @@ class CodeGen:
             func = ir.Function(context.module,
                                func_type,
                                runtime_func.name)
-            context.scopes.declare_func(name=runtime_func.name,
-                                        return_type=func.return_value.type,
-                                        function_ptr=func)
+            
+            #TODO temporary before we have imports
+            if not runtime_func.name.startswith("__"):
+                continue
+            if runtime_func.name.count('.') > 0:
+                typ_name, method_name = str(runtime_func.name).split('.')
+                assert typ_name in str_to_type_map
+                typ = str_to_type_map[typ_name]
+                typ.methods[method_name.removeprefix('__')].symbol.ir_func = func
+            else:
+                context.global_scope.declare_import(Symbol(
+                    runtime_func.name, Position.default,
+                    ptype=PFunctionType(PType('N/A', Position.default),
+                                        Position.default,[]),
+                    ir_func=func
+                ))
 
     def get_llvm_struct(self, typ: IRCompatibleTyp, context:Optional[CodeGenContext]) -> Union[ir.IntType,
                                                    ir.HalfType,

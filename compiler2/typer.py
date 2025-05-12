@@ -862,6 +862,8 @@ class Typer:
                 # ignore checks on builtins
                 # TODO: Do the same on imported, maybe consider builtin = imported?
                 symbol.is_read = True
+                func.symbol.is_read = True
+                func.symbol.is_assigned = True
         
         func._return_typ_typed = self._type_ptype(func.return_type)
         func.symbol.typ = FunctionTyp(func.symbol.ptype.type_string,
@@ -879,11 +881,12 @@ class Typer:
             if self.get_type_info(self.expected_return_type).type_class == TypeClass.VOID:
                 if len(func.body.statements) == 0:
                     func.body.statements.append(
-                        PReturnStatement.implicit_return(func.body.position))
+                        PReturnStatement.implicit_return(func.body.position, func.body))
                 if not isinstance(func.body.statements[-1], PReturnStatement):
                     func.body.statements.append(
                         PReturnStatement.implicit_return(
-                            func.body.statements[-1].position))
+                            func.body.statements[-1].position,
+                            func.body))
             self.expected_return_type = None
 
     def _type_block(self, block: PBlock) -> None:

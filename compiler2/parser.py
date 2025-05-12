@@ -51,8 +51,9 @@ class BaseTyp:
     name:str
     fields: List[Union['PClassField', 'PIdentifier']] = field(default_factory=list)
     methods: Dict[str, 'PMethod'] = field(default_factory=dict)
-    method_pointers: Dict[str, ir.Function] = field(default_factory=dict)
     is_builtin:bool=False
+    
+    #TODO add namespace field to know where this type came from
     
     def __hash__(self) -> int:
         return hash(self.name)
@@ -93,12 +94,6 @@ class IRCompatibleTyp(BaseTyp):
             ir.Type: The value type of this type. It's either a PointerType, VoidType, IntType or some FloatType (depending on bit-width)
         """
         raise NotImplementedError()
-
-IRCompatibleTyp.default = IRCompatibleTyp("void",
-                                          fields=[],
-                                          methods={},
-                                          method_pointers={},
-                                          is_builtin=True)
 
 @dataclass
 class ValueTyp(IRCompatibleTyp):    
@@ -270,6 +265,14 @@ class ReferenceTyp(IRCompatibleTyp):
                                     "size":ir.PointerType().get_abi_size(context.target_data)*8
                                 })
         return ditype
+    
+    def default_llvm_value(self, context: 'CodeGenContext') -> ir.Constant:
+        return ir.Constant(ir.PointerType(), ir.PointerType.null)
+
+IRCompatibleTyp.default = ValueTyp("void",
+                                    fields=[],
+                                    methods={},
+                                    is_builtin=True)
 
 @dataclass
 class ArrayTyp(ReferenceTyp):
@@ -466,6 +469,28 @@ class Symbol:
             raise TypingError('Symbol not typed yet')
         return self._typ
     
+    @staticmethod
+    def fromIr(name:str,
+               typ:IRCompatibleTyp,
+               arguments:Optional[List[IRCompatibleTyp]]=None) -> 'Symbol':
+        
+        #TODO replace this with a correct import from builtins
+        ptype = PType(typ.name, Position.default)
+        symbol = Symbol(name=name,
+                        declaration_position=Position.default,
+                        ptype=ptype,
+                        _typ=typ)
+        if arguments is not None:
+            args = []
+            for i,arg_typ in enumerate(arguments):
+                arg = PVariableDeclaration(f'arg{i}',
+                                     var_type=PType(arg_typ.name, Position.default),
+                                     initial_value=None,
+                                     lexeme_pos=Position.default)
+                arg._typer_pass_var_type = arg_typ
+            symbol.arguments = args
+        return symbol
+    
     @typ.setter
     def typ(self, value:BaseTyp):
         assert isinstance(value, BaseTyp)
@@ -557,7 +582,7 @@ class LocalScope:
             return self.parent.has_imported_symbol(name)
         return False
     
-    def get_symbol(self, name:str, position:Position) -> Symbol:
+    def get_symbol(self, name:str, position:Position=Position.default) -> Symbol:
         """Fetches the symbol with the specified name from local/global symbols.
         If none is found, check the class methods/fields
         If none is found, check the imports
@@ -586,27 +611,24 @@ class LocalScope:
     
     def get_local_or_global_symbol(self, name:str, symbol_query_pos:Position) -> Symbol:
         if isinstance(self, LocalScope):
-            for symbol_name, symbol in self.symbols.items():
-                if symbol_name == name:
-                    return symbol
+            if name in self.symbols:
+                return self.symbols[name]
         if self.parent is not None:
             return self.parent.get_local_or_global_symbol(name, symbol_query_pos)
         raise SymbolNotFoundError(name, symbol_query_pos)
     
     def get_class_symbol(self, name:str, symbol_query_pos:Position) -> Symbol:
         if isinstance(self, ClassScope):
-            for symbol_name, symbol in self.symbols.items():
-                if symbol_name == name:
-                    return symbol
+            if name in self.symbols:
+                return self.symbols[name]
         if self.parent is not None:
             return self.parent.get_class_symbol(name, symbol_query_pos)
         raise SymbolNotFoundError(name, symbol_query_pos)
     
     def get_imported_symbol(self, name:str, symbol_query_pos:Position) -> Symbol:
         if isinstance(self, GlobalScope):
-            for symbol_name, symbol in self.symbols.items():
-                if symbol_name == name:
-                    return symbol
+            if name in self.imported_symbols:
+                return self.imported_symbols[name]
         if self.parent is not None:
             return self.parent.get_imported_symbol(name, symbol_query_pos)
         raise SymbolNotFoundError(name, symbol_query_pos)
@@ -618,6 +640,24 @@ class LocalScope:
                                           symbol.declaration_position)
         self.symbols[symbol.name] = symbol
         
+    def has_symbol(self, name:str, position:Position=Position.default):
+        """Checks if the given symbol exists
+        If none is found, check the class methods/fields
+        If none is found, check the imports
+        Similar search to c# symbols
+
+        Args:
+            name (str): The symbol to look for
+            position (Position): Where the symbol is searched for
+
+        Returns:
+            bool: if the symbol exists
+        """
+        try:
+            return self.get_symbol(name, position) is not None
+        except:
+            return False
+    
     @property
     def num_ref_vars_declared_in_scope(self) -> int:
         return sum((isinstance(symbol.typ, ReferenceTyp) for symbol in self.symbols.values()))
@@ -634,15 +674,15 @@ class LocalScope:
             #noop if no reference type root-vars are declared in this scope
             return
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
-        enter_scope_func = self.get_local_or_global_symbol(FUNC_GC_ENTER_SCOPE, Position.default).ir_func
+        enter_scope_func = self.get_symbol(FUNC_GC_ENTER_SCOPE, Position.default).ir_func
         assert enter_scope_func is not None
         context.builder.call(enter_scope_func, [ir.Constant(size_t_type, self.num_ref_vars_declared_in_scope)])
-        
+
     def generate_gc_scope_leave(self, context:'CodeGenContext', num_user_scopes_to_leave:int=1):
         """Generates LLVM-ir ot notify to the garbage collector to leave N scopes.
         Also keeps in mind skipped scopes where the GC was not notified (in case no Ref vars were declared)"""
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
-        leave_scope_func = self.get_local_or_global_symbol(FUNC_GC_LEAVE_SCOPE, Position.default).ir_func
+        leave_scope_func = self.get_symbol(FUNC_GC_LEAVE_SCOPE, Position.default).ir_func
         assert leave_scope_func is not None
         
         #calculate number of GC scopes to leave
@@ -657,9 +697,9 @@ class LocalScope:
         context.builder.call(leave_scope_func, 
                              [ir.Constant(size_t_type, num_gc_scopes_to_leave)])
 
-    def add_root_to_gc(self, context:'CodeGenContext', var_name:str, pos:Position):
+    def add_root_to_gc(self, context:'CodeGenContext', var_name:str, pos:Position=Position.default):
         """Adds variable root location to GC"""
-        symbol:Symbol = self.get_local_or_global_symbol(var_name, pos)
+        symbol:Symbol = self.get_symbol(var_name, pos)
         type_ = symbol.typ
         assert isinstance(type_, ReferenceTyp)
         assert symbol.ir_alloca is not None
@@ -673,7 +713,7 @@ class LocalScope:
                 type_id = context.type_ids[type_.name]
             
             size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data) * 8)
-            register_root_func = self.get_local_or_global_symbol(FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE, pos).ir_func
+            register_root_func = self.get_symbol(FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE, pos).ir_func
             assert register_root_func is not None
             context.builder.call(register_root_func,
                                  [symbol.ir_alloca, #location of root in memory. (ptr to the held ref vars)
@@ -757,6 +797,7 @@ class CodeGenContext:
     type_map:Dict[IRCompatibleTyp, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]]
     #the debug information. ignored if -g flag not set
     debug_info:Optional[DebugInfo]
+    global_scope:GlobalScope
     """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
     loopinfo:List[LoopContext] = field(default_factory=list)
     builder:ir.IRBuilder = ir.IRBuilder()
@@ -996,8 +1037,8 @@ class PStatement:
         return self.parent.parent_scope
     
     def exit_with_error(self, context:CodeGenContext, error_code:int=1, error_message:str="Error "):
-        printf = self.parent_scope.get_local_or_global_symbol("printf", Position.default).ir_func
-        exit_func = self.parent_scope.get_local_or_global_symbol("exit", Position.default).ir_func
+        printf = self.parent_scope.get_symbol("printf", Position.default).ir_func
+        exit_func = self.parent_scope.get_symbol("exit", Position.default).ir_func
         assert printf is not None
         assert exit_func is not None
         error_message += f" in file %s at line %d:%d\n"
@@ -1043,6 +1084,14 @@ class PScopeStatement(PStatement):
     @property
     def parent_scope(self):
         return self.scope
+    
+    def _setup_parents(self):
+        return super()._setup_parents()
+
+    @property
+    def count_ref_vars_declared_in_scope(self) -> int:
+        """Returns the number of reference variables defined in the scope defined by this block"""
+        return self.scope.num_ref_vars_declared_in_scope
 
 @dataclass
 class PExpression(PStatement):
@@ -1114,15 +1163,6 @@ class PFunction(PScopeStatement):
                      self.body):
             yield stmt
         return
-        
-    @property
-    def count_ref_vars_declared_in_scope(self) -> int:
-        """Returns the number of reference variables defined in the scope defined by this block"""
-        ref_vars = 0
-        for stmt in self.function_args:
-            if stmt.is_root_to_declare_to_gc:
-                ref_vars += 1
-        return ref_vars
     
     def __hash__(self) -> int:
         return hash(self.name) + hash(self.return_type) + sum([hash(func) for func in self.function_args])
@@ -1158,13 +1198,12 @@ class PFunction(PScopeStatement):
         )
         
     def generate_llvm(self, context: CodeGenContext) -> None:
-        func_name = self.get_linkable_name(self.name, context.namespace)
-        func = self.parent_scope.get_symbol(func_name, self.position).ir_func
+        func = self.symbol.ir_func
         assert func is not None
         
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
 
-        self.parent_scope.generate_gc_scope_entry(context)
+        self.scope.generate_gc_scope_entry(context)
         
         if context.compilation_opts.add_debug_symbols and isinstance(func, _HasMetadata):
             func.set_metadata("dbg", self.add_debug_info(context))
@@ -1181,6 +1220,7 @@ class PFunction(PScopeStatement):
                 # NB: written to just means that an argument x can be written to.
                 # The caller will not have the value changed from his point of view, he just passed a value not a reference!
             arg_alloca = context.builder.alloca(arg_value.type)
+            param.symbol.ir_alloca = arg_alloca
             debug_info:Optional[ir.DIValue] = None
             if context.compilation_opts.add_debug_symbols and isinstance(arg_alloca, _HasMetadata):
                 assert context.debug_info is not None
@@ -1274,14 +1314,14 @@ class PMethod(PFunction):
         this.symbol.is_assigned = True
         this.symbol.is_read = True
         
-        return PMethod(pfunc.node_type,
-                       pfunc.position,
-                       pfunc.scope,
-                       pfunc.name,
-                       pfunc.return_type,
-                       pfunc.function_args,
-                       pfunc.symbol,
-                       pfunc.body)
+        return PMethod(node_type= pfunc.node_type,
+                       position=pfunc.position,
+                       scope=pfunc.scope,
+                       name=pfunc.name,
+                       return_type=pfunc.return_type,
+                       function_args=pfunc.function_args,
+                       symbol=pfunc.symbol,
+                       body=pfunc.body)
 
     @property
     def explicit_arguments(self):
@@ -1292,6 +1332,18 @@ class PMethod(PFunction):
                           namespace:str,
                           class_name:str=''):
         return f"{namespace}.__{class_name}.__{function_name}"
+
+    @property
+    def linkable_name(self):
+        namespace = ''
+        parent = self.parent
+        while not isinstance(parent, PProgram):
+            if parent is None:
+                raise RuntimeError('Unable to fetch current namespace')
+            parent=parent.parent
+        return PMethod.get_linkable_name(self.name,
+                                         parent.namespace_name,
+                                         self.class_type.name)
     
     @property
     def class_type(self):
@@ -1396,15 +1448,6 @@ class PBlock(PScopeStatement):
         for stmt in self.statements:
             yield stmt
         return
-        
-    @property
-    def count_ref_vars_declared_in_scope(self) -> int:
-        """Returns the number of reference variables defined in the scope defined by this block"""
-        ref_vars = 0
-        for stmt in self.children:
-            if isinstance(stmt, PVariableDeclaration) and stmt.is_root_to_declare_to_gc:
-                ref_vars += 1
-        return ref_vars
     
     def generate_llvm(self, context: CodeGenContext, build_gc_scope=True) -> None:
         """Generates the llvm IR code for this PBlock
@@ -2034,7 +2077,7 @@ class PReturnStatement(PStatement):
             #make sure the main function returns the correct return type
             assert isinstance(self.value.expr_type, IRCompatibleTyp)
             assert self.value.expr_type.get_llvm_value_type(context) == ir.IntType(32)
-            exit_code = self.parent_scope.get_local_or_global_symbol(EXIT_CODE_GLOBAL_VAR_NAME, self.position).ir_alloca
+            exit_code = self.parent_scope.get_symbol(EXIT_CODE_GLOBAL_VAR_NAME, self.position).ir_alloca
             assert exit_code is not None
             instr = context.builder.store(self.value.generate_llvm(context), exit_code)
             # leave all scopes not needed as GC cleanup will handle destroying all scopes
@@ -2054,8 +2097,9 @@ class PReturnStatement(PStatement):
             
     
     @staticmethod
-    def implicit_return(position:Position):
+    def implicit_return(position:Position, parent:PScopeStatement):
         ret = PReturnStatement(None, Lexeme.default)
+        ret._parent = parent
         ret.position = position
         return ret
 
@@ -2122,14 +2166,14 @@ class PMethodCall(PExpression):
         this = self.object.generate_llvm(context, False)
         # null_check on "this" ONLY if it's a reference type
         if self.object.expr_type.is_reference_type:
-            null_check_func = self.parent_scope.get_local_or_global_symbol(FUNC_NULL_REF_CHECK,
+            null_check_func = self.parent_scope.get_symbol(FUNC_NULL_REF_CHECK,
                                                                            self.position).ir_func
             assert null_check_func is not None
             context.builder.call(null_check_func, [this, context.get_char_ptr_from_string(self.position.filename),
                                                 ir.Constant(ir.IntType(32), self.position.line),
                                                 ir.Constant(ir.IntType(32), self.position.column)])
 
-        fun = self.object.expr_type.method_pointers[self.method_name.name]
+        fun = self.object.expr_type.methods[self.method_name.name].symbol.ir_func
         assert isinstance(fun, ir.Function)
         #setup arguments
         args = [this] + [a.generate_llvm(context) for a in self.arguments]
@@ -2175,7 +2219,7 @@ class PThis(PExpression):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
-        this = self.parent_scope.get_local_or_global_symbol(self.NAME, self.position).ir_alloca
+        this = self.parent_scope.get_symbol(self.NAME, self.position).ir_alloca
         assert this is not None
         assert isinstance(self.expr_type, IRCompatibleTyp)
         var_type = self.expr_type.get_llvm_value_type(context)
@@ -2425,7 +2469,7 @@ class PDotAttribute(PExpression):
             # left* (a pointer to the object on the heap/stack)
             left_ptr = context.builder.load(left_mem_loc, typ=left_type)
             #Do null check here
-            null_check_func = self.parent_scope.get_local_or_global_symbol(FUNC_NULL_REF_CHECK, self.position).ir_func
+            null_check_func = self.parent_scope.get_symbol(FUNC_NULL_REF_CHECK, self.position).ir_func
             assert null_check_func is not None
             context.builder.call(null_check_func, [left_ptr, context.get_char_ptr_from_string(self.position.filename),
                                                 ir.Constant(ir.IntType(32), self.position.line),
@@ -2546,7 +2590,7 @@ class PObjectInstantiation(PExpression):
         size_t_type = ir.IntType(ir.PointerType().get_abi_size(context.target_data)*8)
         
         assert not get_ptr_to_expression, "Cannot get ptr to Object reference"
-        alloc_func = self.parent_scope.get_local_or_global_symbol(FUNC_GC_ALLOCATE_OBJECT, self.position).ir_func
+        alloc_func = self.parent_scope.get_symbol(FUNC_GC_ALLOCATE_OBJECT, self.position).ir_func
         assert alloc_func is not None
         assert self.expr_type is not None
         allocated_ptr = context.builder.call(alloc_func,
@@ -2617,7 +2661,7 @@ class PArrayInstantiation(PExpression):
         
         if self.element_type_typ.is_reference_type:
             # Each element is a reference type
-            alloc_func = self.parent_scope.get_local_or_global_symbol(FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY, self.position).ir_func
+            alloc_func = self.parent_scope.get_symbol(FUNC_GC_ALLOCATE_REFERENCE_OBJ_ARRAY, self.position).ir_func
             assert alloc_func is not None
             # void* __PS_AllocateRefArray(size_t num_elements)
             ptr_to_array = context.builder.call(alloc_func, [n_elements])
@@ -2628,7 +2672,7 @@ class PArrayInstantiation(PExpression):
                                                                 context.module.context)
             assert element_size in [1,2,4,8]
             element_size = ir.Constant(ir.IntType(8), element_size)
-            alloc_func = self.parent_scope.get_local_or_global_symbol(FUNC_GC_ALLOCATE_VALUE_ARRAY, self.position).ir_func
+            alloc_func = self.parent_scope.get_symbol(FUNC_GC_ALLOCATE_VALUE_ARRAY, self.position).ir_func
             assert alloc_func is not None
             # void* __PS_AllocateValueArray(size_t element_size, size_t num_elements)
             ptr_to_array = context.builder.call(alloc_func, [element_size, n_elements])
@@ -2763,7 +2807,7 @@ class PArrayIndexing(PExpression):
         array_element_size_in_bytes = ir.Constant(ir.IntType(8), array_element_size_in_bytes)
         index = self.index.generate_llvm(context, False)
         
-        element_fetch_function = self.parent_scope.get_local_or_global_symbol(FUNC_GET_ARRAY_ELEMENT_PTR, self.position).ir_func
+        element_fetch_function = self.parent_scope.get_symbol(FUNC_GET_ARRAY_ELEMENT_PTR, self.position).ir_func
         assert element_fetch_function is not None
         array_element_ptr = context.builder.call(element_fetch_function,
                                                  [
@@ -3078,12 +3122,12 @@ class Parser:
                 param_type = self._parse_type()
 
                 param_name_lexeme = self._expect(LexemeType.IDENTIFIER)
-                parameters.append(PVariableDeclaration(param_name_lexeme.value, param_type, None, param_name_lexeme))
-                param_symbol = Symbol(name=param_name_lexeme.value,
-                                      declaration_position=param_name_lexeme.pos,
-                                      ptype=param_type,
-                                      is_assigned=True) #function param is always assigned
-                function_scope.declare_local(param_symbol)
+                param = PVariableDeclaration(name=param_name_lexeme.value,
+                                             var_type=param_type,
+                                             initial_value=None,
+                                             lexeme_pos=param_name_lexeme)
+                parameters.append(param)
+                function_scope.declare_local(param.symbol)
 
                 if not self._match(LexemeType.PUNCTUATION_COMMA):
                     break # Arrived at the end of the params
