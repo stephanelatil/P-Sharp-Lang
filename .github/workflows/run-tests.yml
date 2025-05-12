@@ -14,9 +14,16 @@ permissions:
 
 jobs:
   build-and-run:
+    timeout-minutes: 30
     runs-on: ubuntu-22.04
     name: Build environement and run tests 
     steps:
+      - name: Install llvm toolchain
+        timeout-minutes: 5 #make sure it goes quickly or kill. Should be fast
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: llvm15
+          version: 0.1
       - name: Checkout
         uses: actions/checkout@main
       - name: Set up Python 3.12
@@ -25,8 +32,6 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Install llvm toolchain
-        run: sudo apt update && sudo apt install -y llvm-15
       - name: Run tests and collect coverage
         run: pytest --cov --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
       - name: Upload coverage to Codecov
