@@ -36,6 +36,16 @@ Like in python, when you have an array `i32[] arr = new i32[10]`. Indexing it wi
 
 ## [-] Add a proper compiler executable (or main.py) file with documentation, cli args etc.
 
+## [ ] Possible issue when GC tries to free a literal string
+
+Literal strings are placed in the program and in the code: `string s = " hello world";`: the `s` variable is a reference to read only memory in the program! the GC may try to free it. 
+
+Potential solutions:
+
+1. When defining a literal string: mem-copy it on to the heap so the string object is located in the heap. It will however decrease performance and increase memory use. 
+1. Do as above but adding a way to differentiate "dynamic" strings (created from "ToString" or similar) from literal strings?
+1. Do as `1.` but add a compiler macro/keyword or similar to place the read only mem on the ROM (in program ROM) and disallow editing it?
+
 ## [ ] Add `unsafe` context allowing for interacting directly with pointers, arrays without runtime checks etc.
 
 This should allow you to build HAL drivers or build wrappers to C libs more easily and directly in P# instead of in C to then need linking and possible function name translation.
