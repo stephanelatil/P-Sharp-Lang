@@ -14,29 +14,63 @@ class ParserWarning(Warning):
     pass
 
 class LexemeStream:
-    def __init__(self, lexmes:Generator[Lexeme, None, None], filename:str):
-        self.lexeme_gen = lexmes
+    def __init__(self, lexemes:Generator[Lexeme, None, None], filename:str):
+        self.lexeme_gen = lexemes
         self.buffer = deque()
         self.pos = Position(filename=filename)
-        self.eof = False
-
-    def peek(self, amount=0) -> Lexeme:
-        if self.eof and len(self.buffer) == 0:
-            return Lexeme.default
-
-        while len(self.buffer) <= amount:
+        self._saved_pos = []
+        self._index_after_saved = 0
+        
+    def _advance_buffer(self, to_read:int=128):
+        """Read ahead N tokens to refill buffer. Stops if reaches EOF"""
+        for i in range(to_read):
             lexeme = next(self.lexeme_gen, None)
             if not lexeme:
-                self.eof = True
-                return Lexeme.default
+                raise EOFError()
             self.buffer.append(lexeme)
+        
+    @property
+    def _index(self):
+        return self._index_after_saved + sum(self._saved_pos)
+    
+    def _purge_buffer_of_non_saved_tokens(self):
+        if len(self._saved_pos) == 0:
+            #no saved position, purge deque of read lexemes
+            for i in range(self._index_after_saved):
+                self.buffer.popleft()
+            self._index_after_saved = 0
+    
+    def save_position(self):
+        self._saved_pos.append(self._index_after_saved)
+        self._index_after_saved = 0
+    
+    def drop_saved_position(self):
+        assert len(self._saved_pos) > 0
+        self._index_after_saved += self._saved_pos.pop()
+        self._purge_buffer_of_non_saved_tokens()
+    
+    def pop_saved_position(self):
+        assert len(self._saved_pos) > 0
+        self._index_after_saved = self._saved_pos.pop()
+        self._purge_buffer_of_non_saved_tokens()
 
-        return self.buffer[amount]
+    def peek(self, amount=0) -> Lexeme:
+        try:
+            while len(self.buffer) <= amount + self._index:
+                self._advance_buffer()
+        except EOFError:
+            if len(self.buffer) <= amount + self._index:
+                return Lexeme.default
+
+        return self.buffer[self._index + amount]
 
     def advance(self) -> Lexeme:
         lexeme = self.peek()
         if lexeme is not None:
-            self.buffer.popleft()
+            if len(self._saved_pos) > 0:
+                self._index_after_saved += 1
+            else:
+                self.buffer.popleft()
             self.pos = lexeme.pos
         if lexeme is None:
             raise EOFError()
@@ -3201,6 +3235,8 @@ class Parser:
             - MyClass
             - int[]
             - MyClass[][]
+            - Namespace.MyClass
+            
 
         Returns:
             Union[str, PArrayType]: The parsed type (either a string for simple types
@@ -3212,6 +3248,9 @@ class Parser:
 
         type_lexeme = self.lexeme_stream.advance()
         base_type = PType(type_lexeme.value, type_lexeme)
+        while self._match(LexemeType.OPERATOR_DOT):
+            base_type = PNamespaceType.fromPtype(base_type)
+            
 
         # Check for array brackets
         while self._match(LexemeType.PUNCTUATION_OPENBRACKET) and self._peek_matches(1, LexemeType.PUNCTUATION_CLOSEBRACKET):
@@ -3246,18 +3285,14 @@ class Parser:
     def _parse_expression(self, min_precedence: int = 0, is_lvalue=True) -> PExpression:
         """Parse an expression using precedence climbing"""
         left = self._parse_primary(is_lvalue)
-        is_lvalue = is_lvalue and left.node_type in (NodeType.ARRAY_ACCESS,
-                                       NodeType.ATTRIBUTE,
-                                       NodeType.CLASS_PROPERTY,
-                                       NodeType.IDENTIFIER)
         
-        # Add matching member access in expression
-        if self._match(LexemeType.OPERATOR_DOT):
-            left = self._parse_member_access(left)
-
+        # Continue processing any chained operations (method calls, indexing, dot access)
+        left = self._process_chained_operations(left, is_lvalue)
+        
+        # Binary operations and operators with precedence
         while (not self.current_lexeme is Lexeme.default and
-               self.current_lexeme.type in self.unary_binary_ops and
-               (self.precedence[self.unary_binary_ops[self.current_lexeme.type]] >= min_precedence)):
+            self.current_lexeme.type in self.unary_binary_ops and
+            (self.precedence[self.unary_binary_ops[self.current_lexeme.type]] >= min_precedence)):
             is_lvalue = False
             op_lexeme = self.current_lexeme
             op = self.unary_binary_ops[op_lexeme.type]
@@ -3274,26 +3309,29 @@ class Parser:
                     raise ParserError("Cannot increment or decrement something other than a variable or array index", op_lexeme)
                 if op_lexeme.type == LexemeType.OPERATOR_UNARY_INCREMENT:
                     left = PUnaryOperation(UnaryOperation.POST_INCREMENT,
-                                           left, op_lexeme)
+                                        left, op_lexeme)
                 elif op_lexeme.type == LexemeType.OPERATOR_UNARY_DECREMENT:
                     left = PUnaryOperation(UnaryOperation.POST_DECREMENT,
-                                           left, op_lexeme)
+                                        left, op_lexeme)
                 else:
                     raise ParserError("Cannot have a Unary Operator other than ++ or -- after an identifier",
-                                      op_lexeme)
+                                    op_lexeme)
                 continue
 
             current_precedence = self.precedence[op]
 
             right = self._parse_expression(current_precedence + 1, is_lvalue=False)
             left = PBinaryOperation(op, left, right, op_lexeme)
+            
+            # Process any chained operations on the resultant binary operation
+            left = self._process_chained_operations(left, False)
 
-        #parse assignments
+        # Parse assignments 
         if is_lvalue and not (self.current_lexeme is Lexeme.default):
             if self._match(LexemeType.OPERATOR_BINARY_ASSIGN):
                 if not isinstance(left, (PDotAttribute, PIdentifier, PArrayIndexing)):
                     raise ParserError("Cannot assign to anything else than a variable, array or field",
-                                      self.current_lexeme)
+                                    self.current_lexeme)
                 self._expect(LexemeType.OPERATOR_BINARY_ASSIGN)
                 assign_lexeme = self.current_lexeme
                 left = PAssignment(left, self._parse_expression(is_lvalue=False), assign_lexeme)
@@ -3302,7 +3340,7 @@ class Parser:
                 if not isinstance(left, (PDotAttribute, PIdentifier)):
                     raise ParserError("Cannot assign to anything else than a variable or property", self.current_lexeme)
             else:
-                #handle +=, -=, *= ... and other binop assignments
+                # Handle +=, -=, *= ... and other binop assignments
                 for lexeme_type, op in ((LexemeType.OPERATOR_BINARY_PLUSEQ, BinaryOperation.PLUS),
                                         (LexemeType.OPERATOR_BINARY_MINUSEQ, BinaryOperation.MINUS),
                                         (LexemeType.OPERATOR_BINARY_TIMESEQ, BinaryOperation.TIMES),
@@ -3317,12 +3355,12 @@ class Parser:
                         self._expect(lexeme_type)
                         assert isinstance(left, (PIdentifier, PDotAttribute, PArrayIndexing))
                         left = PAssignment(left,
-                                           # do binop
-                                           PBinaryOperation(op,
+                                        # do binop
+                                        PBinaryOperation(op,
                                                             left,
                                                             self._parse_expression(is_lvalue=False),
                                                             self.current_lexeme),
-                                           curr_lexeme)
+                                        curr_lexeme)
                         break
         return left
 
@@ -3331,7 +3369,7 @@ class Parser:
         discard_lexeme = self._expect(LexemeType.DISCARD)
         
         self._expect(LexemeType.OPERATOR_BINARY_ASSIGN)
-        expression = self._parse_expression()
+        expression = self._parse_expression(is_lvalue=False)
         self._expect(LexemeType.PUNCTUATION_SEMICOLON)
         
         return PDiscard(expression, discard_lexeme)
@@ -3349,29 +3387,49 @@ class Parser:
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
 
         # Parse the expression being cast (with high precedence to bind tightly)
-        expression = self._parse_primary()
+        # max precedence because a cast applies only directly to the expressions after it
+        expression = self._parse_expression(min_precedence=max(self.precedence.values()))
 
         return PCast(target_type, expression)
 
     def _parse_primary(self, is_lvalue=True) -> PExpression:
-        """Parse a primary expression (identifier, literal, parenthesized expr, cast, etc.)"""
+        """Parse a primary expression 
+        (identifier, literal, parenthesized expr, cast, chained dot access, calls, etc.)"""
         if self.current_lexeme is Lexeme.default:
             raise ParserError("Unexpected end of file", self.current_lexeme)
 
         # Handle opening parenthesis - could be cast or grouped expression
         if self._match(LexemeType.PUNCTUATION_OPENPAREN):
-
-            # Look ahead to check if this is a type cast
-            if self._peek_matches(1, *self.type_keywords, LexemeType.IDENTIFIER):
-                # Possible type cast - need one more check
-
-                # If next token is closing parenthesis, this is definitely a cast
-                if self._peek_matches(2, LexemeType.PUNCTUATION_CLOSEPAREN):
-                    return self._parse_cast()
-
-            # Not a cast - parse as normal parenthesized expression
-            self.lexeme_stream.advance()  # consume opening paren
-            expr = self._parse_expression(is_lvalue=is_lvalue)
+            open_paren_lexeme = self._expect(LexemeType.PUNCTUATION_OPENPAREN)  # consume opening paren
+            
+            # Check if this might be a cast by looking for a type
+            
+            if self._match(*self.type_keywords, LexemeType.IDENTIFIER):
+                # Remember current position to backtrack if needed
+                self.lexeme_stream.save_position()
+                
+                # Try to parse as a type
+                try:
+                    potential_type = self._parse_type()
+                    
+                    # If we find a closing paren after the type, it's likely a cast
+                    if self._match(LexemeType.PUNCTUATION_CLOSEPAREN):
+                        self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
+                        # Parse expression being cast (with high precedence)
+                        # expression = self._parse_expression(min_precedence=max(self.precedence.values()))
+                        expression = self._parse_primary(is_lvalue=False)
+                        self.lexeme_stream.drop_saved_position()
+                        return PCast(potential_type, expression)
+                    
+                    else:
+                        # Not a cast, restore position and continue as grouped expression
+                        self.lexeme_stream.pop_saved_position()
+                except ParserError:
+                    # Not a valid type, restore position
+                    self.lexeme_stream.pop_saved_position()
+            
+            # Parse as a normal parenthesized expression
+            expr = self._parse_expression(is_lvalue=False)
             self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
             return expr
 
@@ -3380,27 +3438,28 @@ class Parser:
                         LexemeType.STRING_LITERAL, LexemeType.NUMBER_CHAR):
             return self._parse_literal()
 
-        # Handle identifiers and function calls
+        # Handle identifiers and calls
         elif self._match(LexemeType.IDENTIFIER, LexemeType.KEYWORD_OBJECT_THIS):
             return self._parse_identifier_or_call_or_array_indexing()
 
         # Handle unary operators
         elif self._match(LexemeType.OPERATOR_BINARY_MINUS,
-                         LexemeType.OPERATOR_UNARY_BOOL_NOT,
-                         LexemeType.OPERATOR_UNARY_LOGIC_NOT,
-                         LexemeType.OPERATOR_UNARY_INCREMENT,
-                         LexemeType.OPERATOR_UNARY_DECREMENT):
+                        LexemeType.OPERATOR_UNARY_BOOL_NOT,
+                        LexemeType.OPERATOR_UNARY_LOGIC_NOT,
+                        LexemeType.OPERATOR_UNARY_INCREMENT,
+                        LexemeType.OPERATOR_UNARY_DECREMENT):
             op_map = {
-                LexemeType.OPERATOR_BINARY_MINUS:UnaryOperation.MINUS,
+                LexemeType.OPERATOR_BINARY_MINUS: UnaryOperation.MINUS,
                 LexemeType.OPERATOR_UNARY_BOOL_NOT: UnaryOperation.BOOL_NOT,
-                LexemeType.OPERATOR_UNARY_INCREMENT:UnaryOperation.PRE_INCREMENT,
+                LexemeType.OPERATOR_UNARY_INCREMENT: UnaryOperation.PRE_INCREMENT,
                 LexemeType.OPERATOR_UNARY_DECREMENT: UnaryOperation.PRE_DECREMENT,
                 LexemeType.OPERATOR_UNARY_LOGIC_NOT: UnaryOperation.LOGIC_NOT
             }
 
             op_lexeme = self.lexeme_stream.advance()
             op = op_map[op_lexeme.type]
-            operand = self._parse_primary()
+            # Parse the expression with appropriate precedence
+            operand = self._parse_primary()  # Use primary to handle unary op precedence correctly
 
             if (op in (UnaryOperation.PRE_DECREMENT, UnaryOperation.PRE_INCREMENT)
                 and not isinstance(operand, (PArrayIndexing, PIdentifier, PDotAttribute, PThis))):
@@ -3423,6 +3482,27 @@ class Parser:
             return self._parse_object_instantiation()
 
         raise ParserError("Unexpected token in expression", self.current_lexeme)
+
+    def _process_chained_operations(self, expr: PExpression, is_lvalue=True) -> PExpression:
+        """Process any chained operations like method calls, array indexing, or dot access"""
+        while True:
+            # Process any potential chaining
+            if self._match(LexemeType.OPERATOR_DOT):
+                # Handle dot access
+                expr = self._parse_member_access(expr)
+            elif self._match(LexemeType.PUNCTUATION_OPENBRACKET):
+                # Handle array indexing
+                expr = self._parse_array_indexing(expr)
+            elif self._match(LexemeType.PUNCTUATION_OPENPAREN):
+                # Handle method/function calls
+                if not isinstance(expr, (PIdentifier, PDotAttribute)):
+                    raise ParserError(f"Cannot call a {type(expr)}. Only an identifier or property can be called",
+                                    self.current_lexeme)
+                expr = self._parse_call_and_arguments(expr)
+            else:
+                # No more chaining
+                break
+        return expr
 
     def _parse_literal(self) -> PLiteral:
         """Parse a literal value"""

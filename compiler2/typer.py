@@ -825,12 +825,13 @@ class Typer:
         if ptype.type_string in self.known_types:
             return self.known_types[ptype.type_string]
         elif isinstance(ptype, PArrayType):
-            arrTyp = ArrayTyp(self._type_ptype(ptype.element_type))
+            element_typ = self._type_ptype(ptype.element_type)
+            arrTyp = ArrayTyp(element_type=element_typ)
             self.known_types[ptype.type_string] = arrTyp
             #store tmp class location fo type builtins (TODO: should be done another way, typing it somewhere else)
             tmp_class = self._in_class
             self._in_class = ptype
-            for field in arrTyp.fields:
+            for field in arrTyp.fields.values():
                 assert isinstance(field, PClassField)
                 self._type_class_field(field)
             for method in arrTyp.methods.values():
