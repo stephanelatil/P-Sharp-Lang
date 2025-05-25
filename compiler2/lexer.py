@@ -19,6 +19,10 @@ class Position:
         else:
             self.column += 1
         self.index += 1
+        
+    def __hash__(self) -> int:
+        return (hash(self.filename) << 13
+                + hash(self.index))
 
     def copy(self) -> 'Position':
         return Position(self.line, self.column, self.index, self.filename)

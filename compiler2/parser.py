@@ -83,11 +83,7 @@ class LexemeStream:
 class BaseTyp:
     """Represents a type in the P# language with its methods and fields"""
     name:str
-    fields: List[Union['PClassField', 'PIdentifier']] = field(default_factory=list)
-    methods: Dict[str, 'PMethod'] = field(default_factory=dict)
-    is_builtin:bool=False
-    
-    #TODO add namespace field to know where this type came from
+    parent_namespace:Optional['NamespaceTyp'] = None
     
     def __hash__(self) -> int:
         return hash(self.name)
@@ -103,11 +99,22 @@ class BaseTyp:
     @property
     def is_reference_type(self) -> bool:
         return isinstance(self, ReferenceTyp)
+    
+    @property
+    def full_name(self) -> str:
+        """Returns the type's full name with parent namespaces and without aliases"""
+        if self.parent_namespace is None:
+            return self.name
+        return f"{self.parent_namespace.full_name}.{self.name}"
 
 @dataclass
 class IRCompatibleTyp(BaseTyp):
-    default:ClassVar['IRCompatibleTyp']
+    fields: Dict[str, 'PClassField'] = field(default_factory=dict)
+    #TODO place methods in "fields" because a method is a valid field and it's typed
+    methods: Dict[str, 'PMethod'] = field(default_factory=dict)
+    default:ClassVar['IRCompatibleTyp'] = None #type: ignore # this is just a placeholder it will be populated after the class definition
     _cached_di_type:Optional[ir.DIValue] = None
+    type_info:TypeInfo = field(default_factory=lambda : TypeInfo(TypeClass.CLASS, is_builtin=False))
     
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
@@ -121,7 +128,7 @@ class IRCompatibleTyp(BaseTyp):
     def default_llvm_value(self, context:'CodeGenContext') -> ir.Constant:
         raise NotImplementedError()
     
-    def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
+    def get_llvm_value_type(self, context:'CodeGenContext') -> ir.Type:
         """Returns the llvm value-Type corresponding to the IRCompatibleTyp. All reference types will return an ir.PointerType
 
         Returns:
@@ -130,7 +137,7 @@ class IRCompatibleTyp(BaseTyp):
         raise NotImplementedError()
 
 @dataclass
-class ValueTyp(IRCompatibleTyp):    
+class ValueTyp(IRCompatibleTyp): 
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
     
@@ -141,43 +148,42 @@ class ValueTyp(IRCompatibleTyp):
         if self._cached_di_type is not None:
             return self._cached_di_type
         ditype = None
-        if self.name in TYPE_INFO:
-            tinfo = TYPE_INFO[self.name]
-            if self.name == 'char':
-                ditype = context.module.add_debug_info("DIBasicType",
-                                                     {
-                                                        "name":self.name,
-                                                        "size":tinfo.bit_width,
-                                                        "encoding": ir.DIToken("DW_ATE_signed_char") if tinfo.is_signed else ir.DIToken("DW_ATE_unsigned_char")
-                                                     })
-            elif tinfo.type_class == TypeClass.INTEGER:
-                ditype = context.module.add_debug_info("DIBasicType",
-                                                     {
-                                                        "name":self.name,
-                                                        "size":tinfo.bit_width,
-                                                        "encoding": ir.DIToken("DW_ATE_signed") if tinfo.is_signed else ir.DIToken("DW_ATE_unsigned")
-                                                     })
-            elif tinfo.type_class == TypeClass.BOOLEAN:
-                ditype = context.module.add_debug_info("DIBasicType",
-                                                     {
-                                                        "name":self.name,
-                                                        "size":tinfo.bit_width,
-                                                        "encoding": ir.DIToken("DW_ATE_boolean")
-                                                     })
-            elif tinfo.type_class == TypeClass.FLOAT:
-                ditype = context.module.add_debug_info("DIBasicType",
-                                                     {
-                                                        "name":self.name,
-                                                        "size":tinfo.bit_width,
-                                                        "encoding": 4#"DW_ATE_float"
-                                                     })
-            elif tinfo.type_class == TypeClass.VOID:
-                return None
+        tinfo = self.type_info
+        if self.name == 'char':
+            ditype = context.module.add_debug_info("DIBasicType",
+                                                    {
+                                                    "name":self.name,
+                                                    "size":tinfo.bit_width,
+                                                    "encoding": ir.DIToken("DW_ATE_signed_char") if tinfo.is_signed else ir.DIToken("DW_ATE_unsigned_char")
+                                                    })
+        elif tinfo.type_class == TypeClass.INTEGER:
+            ditype = context.module.add_debug_info("DIBasicType",
+                                                    {
+                                                    "name":self.name,
+                                                    "size":tinfo.bit_width,
+                                                    "encoding": ir.DIToken("DW_ATE_signed") if tinfo.is_signed else ir.DIToken("DW_ATE_unsigned")
+                                                    })
+        elif tinfo.type_class == TypeClass.BOOLEAN:
+            ditype = context.module.add_debug_info("DIBasicType",
+                                                    {
+                                                    "name":self.name,
+                                                    "size":tinfo.bit_width,
+                                                    "encoding": ir.DIToken("DW_ATE_boolean")
+                                                    })
+        elif tinfo.type_class == TypeClass.FLOAT:
+            ditype = context.module.add_debug_info("DIBasicType",
+                                                    {
+                                                    "name":self.name,
+                                                    "size":tinfo.bit_width,
+                                                    "encoding": 4#"DW_ATE_float"
+                                                    })
+        elif tinfo.type_class == TypeClass.VOID:
+            return None
         #set in cache
         self._cached_di_type = ditype
         return ditype
     
-    def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
+    def get_llvm_value_type(self, context:'CodeGenContext') -> ir.Type:
         """Returns the llvm value-Type corresponding to the IRCompatibleTyp. All reference types will return an ir.PointerType
 
         Returns:
@@ -185,24 +191,16 @@ class ValueTyp(IRCompatibleTyp):
         """
         type_map = {
             'void': ir.VoidType(),
-            'char': ir.IntType(8),
-            'i8': ir.IntType(8),
-            'i16': ir.IntType(16),
-            'i32': ir.IntType(32),
-            'i64': ir.IntType(64),
-            'u8': ir.IntType(8),
-            'u16': ir.IntType(16),
-            'u32': ir.IntType(32),
-            'u64': ir.IntType(64),
             'f16': ir.HalfType(),
             'f32': ir.FloatType(),
             'f64': ir.DoubleType(),
-            'bool': ir.IntType(1),
             'null': ir.PointerType() # null is a point type (points to nothing but still a pointer technically)
         }
         
         if self.name in type_map:
             return type_map[self.name]
+        elif self.type_info.type_class in [TypeClass.INTEGER, TypeClass.BOOLEAN]:
+            return ir.IntType(self.type_info.bit_width)
         raise TypingError(f"Unknown value type {self.name}")
     
     def default_llvm_value(self, context:'CodeGenContext'):
@@ -217,12 +215,7 @@ class ReferenceTyp(IRCompatibleTyp):
     def __hash__(self) -> int:
         return super().__hash__()
    
-    def get_llvm_value_type(self, context: Optional['CodeGenContext']) -> Union[ir.IntType,
-                                                                                ir.HalfType,
-                                                                                ir.FloatType,
-                                                                                ir.DoubleType,
-                                                                                ir.VoidType,
-                                                                                ir.PointerType]:
+    def get_llvm_value_type(self, context: 'CodeGenContext') -> ir.Type:
         if context is None:
             return ir.PointerType()
         else:
@@ -303,28 +296,27 @@ class ReferenceTyp(IRCompatibleTyp):
     def default_llvm_value(self, context: 'CodeGenContext') -> ir.Constant:
         return ir.Constant(ir.PointerType(), ir.PointerType.null)
 
-IRCompatibleTyp.default = ValueTyp("void",
-                                    fields=[],
-                                    methods={},
-                                    is_builtin=True)
-
 @dataclass
 class ArrayTyp(ReferenceTyp):
     def __init__(self, element_type:IRCompatibleTyp):
         self.element_typ:IRCompatibleTyp = element_type        
         methods:Dict[str, PMethod] = {}
-        fields:List[PClassField] = [PClassField("Length",
-                                        #TODO make global Const somewhere to define if array length is a i64 or i32
-                                        PType('i64', Lexeme.default), 
-                                        lexeme=Lexeme.default,
-                                        is_public=True,
-                                        is_builtin=True,
-                                        default_value=None)
-                                    ]
+        fields:Dict[str, PClassField] = {"Length":PClassField("Length",
+                                                            #TODO make global Const somewhere to define if array length is a i64 or i32
+                                                            PType('i64', Lexeme.default),
+                                                            field_index=0,
+                                                            lexeme=Lexeme.default,
+                                                            is_public=True,
+                                                            is_builtin=True,
+                                                            default_value=None)
+                                    }
         
         super().__init__(f'{element_type.name}[]',
                          methods=methods,
-                         fields=fields) #type: ignore
+                         fields=fields, #type: ignore
+                         parent_namespace=NamespaceTyp.builtin)
+        self.type_info.type_class = TypeClass.ARRAY
+        self.type_info.is_builtin = True
     
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
@@ -336,9 +328,9 @@ class ArrayTyp(ReferenceTyp):
         if self._cached_di_type is not None:
             return self._cached_di_type
         
-        assert len(self.fields) == 1 and self.fields[0].name == "Length"
-        assert isinstance(self.fields[0], PClassField)
-        length_field_type:IRCompatibleTyp = self.fields[0].typer_pass_var_type
+        assert len(self.fields) == 1 and "Length" in self.fields
+        assert isinstance(self.fields["Length"], PClassField)
+        length_field_type:IRCompatibleTyp = self.fields["Length"].typer_pass_var_type
         length_field_size = (length_field_type.get_llvm_value_type(context)
                                               .get_abi_size(context.target_data)*8)
         
@@ -374,11 +366,21 @@ class ArrayTyp(ReferenceTyp):
         self._cached_di_type = ditype
         return ditype
 
-#TODO
 @dataclass
 class FunctionTyp(IRCompatibleTyp):
     return_type:IRCompatibleTyp = IRCompatibleTyp.default
     arguments:List[IRCompatibleTyp] = field(default_factory=list)
+    is_method:bool = False
+    
+    def __init__(self, str_name:str,
+                 return_type:IRCompatibleTyp = IRCompatibleTyp.default,
+                 arguments:List[IRCompatibleTyp] = field(default_factory=list),
+                 is_method:bool = False, parent_namespace:Optional['NamespaceTyp']=None):
+        super().__init__(str_name, parent_namespace=parent_namespace)
+        self.return_type = return_type
+        self.arguments = arguments
+        self.is_method = is_method
+        self.type_info.type_class = TypeClass.FUNCTION
     
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
@@ -387,12 +389,20 @@ class FunctionTyp(IRCompatibleTyp):
         return super().__hash__()
     
     def di_type(self, context:'CodeGenContext') -> Optional[ir.DIValue]:
-        raise NotImplementedError()
+        if self._cached_di_type is not None:
+            return self._cached_di_type
+        ditype = context.module.add_debug_info("DISubroutineType",
+                                    {
+                                        "types": [self.return_type.di_type(context)]+\
+                                                    [arg.di_type(context) for arg in self.arguments]
+                                    })
+        self._cached_di_type = ditype
+        return ditype
     
     def default_llvm_value(self, context:'CodeGenContext') -> ir.Constant:
         raise NotImplementedError()
     
-    def get_llvm_value_type(self, context:Optional['CodeGenContext']) -> Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.PointerType]:
+    def get_llvm_value_type(self, context:'CodeGenContext') -> ir.Type:
         """Returns the llvm value-Type corresponding to the IRCompatibleTyp. All reference types will return an ir.PointerType
 
         Returns:
@@ -405,10 +415,12 @@ class FunctionTyp(IRCompatibleTyp):
 # class PointerTyp(IRCompatibleTyp):
 #     pass
 
+# ????
 # @dataclass
 # class FunctionPointerTyp(PointerType):
 #     pass
 
+# ????
 # @dataclass
 # The type for 
 # class ClassTyp(BaseType):
@@ -416,19 +428,30 @@ class FunctionTyp(IRCompatibleTyp):
 
 @dataclass
 class NamespaceTyp(BaseTyp):
-    def __init__(self, name:str, fields:List['PIdentifier']):
+    fields: Dict[str, Union['PClass', 'PFunction', 'PVariableDeclaration', 'PIdentifier']] = field(default_factory=dict)
+    builtin:ClassVar['NamespaceTyp'] = None #type: ignore # this is just a placeholder it will be populated after the class definition
+    
+    def __init__(self, name:str, fields:Optional[Dict[str, Union['PClass', 'PFunction', 'PVariableDeclaration', 'PIdentifier']]]=None,
+                 parent_namespace:Optional['NamespaceTyp']=None):
         """Creates a new namespace type. The fields is used to defined what is available to import from this namespace
 
         Args:
             name (str): The name of this namespace
             fields (List[PIdentifier]): The list of global vars functions and types that are usable when imported from this namespace
         """
-        super().__init__(name, fields=fields) # type: ignore #otherwise unhappy because List[PIdentifier] is not included in List[PIdentifier | PClassField] even though it is!
+        
+        super().__init__(name, parent_namespace=parent_namespace)
+        self.fields = fields or dict()
         
     def di_type(self, context: 'CodeGenContext') -> Optional[ir.DIValue]:
         raise NotImplementedError('A namespace does not have a type')
+
     def get_llvm_value_type(self, context: Optional['CodeGenContext']):
         raise NotImplementedError('A namespace does not have a type')
+    
+NamespaceTyp.builtin = NamespaceTyp(BUILTIN_NAMESPACE)
+IRCompatibleTyp.default = ValueTyp("void", parent_namespace=NamespaceTyp.builtin,
+                                   type_info=TypeInfo(TypeClass.VOID))
 
 class ParserError(Exception):
     """Custom exception for parser-specific errors"""
@@ -493,9 +516,21 @@ class Symbol:
     ir_func:Optional[ir.Function]=None
     _typ:Optional[BaseTyp] = None
     arguments:Optional[List['PVariableDeclaration']] = None # only used if it's a callable
-    #useCheck
-    is_assigned: bool = False # Checks if a function is assigned before use (Automatically True if it's a global or if it's a function param)
-    is_read: bool = False # checks if a variable is read (must be after assignment)
+    
+    def __init__(self, name:str, declaration_position:Position, ptype:'PType',
+                 ir_alloca:Optional[ir.NamedValue]=None, ir_func:Optional[ir.Function]=None,
+                 _typ:Optional[BaseTyp] = None,
+                 arguments:Optional[List['PVariableDeclaration']] = None,
+                 is_assigned:bool = False, is_read:bool = False):
+        self.name = name
+        self.declaration_position = declaration_position
+        self.ptype = ptype
+        self.ir_alloca = ir_alloca
+        self.ir_func = ir_func
+        self._typ = _typ
+        self.arguments = arguments
+        self.is_assigned = is_assigned
+        self.is_read = is_read
     
     @property
     def typ(self) -> BaseTyp:
@@ -541,7 +576,17 @@ class Symbol:
     @property
     def is_variable(self):
         return isinstance(self.typ, (ReferenceTyp, ValueTyp))
+    
+    def __hash__(self) -> int:
+        return (hash(self.name) << 13) ^ hash(self.ptype) + hash(self.declaration_position)
 
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, Symbol):
+            return False
+        return (self.name == value.name
+                and self.ptype == value.ptype
+                and self._typ == value._typ)
+        
 class SymbolRedefinitionError(Exception):
     """Raised when attempting to redefine a symbol in the same scope"""
     def __init__(self, name: str, original_position: Position, new_declaration_position: Position):
@@ -1561,15 +1606,19 @@ class PVariableDeclaration(PStatement):
     """Variable declaration node"""
     name: str
     var_type: 'PType'
-    _typer_pass_var_type: Optional[IRCompatibleTyp]
     initial_value: Optional[PExpression]
     symbol:Symbol
     
     @property
     def typer_pass_var_type(self) -> IRCompatibleTyp:
-        if self._typer_pass_var_type is None:
+        if not isinstance(self.symbol.typ, IRCompatibleTyp):
             raise CompilerError('PVarDecl fas not been typed')
-        return self._typer_pass_var_type
+        return self.symbol.typ
+    
+    @typer_pass_var_type.setter
+    def typer_pass_var_type(self, value):
+        assert isinstance(value, IRCompatibleTyp)
+        self.symbol.typ = value
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
