@@ -18,8 +18,7 @@ class LexemeStream:
         self.lexeme_gen = lexemes
         self.buffer = deque()
         self.pos = Position(filename=filename)
-        self._saved_pos = []
-        self._index_after_saved = 0
+        self._saved_pos = [0]
         
     def _advance_buffer(self, to_read:int=128):
         """Read ahead N tokens to refill buffer. Stops if reaches EOF"""
@@ -31,27 +30,28 @@ class LexemeStream:
         
     @property
     def _index(self):
-        return self._index_after_saved + sum(self._saved_pos)
+        return sum(self._saved_pos)
     
     def _purge_buffer_of_non_saved_tokens(self):
-        if len(self._saved_pos) == 0:
+        if len(self._saved_pos) == 1:
             #no saved position, purge deque of read lexemes
-            for i in range(self._index_after_saved):
+            for i in range(self._saved_pos[0]):
                 self.buffer.popleft()
-            self._index_after_saved = 0
+            self._saved_pos[0] = 0
     
     def save_position(self):
-        self._saved_pos.append(self._index_after_saved)
-        self._index_after_saved = 0
+        self._saved_pos.append(0)
     
     def drop_saved_position(self):
-        assert len(self._saved_pos) > 0
-        self._index_after_saved += self._saved_pos.pop()
+        assert len(self._saved_pos) > 1
+        curr_offset = self._saved_pos.pop()
+        #ran on 2 lines to make sure that the index we want to write to is not popped
+        self._saved_pos[-1] += curr_offset
         self._purge_buffer_of_non_saved_tokens()
     
     def pop_saved_position(self):
-        assert len(self._saved_pos) > 0
-        self._index_after_saved = self._saved_pos.pop()
+        assert len(self._saved_pos) > 1
+        self._saved_pos.pop()
         self._purge_buffer_of_non_saved_tokens()
 
     def peek(self, amount=0) -> Lexeme:
@@ -67,8 +67,8 @@ class LexemeStream:
     def advance(self) -> Lexeme:
         lexeme = self.peek()
         if lexeme is not None:
-            if len(self._saved_pos) > 0:
-                self._index_after_saved += 1
+            if len(self._saved_pos) > 1:
+                self._saved_pos[-1] += 1
             else:
                 self.buffer.popleft()
             self.pos = lexeme.pos
