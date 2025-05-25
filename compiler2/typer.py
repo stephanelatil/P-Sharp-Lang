@@ -380,10 +380,10 @@ class Typer:
         self.warnings: List[CompilerWarning] = []
         self._ast: Optional[PProgram] = None
         
-        self.all_symbols: List[Symbol] = []  # Track all symbols
-        self.all_functions: List[PFunction] = []  # Track all functions
-        self.all_class_properties: List[PClassField] = []  # Track class properties
-        self.all_class_methods: List[PFunction] = []  # Track class methods
+        self.all_symbols: set[Symbol] = set()  # Track all symbols
+        self.all_functions: set[PFunction] = set()  # Track all functions
+        self.all_class_properties: set[PClassField] = set()  # Track class properties
+        self.all_class_methods: set[PFunction] = set()  # Track class methods
 
         self._node_function_map = {
             # Array operations
@@ -829,7 +829,7 @@ class Typer:
         class_def._class_typ = class_typ
         
         for method in class_def.methods:
-            self.all_class_methods.append(method)
+            self.all_class_methods.add(method)
             self._type_function(method)
         self._in_class = None
 
@@ -865,7 +865,7 @@ class Typer:
         else: # function not a method
             if not func.is_builtin:
                 #ignore checks on builtins
-                self.all_functions.append(func)
+                self.all_functions.add(func)
         
         for arg in func.function_args:
             self._type_variable_declaration(arg)
@@ -910,11 +910,9 @@ class Typer:
 
     def _type_variable_declaration(self, var_decl: PVariableDeclaration) -> None:
         """Type checks a variable declaration"""
-        symbol = var_decl.symbol
-        self.all_symbols.append(symbol)
-        var_type = self._type_ptype(var_decl.var_type)
-        var_decl._typer_pass_var_type = var_type
-        symbol.typ = var_type
+        if var_decl.symbol._typ is None:
+            self.all_symbols.add(var_decl.symbol)
+            var_decl.typer_pass_var_type = self._type_ptype(var_decl.var_type)
 
         if var_decl.initial_value is None:
             return
