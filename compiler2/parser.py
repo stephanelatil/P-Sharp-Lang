@@ -1462,6 +1462,7 @@ class PClassField(PStatement):
     """Class field definition node"""
     name: str
     var_type: 'PType'
+    field_index:int
     is_public: bool
     default_value: Optional[PExpression]
     _typer_pass_var_type: Optional[IRCompatibleTyp] = None
@@ -1482,7 +1483,8 @@ class PClassField(PStatement):
             yield self.default_value
         return
 
-    def __init__(self, name: str, type: 'PType', is_public: bool, lexeme: Lexeme, default_value:Optional[PExpression],
+    def __init__(self, name: str, type: 'PType', is_public: bool, field_index:int,
+                 lexeme: Lexeme, default_value:Optional[PExpression],
                  is_builtin:bool = False):
         super().__init__(NodeType.CLASS_PROPERTY, lexeme.pos)
         self.name = name
@@ -2751,16 +2753,20 @@ class PArrayInstantiation(PExpression):
 class PType(PStatement):
     type_string:str
     expr_type:Optional[BaseTyp]
+    parent_namespace:Optional['PNamespaceType']
+    """Should onty be set if the type is accessed by referencing the Namespace (e.g. Namespace.SubSpace.SomeType)"""
 
-    def __init__(self, base_type:str, lexeme_pos:Union[Lexeme,Position]):
+    def __init__(self, base_type:str, lexeme_pos:Union[Lexeme,Position],
+                 parent_namespace:Optional['PNamespaceType'] = None):
         super().__init__(NodeType.TYPE, lexeme_pos if isinstance(lexeme_pos, Position) else lexeme_pos.pos)
         self.type_string = base_type
         self.expr_type = None
+        self.parent_namespace = parent_namespace
 
     def __str__(self):
-        if isinstance(self.type_string, str):
-            return self.type_string
-        return str(self.type_string)
+        if self.parent_namespace is not None:
+            return f"{self.parent_namespace}.{self.type_string}"
+        return self.type_string
     
     def __hash__(self) -> int:
         return hash(str(self))
@@ -2805,12 +2811,15 @@ class PFunctionType(PType):
         return (f"({','.join([t.type_string for t in argument_ptypes])})" +
                 f"->{return_ptype}")
     
-    def __init__(self, return_ptype:PType, lexeme_pos:Union[Lexeme,Position], argument_ptypes:Optional[List[PType]]=None):
+    def __init__(self, return_ptype:PType, lexeme_pos:Union[Lexeme,Position],
+                 argument_ptypes:Optional[List[PType]]=None,
+                 parent_namespace:Optional['PNamespaceType']=None):
         self.argument_ptypes = argument_ptypes or []
         self.return_ptype = return_ptype
         super().__init__(self.string_representation(self.return_ptype,
                                                     self.argument_ptypes),
-                         lexeme_pos=lexeme_pos)
+                         lexeme_pos=lexeme_pos,
+                         parent_namespace=parent_namespace)
         
     def __hash__(self) -> int:
         return super().__hash__()
@@ -2829,9 +2838,11 @@ class PArrayType(PType):
     """
     element_type: Union['PArrayType',PType]
 
-    def __init__(self, base_type:Union['PArrayType',PType], lexeme_pos:Union[Lexeme, Position]):
+    def __init__(self, base_type:Union['PArrayType',PType],
+                 lexeme_pos:Union[Lexeme, Position]):
         self.element_type = base_type
         super().__init__(str(self), lexeme_pos)
+        self.parent_namespace = None
 
     def __str__(self) -> str:
         """Convert array type to string representation"""
@@ -3841,8 +3852,12 @@ class Parser:
                         self._expect(LexemeType.OPERATOR_BINARY_ASSIGN)
                         default_value = self._parse_expression(is_lvalue=False)
                     self._expect(LexemeType.PUNCTUATION_SEMICOLON)
-                    fields.append(PClassField(member_name, type_name, is_public,
-                                                     type_lexeme, default_value=default_value))
+                    fields.append(PClassField(name=member_name, 
+                                              type=type_name,
+                                              is_public=is_public,
+                                              lexeme=type_lexeme,
+                                              default_value=default_value,
+                                              field_index=0))
             else:
                 raise ParserError("Expected class member definition", self.current_lexeme)
 
@@ -3853,7 +3868,11 @@ class Parser:
                     int(p.var_type.type_string in ['bool', 'char', 'i8', 'u8', 'i16', 'u16', 'f16', 
                                                     'i32', 'u32', 'f32', 'i64', 'u64', 'f64', 'ul'])
             )
-        return PClass(class_name_lexeme.value, fields, methods,
+        class_fields:Dict[str, PClassField] = {}
+        for i, field in enumerate(fields):
+            field.field_index = i
+            class_fields[field.name] = field
+        return PClass(class_name_lexeme.value, class_fields, methods,
                       class_lexeme, scope=class_scope)
 
     def _parse_ternary_operation(self, condition) -> PTernaryOperation:
