@@ -3833,7 +3833,7 @@ class Parser:
         #it ise useful for the GC to tarverse the object's fields that are reference types
         fields.sort(key= lambda p:
                     int(p.var_type.type_string in ['bool', 'char', 'i8', 'u8', 'i16', 'u16', 'f16', 
-                                                    'i32', 'u32', 'f32', 'i64', 'u64', 'f64'])
+                                                    'i32', 'u32', 'f32', 'i64', 'u64', 'f64', 'ul'])
             )
         return PClass(class_name_lexeme.value, fields, methods,
                       class_lexeme, scope=class_scope)

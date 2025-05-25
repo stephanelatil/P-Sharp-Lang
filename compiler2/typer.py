@@ -149,9 +149,14 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
         methods={
             "ToString":create_method("ToString", "string", "u64", []),
             "Parse":create_method("Parse", "u64", "u64", [("string", "s")])
-        },
-        fields=[],
-        is_builtin=True
+        }
+    ),
+    "ul": ValueTyp(
+        name="ul",
+        methods={
+            "ToString":create_method("ToString", "string", "ul", []),
+            "Parse":create_method("Parse", "ul", "ul", [("string", "s")])
+        }
     ),
     "f16": ValueTyp(
         name="f16",
@@ -358,9 +363,10 @@ class Typer:
             raise TypingError(f"Type {typ} is not valid at {position}\nDid you mean to reference a sub-type in the {typ} namespace?")
     
     """Handles type checking and returns a Typed AST"""
-    def __init__(self, filename:str, file:TextIO):
+    def __init__(self, filename:str, file:TextIO, ptr_size:int=64):
         self.parser = Parser(Lexer(filename, file))
         self.known_types = deepcopy(_builtin_types)
+        self.known_types['ul'].type_info.bit_width = ptr_size
         self._in_class:Optional[PType] = None
         self.expected_return_type:Optional[IRCompatibleTyp] = None
         self.is_assignment = False #set to true when typing an identifier to be assigned

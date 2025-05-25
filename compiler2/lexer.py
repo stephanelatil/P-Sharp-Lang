@@ -58,6 +58,7 @@ class LexemeType(Enum):
     KEYWORD_TYPE_UINT16 = auto()
     KEYWORD_TYPE_UINT32 = auto()
     KEYWORD_TYPE_UINT64 = auto()
+    KEYWORD_TYPE_PTR_SIZE = auto()
     KEYWORD_TYPE_STRING = auto()
     KEYWORD_TYPE_FLOAT16 = auto()
     KEYWORD_TYPE_FLOAT32 = auto()
@@ -128,6 +129,12 @@ class LexemeType(Enum):
     # Special
     WHITESPACE = auto()
     EOF = auto()
+    
+    def get_keyword(self) -> str:
+        for keyword, lexeme_type in Lexer.keywords.items():
+            if self == lexeme_type:
+                return keyword
+        raise KeyError(f'No keyword associated with {repr(self)}')
 
 class Lexeme:
     @staticmethod
@@ -191,10 +198,7 @@ class CharacterStream:
         return self.pos.copy()
 
 class Lexer:
-    def __init__(self, filename:str, file:TextIO):
-        self.filename = filename
-        self.stream = CharacterStream(file, filename)
-        self.keywords = {
+    keywords = {
             'if':LexemeType.KEYWORD_CONTROL_IF,
             'else':LexemeType.KEYWORD_CONTROL_ELSE,
             'return':LexemeType.KEYWORD_CONTROL_RETURN,
@@ -217,10 +221,11 @@ class Lexer:
             'i32':LexemeType.KEYWORD_TYPE_INT32,
             'i64':LexemeType.KEYWORD_TYPE_INT64,
             'char':LexemeType.KEYWORD_TYPE_CHAR,
-            'u8':LexemeType.KEYWORD_TYPE_INT8,
-            'u16':LexemeType.KEYWORD_TYPE_INT16,
-            'u32':LexemeType.KEYWORD_TYPE_INT32,
-            'u64':LexemeType.KEYWORD_TYPE_INT64,
+            'u8':LexemeType.KEYWORD_TYPE_UINT8,
+            'ul':LexemeType.KEYWORD_TYPE_PTR_SIZE,
+            'u16':LexemeType.KEYWORD_TYPE_UINT16,
+            'u32':LexemeType.KEYWORD_TYPE_UINT32,
+            'u64':LexemeType.KEYWORD_TYPE_UINT64,
             'string':LexemeType.KEYWORD_TYPE_STRING,
             'f16':LexemeType.KEYWORD_TYPE_FLOAT16,
             'f32':LexemeType.KEYWORD_TYPE_FLOAT32,
@@ -233,7 +238,7 @@ class Lexer:
         }
 
         # Build operator lookup table
-        self.operators = {
+    operators = {
             # Single character operators
             '+':LexemeType.OPERATOR_BINARY_PLUS,
             '-':LexemeType.OPERATOR_BINARY_MINUS,
@@ -261,6 +266,10 @@ class Lexer:
             '?':LexemeType.PUNCTUATION_TERNARYCONDITIONAL_QUESTIONMARK,
             ':':LexemeType.PUNCTUATION_TERNARYSEPARATOR_COLON,
         }
+
+    def __init__(self, filename:str, file:TextIO):
+        self.filename = filename
+        self.stream = CharacterStream(file, filename)
 
     def lex(self, include_comments=False) -> Generator[Lexeme, None, None]:
         if include_comments:
