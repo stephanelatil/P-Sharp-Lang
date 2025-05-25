@@ -42,3 +42,5 @@ The `new` keyword should not be used here"""
 
 EXIT_CODE_GLOBAL_VAR_NAME = "__PS_ExitCodeValue"
 """The name of the global symbol that holds the program exit code"""
+
+BUILTIN_NAMESPACE = "Std"

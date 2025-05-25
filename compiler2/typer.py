@@ -4,7 +4,7 @@ from io import StringIO
 from copy import deepcopy
 from lexer import Lexeme, Lexer, Position
 from operations import BinaryOperation, UnaryOperation
-from parser import (TypeClass, TypeInfo, TYPE_INFO, TypingError,
+from parser import (TypeClass, TypeInfo, TypingError,
                     Parser, PFunction, PClassField, PProgram, PType,
                     PIdentifier, PArrayIndexing, PArrayInstantiation,
                     PBlock, PArrayType, PAssertStatement, PAssignment,
@@ -87,8 +87,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "string", "i8", []),
             "Parse":create_method("Parse", "i8", "i8", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 8, is_signed=True)
     ),
     "i16": ValueTyp(
         name="i16",
@@ -96,8 +96,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "i16", "string", []),
             "Parse":create_method("Parse", "i16", "i16", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 16, is_signed=True)
     ),
     "i32": ValueTyp(
         name="i32",
@@ -105,8 +105,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "string", "i32", []),
             "Parse":create_method("Parse", "i32", "i32", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 32, is_signed=True)
     ),
     "i64": ValueTyp(
         name="i64",
@@ -114,8 +114,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "string", "i64", []),
             "Parse":create_method("Parse", "i64", "i64", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 64, is_signed=True)
     ),
     "u8": ValueTyp(
         name="u8",
@@ -123,8 +123,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "string", "u8", []),
             "Parse":create_method("Parse", "u8", "u8", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 8, is_signed=False)
     ),
     "u16": ValueTyp(
         name="u16",
@@ -132,8 +132,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "string", "u16", []),
             "Parse":create_method("Parse", "u16", "u16", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 16, is_signed=False)
     ),
     "u32": ValueTyp(
         name="u32",
@@ -141,22 +141,26 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "string", "u32", []),
             "Parse":create_method("Parse", "u32", "u32", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 32, is_signed=False)
     ),
     "u64": ValueTyp(
         name="u64",
         methods={
             "ToString":create_method("ToString", "string", "u64", []),
             "Parse":create_method("Parse", "u64", "u64", [("string", "s")])
-        }
+        },
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 64, is_signed=False)
     ),
     "ul": ValueTyp(
         name="ul",
         methods={
             "ToString":create_method("ToString", "string", "ul", []),
             "Parse":create_method("Parse", "ul", "ul", [("string", "s")])
-        }
+        },
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 64, is_signed=False)
     ),
     "f16": ValueTyp(
         name="f16",
@@ -167,8 +171,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "Floor":create_method("Floor", "f16", "f16", []),
             "Ceiling":create_method("Ceiling", "f16", "f16", [])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.FLOAT, 16)
     ),
     "f32": ValueTyp(
         name="f32",
@@ -179,8 +183,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "Floor":create_method("Floor", "f32", "f32", []),
             "Ceiling":create_method("Ceiling", "f32", "f32", [])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.FLOAT, 32)
     ),
     "f64": ValueTyp(
         name="f64",
@@ -191,8 +195,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "Floor":create_method("Floor", "f64", "f64", []),
             "Ceiling":create_method("Ceiling", "f64", "f64", [])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.FLOAT, 64)
     ),
 
     # String type
@@ -210,10 +214,13 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "StartsWith":create_method("StartsWith", "bool", "string", [("string", "value")]),
             "EndsWith":create_method("EndsWith", "bool", "string", [("string", "value")])
         },
-        fields=[
-            create_property("Length", "u64"),
-            create_property("__c_string", "__null") # a pointer to the start of the c_string
-        ]
+        fields={
+            "Length": create_property("Length", "u64", index=0),
+            #TODO replace "__null" type with ptr type to signify unknown pointer (void* type). Will be useful in unsafe context
+            "__c_string": create_property("__c_string", "__null", index=1) # a pointer to the start of the c_string
+        },
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.STRING)
     ),
 
     # Boolean type
@@ -223,8 +230,8 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToString":create_method("ToString", "string", "bool", []),
             "Parse":create_method("Parse", "bool", "bool", [("string", "s")])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.BOOLEAN, 1, is_signed=False)
     ),
 
     # Character type
@@ -238,11 +245,11 @@ _builtin_types: Dict[str, IRCompatibleTyp] = {
             "ToUpper":create_method("ToUpper", "char", "char", []),
             "ToLower":create_method("ToLower", "char", "char", [])
         },
-        fields=[],
-        is_builtin=True
+        parent_namespace=NamespaceTyp.builtin,
+        type_info=TypeInfo(TypeClass.INTEGER, 8, is_signed=False)
     ),
     'void': IRCompatibleTyp.default,
-    '__null': ReferenceTyp('null', methods={}, fields=[], is_builtin=True)
+    '__null': ReferenceTyp('null', parent_namespace=NamespaceTyp.builtin)
 }
 
 # @dataclass
@@ -543,7 +550,7 @@ class Typer:
 
     def is_numeric_type(self, type_: Union[IRCompatibleTyp, TypeInfo]) -> bool:
         """Check if type is numeric (integer or float)"""
-        info = type_ if isinstance(type_, TypeInfo) else self.get_type_info(type_)
+        info = type_ if isinstance(type_, TypeInfo) else type_.type_info
         return info.type_class in (TypeClass.INTEGER, TypeClass.FLOAT, TypeClass.BOOLEAN)
 
     def check_types_match(self, expected: IRCompatibleTyp, actual: IRCompatibleTyp) -> bool:
@@ -567,8 +574,8 @@ class Typer:
             # TODO Fix when adding polymorphism
             return True
 
-        expected_info = self.get_type_info(expected)
-        actual_info = self.get_type_info(actual)
+        expected_info = expected.type_info
+        actual_info = actual.type_info
 
         # Handle array types
         if expected_info.type_class == TypeClass.ARRAY and actual_info.type_class == TypeClass.ARRAY:
@@ -580,8 +587,8 @@ class Typer:
 
     def can_convert_numeric(self, from_type: IRCompatibleTyp, to_type: IRCompatibleTyp) -> bool:
         """Determine if numeric conversion is allowed between types"""
-        from_info = self.get_type_info(from_type)
-        to_info = self.get_type_info(to_type)
+        from_info = from_type.type_info
+        to_info = to_type.type_info
 
         # Only handle numeric types
         if not (self.is_numeric_type(from_info) and self.is_numeric_type(to_info)):
@@ -636,8 +643,8 @@ class Typer:
         if not (self.is_numeric_type(type1) and self.is_numeric_type(type2)):
             return None
 
-        info1 = self.get_type_info(type1)
-        info2 = self.get_type_info(type2)
+        info1 = type1.type_info
+        info2 = type2.type_info
 
         # If either is float, result is the widest float
         if TypeClass.FLOAT in (info1.type_class, info2.type_class):
@@ -652,7 +659,7 @@ class Typer:
 
             if int_info.bit_width <= 8:
                 # Can use f16 or wider if the float type is wider
-                float_width = self.get_type_info(float_type).bit_width
+                float_width = float_type.type_info.bit_width
                 if float_width <= 16:
                     return self.known_types["f16"]
                 if float_width <= 32:
@@ -660,7 +667,7 @@ class Typer:
                 return self.known_types["f64"]
             else:
                 # Need at least f32
-                float_width = self.get_type_info(float_type).bit_width
+                float_width = float_type.type_info.bit_width
                 if float_width <= 32:
                     return self.known_types["f32"]
                 return self.known_types["f64"]
@@ -699,7 +706,7 @@ class Typer:
         if operation == UnaryOperation.BOOL_NOT:
             return True
         
-        type_info = self.get_type_info(type_)
+        type_info = type_.type_info
         
         # Handle numeric operations first (most common case)
         if type_info.type_class in (TypeClass.INTEGER, TypeClass.FLOAT):
@@ -885,7 +892,7 @@ class Typer:
             self._type_block(func.body)
 
             #add implicit return at the end of a void function if there isn't one already
-            if self.get_type_info(self.expected_return_type).type_class == TypeClass.VOID:
+            if self.get_type_info(self.expected_return_type.type_info.type_class == TypeClass.VOID:
                 if len(func.body.statements) == 0:
                     func.body.statements.append(
                         PReturnStatement.implicit_return(func.body.position, func.body))
@@ -1000,7 +1007,7 @@ class Typer:
         """Type checks an if statement"""
         condition_type = self._type_expression(if_stmt.condition)
         assert isinstance(condition_type, IRCompatibleTyp)
-        if not self.get_type_info(condition_type).type_class == TypeClass.BOOLEAN:
+        if not condition_type.type_info.type_class == TypeClass.BOOLEAN:
             raise TypingConversionError(condition_type, self.known_types['bool'], if_stmt.condition)
         self._type_block(if_stmt.then_block)
         if if_stmt.else_block is not None:
@@ -1010,7 +1017,7 @@ class Typer:
         """Type checks a while loop"""
         condition_type = self._type_expression(while_stmt.condition)
         assert isinstance(condition_type, IRCompatibleTyp)
-        if not self.get_type_info(condition_type).type_class == TypeClass.BOOLEAN:
+        if not condition_type.type_info.type_class == TypeClass.BOOLEAN:
             raise TypingConversionError(condition_type, self.known_types['bool'], while_stmt.condition)
         self._type_block(while_stmt.body)
 
@@ -1021,7 +1028,7 @@ class Typer:
         if not isinstance(for_stmt.condition, PNoop):
             condition_type = self._type_expression(for_stmt.condition)
             assert isinstance(condition_type, IRCompatibleTyp)
-            if not self.get_type_info(condition_type).type_class == TypeClass.BOOLEAN:
+            if not condition_type.type_info.type_class == TypeClass.BOOLEAN:
                 raise TypingConversionError(condition_type, self.known_types['bool'], for_stmt.condition)
         else:
             for_stmt.condition.expr_type = self.known_types['bool']
@@ -1144,7 +1151,7 @@ class Typer:
         """Type checks a cast expression and returns the target type"""
         expression_type = self._type_expression(cast.expression)
         target_type = self._type_ptype(cast.target_type)
-        target_type_info = self.get_type_info(target_type)
+        target_type_info = target_type.type_info
         
         assert isinstance(expression_type, IRCompatibleTyp)
         
@@ -1177,7 +1184,7 @@ class Typer:
         
         index = self._type_expression(array_index.index)
         assert isinstance(index, IRCompatibleTyp)
-        if self.get_type_info(index).type_class != TypeClass.INTEGER:
+        if index.type_info.type_class != TypeClass.INTEGER:
             raise TypingError(f"The index must be an integer type not '{index}'")
         if array_index.expr_type != index_type:
             #implicit convert array index to i64
@@ -1196,7 +1203,7 @@ class Typer:
         array_init.expr_type = self._type_ptype(PArrayType(array_init.element_type, array_init.element_type.position))
         array_size_type = self._type_expression(array_init.size)
         assert isinstance(array_size_type, IRCompatibleTyp)
-        if self.get_type_info(array_size_type).type_class != TypeClass.INTEGER:
+        if self.get_type_info(array_size_type.type_info.type_class != TypeClass.INTEGER:
             raise TypingError(f"Expected an array size of type Integer but got '{array_size_type}'")
         if array_size_type != self.known_types['u64']:
             array_init.size = self._add_implicit_cast(array_init.size, self.known_types['u64'])
@@ -1234,7 +1241,7 @@ class Typer:
         """Type checks a ternary operation and returns its result type"""
         condition_type = self._type_expression(ternary.condition)
         assert isinstance(condition_type, IRCompatibleTyp)
-        if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
+        if condition_type.type_info.type_class != TypeClass.BOOLEAN:
             raise TypingError(f"Cannot use a {condition_type} in the condition of a ternary operator. Are you missing a cast? {ternary.condition.position}")
         if_true_value_type = self._type_expression(ternary.true_value)
         if_false_value_type = self._type_expression(ternary.false_value)
@@ -1261,13 +1268,13 @@ class Typer:
         """Type checks an assert statement"""
         condition_type = self._type_expression(assert_stmt.condition)
         assert isinstance(condition_type, IRCompatibleTyp)
-        if self.get_type_info(condition_type).type_class != TypeClass.BOOLEAN:
+        if condition_type.type_info.type_class != TypeClass.BOOLEAN:
             raise TypingError(f"An assertion expression must be a boolean. Are you missing a cast? {assert_stmt.condition.position}")
         
         if assert_stmt.message is not None:
             message_type = self._type_expression(assert_stmt.message)
             assert isinstance(message_type, IRCompatibleTyp)
-            if self.get_type_info(message_type).type_class != TypeClass.STRING:
+            if message_type.type_info.type_class != TypeClass.STRING:
                 raise TypingError(f"An assertion message must be a string!")
             
     def _cfg_check(self, program:Union[PProgram,PBlock]) -> None:

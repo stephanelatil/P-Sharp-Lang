@@ -79,6 +79,25 @@ class LexemeStream:
     def position(self) -> Position:
         return self.pos.copy()
 
+class TypeClass(Enum):
+    """Classification of types for conversion rules"""
+    VOID = auto()
+    BOOLEAN = auto()
+    INTEGER = auto()
+    FLOAT = auto()
+    STRING = auto()
+    ARRAY = auto()
+    CLASS = auto()
+    FUNCTION = auto()
+
+@dataclass
+class TypeInfo:
+    """Information about a type including its class and size"""
+    type_class: TypeClass
+    bit_width: int = 0  # For numeric types
+    is_signed: bool = True  # For integer types
+    is_builtin: bool = True
+
 @dataclass
 class BaseTyp:
     """Represents a type in the P# language with its methods and fields"""
@@ -464,51 +483,20 @@ class TypingError(Exception):
     def __init__(self, msg) -> None:
         super().__init__(msg)
 
-class TypeClass(Enum):
-    """Classification of types for conversion rules"""
-    VOID = auto()
-    BOOLEAN = auto()
-    INTEGER = auto()
-    FLOAT = auto()
-    STRING = auto()
-    ARRAY = auto()
-    CLASS = auto()
+@dataclass
+class UseCheckMixin:
+    """Mixin used to check whether a symbol or field/method or similar has been written to or read"""
+    is_assigned: bool
+    """Flag for whether the symbol is assigned (Automatically True if it's a global or imported value)"""
+    is_read: bool 
+    """Flag for whether the symbol is read (Should be after assignment)"""
+    def __init__(self, *args, is_assigned=False, is_read=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.is_assigned = is_assigned
+        self.is_read = is_read
 
 @dataclass
-class TypeInfo:
-    """Information about a type including its class and size"""
-    type_class: TypeClass
-    bit_width: int = 0  # For numeric types
-    is_signed: bool = True  # For integer types
-    is_builtin: bool = True
-
-# Mapping of type names to their TypeInfo
-TYPE_INFO: Dict[str, TypeInfo] = {
-    "void": TypeInfo(TypeClass.VOID),
-    "bool": TypeInfo(TypeClass.BOOLEAN, 1, False),
-    "string": TypeInfo(TypeClass.STRING),
-    "char": TypeInfo(TypeClass.INTEGER, 8, False),
-
-    # Signed integers
-    "i8": TypeInfo(TypeClass.INTEGER, 8, True),
-    "i16": TypeInfo(TypeClass.INTEGER, 16, True),
-    "i32": TypeInfo(TypeClass.INTEGER, 32, True),
-    "i64": TypeInfo(TypeClass.INTEGER, 64, True),
-
-    # Unsigned integers
-    "u8": TypeInfo(TypeClass.INTEGER, 8, False),
-    "u16": TypeInfo(TypeClass.INTEGER, 16, False),
-    "u32": TypeInfo(TypeClass.INTEGER, 32, False),
-    "u64": TypeInfo(TypeClass.INTEGER, 64, False),
-
-    # Floating point
-    "f16": TypeInfo(TypeClass.FLOAT, 16),
-    "f32": TypeInfo(TypeClass.FLOAT, 32),
-    "f64": TypeInfo(TypeClass.FLOAT, 64),
-}
-
-@dataclass
-class Symbol:
+class Symbol(UseCheckMixin):
     name:str
     declaration_position:Position
     ptype:'PType'
@@ -1851,9 +1839,8 @@ class PBinaryOperation(PExpression):
             raise CompilerError(f"AST Node has not been typed at location {self.position}")
         if self.expr_type.is_reference_type:
             raise NotImplementedError() #here should call the builtin's Equals() function
-        if self.expr_type.name not in TYPE_INFO:
-            raise NotImplementedError() # Should never happen
-        type_info = TYPE_INFO[self.expr_type.name]
+        assert isinstance(self.expr_type, IRCompatibleTyp)
+        type_info = self.expr_type.type_info
         
         ret_val = None
         if self.operation == BinaryOperation.LOGIC_AND:
@@ -1965,7 +1952,7 @@ class PUnaryOperation(PExpression):
         assert isinstance(self.expr_type, IRCompatibleTyp)
         
         ret_val = None
-        typeinfo = TYPE_INFO.get(self.operand.expr_type.name, TypeInfo(TypeClass.CLASS))
+        typeinfo = self.operand.expr_type.type_info
         if self.operation in (UnaryOperation.BOOL_NOT, UnaryOperation.LOGIC_NOT, UnaryOperation.MINUS):
             if self.operation == UnaryOperation.BOOL_NOT:
                 if typeinfo.type_class == TypeClass.FLOAT:
@@ -2405,8 +2392,9 @@ class PCast(PExpression):
         assert isinstance(original_type, IRCompatibleTyp)
         assert isinstance(target_type, IRCompatibleTyp)
 
-        original_type_info = TYPE_INFO.get(original_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
-        target_type_info = TYPE_INFO.get(target_type.name, TypeInfo(TypeClass.CLASS, is_builtin=False))
+        
+        original_type_info = original_type.type_info
+        target_type_info = target_type.type_info
         
         ret_val = expr
         if target_type == original_type:
