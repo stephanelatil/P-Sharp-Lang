@@ -526,28 +526,6 @@ class Symbol(UseCheckMixin):
             raise TypingError('Symbol not typed yet')
         return self._typ
     
-    @staticmethod
-    def fromIr(name:str,
-               typ:IRCompatibleTyp,
-               arguments:Optional[List[IRCompatibleTyp]]=None) -> 'Symbol':
-        
-        #TODO replace this with a correct import from builtins
-        ptype = PType(typ.name, Position.default)
-        symbol = Symbol(name=name,
-                        declaration_position=Position.default,
-                        ptype=ptype,
-                        _typ=typ)
-        if arguments is not None:
-            args = []
-            for i,arg_typ in enumerate(arguments):
-                arg = PVariableDeclaration(f'arg{i}',
-                                     var_type=PType(arg_typ.name, Position.default),
-                                     initial_value=None,
-                                     lexeme_pos=Position.default)
-                arg._typer_pass_var_type = arg_typ
-            symbol.arguments = args
-        return symbol
-    
     @typ.setter
     def typ(self, value:BaseTyp):
         assert isinstance(value, BaseTyp)
@@ -1202,7 +1180,6 @@ class PExpression(PStatement):
     def __post_init__(self):
         super().__post_init__()
         self.expr_type:Optional[BaseTyp] = None  # Will be set during typing pass
-        self.is_compile_time_constant:bool = False
         self.is_lvalue = getattr(self, "is_lvalue", False)
 
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
@@ -1212,21 +1189,10 @@ class PExpression(PStatement):
 class PNoop(PExpression):
     def __init__(self, lexeme:Lexeme):
         super().__init__(NodeType.EMPTY, lexeme.pos)
-        self.is_compile_time_constant = True
     
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a NoOp"
         return ir.Constant(ir.IntType(1), True)
-        
-class PNamespace(PStatement):
-    name:str
-    fields:Union['PIdentifier', 'PFunction', 'PClass']
-    
-    def __init__(self, parts:Optional[str]=None, lexeme:Optional[Lexeme]=None):
-        if lexeme is None:
-            lexeme = Lexeme.default
-        super().__init__(NodeType.NAMESPACE, lexeme.pos)
-        self.parts = parts or [PIdentifier("Default", Lexeme.default)]
 
 @dataclass
 class PProgram(PScopeStatement):
@@ -1773,8 +1739,6 @@ class PBinaryOperation(PExpression):
         self.operation = operation
         self.left = left
         self.right = right
-        # TODO : This value can be true, calculated at compile time and optimized out if left and right are compile time constants
-        self.is_compile_time_constant = False
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -1933,11 +1897,8 @@ class PUnaryOperation(PExpression):
         super().__init__(NodeType.UNARY_OPERATION, lexeme.pos)
         self.operation = operation
         self.operand = operand
-        # TODO : This value can be true, calculated at compile time and optimized out if the operator is not inc/dec and the operand is const
-        self.is_compile_time_constant = False
         # TODO: This should always be false no?
-        self.operand.is_lvalue = self.operation in (UnaryOperation.PRE_INCREMENT, UnaryOperation.PRE_DECREMENT,
-                                                    UnaryOperation.POST_INCREMENT, UnaryOperation.POST_DECREMENT)
+        self.operand.is_lvalue = False
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -2351,7 +2312,6 @@ class PLiteral(PExpression):
         super().__init__(NodeType.LITERAL, lexeme.pos)
         self.value = value
         self.literal_type = literal_type
-        self.is_compile_time_constant = True
         
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Constant:
         assert not get_ptr_to_expression, "Cannot get pointer to a literal value"
@@ -2375,8 +2335,6 @@ class PCast(PExpression):
         super().__init__(NodeType.CAST, target_type.position)
         self.target_type = target_type
         self.expression = expression
-        # TODO : This value can be true, calculated at compile time and optimized out if inner expression is const
-        self.is_compile_time_constant = False
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -2624,8 +2582,6 @@ class PTernaryOperation(PExpression):
         self.condition = condition
         self.true_value = true_value
         self.false_value = false_value
-        # TODO : This value can be true, calculated at compile time and optimized out if condition and its result are compile time constants
-        self.is_compile_time_constant = False
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -2813,6 +2769,31 @@ class PType(PStatement):
         if not isinstance(value, PType):
             return False
         return str(self) == str(value)
+    
+    @property
+    def children(self):
+        if self.parent_namespace is not None:
+            yield self.parent_namespace
+        return
+    
+@dataclass
+class PNamespaceType(PType):
+    builtin:ClassVar['PNamespaceType']
+    
+    def __init__(self, base_type:str, lexeme_pos:Union[Lexeme,Position],
+                 parent_namespace:Optional['PNamespaceType'] = None):
+        super().__init__(base_type, lexeme_pos,
+                         parent_namespace=parent_namespace)
+        
+    @staticmethod
+    def fromPtype(ptype:PType) -> 'PNamespaceType':
+        assert type(ptype) is PType
+        return PNamespaceType(base_type=ptype.type_string,
+                              lexeme_pos=ptype.position,
+                              parent_namespace=ptype.parent_namespace)
+        
+PNamespaceType.builtin = PNamespaceType(base_type=BUILTIN_NAMESPACE,
+                                        lexeme_pos=Position.default)
 
 @dataclass
 class PFunctionType(PType):
