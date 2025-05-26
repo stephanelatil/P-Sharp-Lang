@@ -1211,6 +1211,31 @@ class PProgram(PScopeStatement):
         super().__init__(NodeType.PROGRAM, lexeme.pos, scope)
         self.namespace_name =  namespace or "Default"
         self.statements = statements
+        
+        namespace_symbol = Symbol(
+            self.namespace_name[0], Position.default,
+            PNamespaceType(self.namespace_name[0],Position.default)
+        )
+        self.scope.declare_local(namespace_symbol)
+        
+    def generate_header(self) -> str:
+        classes:List[PClass] = []
+        functions:List[PFunction] = []
+        global_vars:List[PVariableDeclaration] = []
+        
+        for stmnt in self.statements:
+            if isinstance(stmnt, PClass):
+                classes.append(stmnt)
+            elif isinstance(stmnt, PFunction):
+                functions.append(stmnt)
+            elif isinstance(stmnt, PVariableDeclaration):
+                global_vars.append(stmnt)
+        
+        header = f"{LexemeType.KEYWORD_CONTROL_NAMESPACE.get_keyword()} {self.namespace_name};\n\n"
+        header += "\n".join((g.generate_header() for g in global_vars)) + "\n\n"
+        header += "\n".join((c.generate_header() for c in classes)) + "\n\n"
+        header += "\n".join((f.generate_header() for f in functions)) + "\n\n"
+        return header
 
 @dataclass
 class PFunction(PScopeStatement):
@@ -1237,9 +1262,9 @@ class PFunction(PScopeStatement):
 
     @staticmethod
     def get_linkable_name(function_name:str,
-                          namespace:str,
-                          class_name:str=''):
-        return f"{namespace}.{function_name}"
+    @property
+    def header_is_typed(self) -> bool:
+        return isinstance(self.symbol._typ, IRCompatibleTyp)
     
     @property
     def return_typ_typed(self) -> IRCompatibleTyp:
@@ -1264,7 +1289,13 @@ class PFunction(PScopeStatement):
             arguments=parameters,
             is_assigned=self.body is not None
         )
-        
+    def generate_header(self) -> str:
+        """Generates the function's declarations, to be used as imports"""
+        return (f"{self.return_typ_typed.full_name} {self.name}(" +
+                ",".join((f"{arg.typer_pass_var_type.full_name} {arg.name}"
+                          for arg in self.explicit_arguments))
+                +");")
+    
     def generate_llvm(self, context: CodeGenContext) -> None:
         func = self.symbol.ir_func
         assert func is not None
@@ -1457,6 +1488,15 @@ class PClass(PScopeStatement):
         self.fields = fields
         self.methods = methods
 
+    def generate_header(self) -> str:
+        """Generates the function's declarations, to be used as imports"""
+        return (f"class {self.name}\n{{\n"
+                +"\n".join((f"\t{field.typer_pass_var_type.full_name} {field.name};"
+                            for field in sorted(self.fields.values(), key=lambda f:f.field_index)))
+                +"\n\n"
+                + "\n".join((meth.generate_header() for meth in self.methods))
+                +"\n}\n")
+
 @dataclass
 class PClassField(PStatement):
     """Class field definition node"""
@@ -1647,6 +1687,9 @@ class PVariableDeclaration(PStatement):
                               context.module.add_debug_info("DIExpression", {})]) # expression metadata
         call.set_metadata('dbg', self.add_di_location_metadata(context))
         return
+    
+    def generate_header(self):
+        return f"{self.typer_pass_var_type.full_name} {self.name};"
 
 @dataclass
 class PAssignment(PExpression):
@@ -3046,6 +3089,33 @@ class Parser:
         assert offset >= 0, "Cannot peek into the past (offset < 0)"
         lexeme = self.lexeme_stream.peek(offset)
         return lexeme is not None and lexeme.type in lexeme_types
+    
+    def parse_header(self, namespace_parts:Optional[List[str]]=None) -> List[Union['PVariableDeclaration', PFunction, PClass]]:
+        """Parses the file as a header file containing only declarations
+
+        Args:
+            namespace_parts (List[str], optional): If set verifies that the headerwe are parsing is the correct namespace
+
+        Returns:
+            List[Union['PVariableDeclaration', PFunction, PClass]]: _description_
+        """
+        parsed_header = self.parse()
+        header_elements:List[Union['PVariableDeclaration', PFunction, PClass]] = []
+        
+        for statement in parsed_header.statements:
+            if isinstance(statement, PVariableDeclaration):
+                header_elements.append(statement)
+            elif isinstance(statement, PFunction):
+                statement.body = None #this is unused
+                header_elements.append(statement)
+            elif isinstance(statement, PClass):
+                for field in statement.fields.values():
+                    field.default_value = None #clear ununsed
+                for method in statement.methods:
+                    method.body = None #clear unused and makes sure it's just a header
+                header_elements.append(statement)
+        return header_elements
+        
 
     def parse(self) -> PProgram:
         """Parse the entire program"""
