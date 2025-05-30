@@ -12,7 +12,7 @@ from parser import (PClass,PFunction,PProgram, IRCompatibleTyp,
                     PReturnStatement, PVariableDeclaration,
                     PLiteral, CodeGenContext, Symbol, PType,
                     CompilerError, DebugInfo, ReferenceTyp,
-                    FunctionTyp, Position, PFunctionType)
+                    FunctionTyp, Position, PFunctionType, PImport)
 from subprocess import Popen, PIPE
 from tempfile import TemporaryDirectory
 from typing import TextIO, Dict, Optional, Union
@@ -65,6 +65,8 @@ class CodeGen:
             codemodel='jitdefault',
             jit=False,
         )
+        self.BUILTINS_TYPE_MAP['ul'] = ir.IntType(ir.PointerType()
+                                                  .get_abi_size(self.target.target_data)*8)
     
     
     def compile_module(self, filepath:Path,
@@ -93,14 +95,10 @@ class CodeGen:
         self.typer = Typer(filename, file)
         # Lex, Parse and Type code
         typed_abstract_syntax_tree = self.typer.type_program(self.use_warnings)
-        self.module = ir.Module(name=typed_abstract_syntax_tree.namespace_name+'-'+
+        self.module = ir.Module(name=".".join(typed_abstract_syntax_tree.namespace_name)+'-'+
                                 filepath.stem)
         self.module.triple = Target.from_default_triple().triple
         #Init type list map. Initially all reference type fields are just pointers. On subsequent passes they are converter to _TypedPointers
-        type_map:Dict[IRCompatibleTyp, Union[ir.IntType,ir.HalfType,ir.FloatType,ir.DoubleType,ir.VoidType,ir.LiteralStructType]] = {
-            typ:self.get_llvm_struct(typ, None)
-            for typ in self.typer.known_types.values()
-        }
         if compiler_opts.add_debug_symbols:
             dbg_declare = ir.Function(self.module, 
                                       ir.FunctionType(ir.VoidType(), [ir.MetaDataType()] * 3),
@@ -154,11 +152,15 @@ class CodeGen:
         assert isinstance(typed_abstract_syntax_tree.scope, GlobalScope)
         context = CodeGenContext(module=self.module,
                                 target_data=self.target.target_data,
-                                type_map=type_map,
+                                type_map={},
                                 debug_info=debug_info,
                                 compilation_opts=compiler_opts,
                                 global_scope = typed_abstract_syntax_tree.scope,
-                                namespace=typed_abstract_syntax_tree.namespace_name)
+                                complete_namespace='.'.join(typed_abstract_syntax_tree.namespace_name))
+
+        for typ in self.typer.known_types.values():
+            context.type_map[typ] = self.get_llvm_struct(typ, context)
+            
         # Setup type_ids
         type_id = 2 # 0 and 1 are taken up by ref-arrays and value-arrays
         for typ, ir_type in context.type_map.items():
@@ -288,8 +290,10 @@ class CodeGen:
         default_value:int = 0
         global_var = ir.GlobalVariable(module=context.module, typ=ir.IntType(32),
                                        name=EXIT_CODE_GLOBAL_VAR_NAME)
-        exit_symbol = Symbol.fromIr(EXIT_CODE_GLOBAL_VAR_NAME,
-                                    typ=self.typer.known_types['i32'])
+        exit_symbol = Symbol(EXIT_CODE_GLOBAL_VAR_NAME, Position.default,
+                             PType('i32', Position.default),
+                             is_assigned=True, is_read=True)
+        exit_symbol.typ = self.typer.known_types['i32']
         exit_symbol.ir_alloca = global_var
         context.global_scope.declare_local(exit_symbol)
         if not is_library:
@@ -348,10 +352,17 @@ class CodeGen:
         globals_ref_type_count = 0
         func_type = ir.FunctionType(ir.VoidType(), [])
         func = ir.Function(context.module, func_type, FUNC_POPULATE_GLOBALS)
-        symbol = Symbol.fromIr(FUNC_POPULATE_GLOBALS,
-                               typ=FunctionTyp('()->void',
-                                               return_type=IRCompatibleTyp.default,
-                                               arguments=[]))
+        # symbol = Symbol.fromIr(FUNC_POPULATE_GLOBALS,
+        #                        typ=FunctionTyp('()->void',
+        #                                        return_type=IRCompatibleTyp.default,
+        #                                        arguments=[]))
+        symbol = Symbol(FUNC_POPULATE_GLOBALS, Position.default,
+                        PFunctionType(PType('void', Position.default),
+                                      Position.default),
+                        is_assigned=True,
+                        is_read=True)
+        symbol.typ = FunctionTyp(str(symbol.ptype),
+                                 self.typer.known_types['void'])
         symbol.ir_func = func
         context.global_scope.declare_local(symbol)
         context.builder.position_at_start(func.append_basic_block(FUNC_POPULATE_GLOBALS+'_entry'))
@@ -365,7 +376,7 @@ class CodeGen:
                     {
                         "name": FUNC_POPULATE_GLOBALS,
                         #TODO edit linkable name with namespace info
-                        "linkageName": f"{context.namespace}.{FUNC_POPULATE_GLOBALS}",
+                        "linkageName": f"{context.complete_namespace}.{FUNC_POPULATE_GLOBALS}",
                         "line":0,
                         "file":None,
                         "type": subroutine_type,
@@ -500,7 +511,7 @@ class CodeGen:
             ]
             func_type = ir.FunctionType(return_type, arg_types)
             linkable_name = statement.get_linkable_name(statement.name,
-                                                        context.namespace)
+                                                        context.complete_namespace)
             func_ptr = ir.Function(context.module, func_type, linkable_name)
             context.global_scope.get_symbol(statement.name).ir_func = func_ptr
         
@@ -600,7 +611,7 @@ class CodeGen:
                 if statement.name == ENTRYPOINT_FUNCTION_NAME:
                     main_func_stmt = statement
                 continue
-            elif isinstance(statement, (PClass, PVariableDeclaration)):
+            elif isinstance(statement, (PClass, PVariableDeclaration, PImport)):
                 #skip classes or globals: Already done
                 continue
             else:
@@ -611,6 +622,7 @@ class CodeGen:
                                     'Please write your code inside the i32 main() function')
 
         if main_func_stmt is not None:
+            assert main_func_stmt.body is not None
             #Enter global scope for ref vars & main
             #TODO also count imported global ref_vars
             self._generate_scope_entry(context,
@@ -697,14 +709,14 @@ class CodeGen:
                 typ = str_to_type_map[typ_name]
                 typ.methods[method_name.removeprefix('__')].symbol.ir_func = func
             else:
-                context.global_scope.declare_import(Symbol(
+                context.global_scope.declare_local(Symbol(
                     runtime_func.name, Position.default,
                     ptype=PFunctionType(PType('N/A', Position.default),
                                         Position.default,[]),
                     ir_func=func
                 ))
 
-    def get_llvm_struct(self, typ: IRCompatibleTyp, context:Optional[CodeGenContext]) -> Union[ir.IntType,
+    def get_llvm_struct(self, typ: IRCompatibleTyp, context:CodeGenContext) -> Union[ir.IntType,
                                                    ir.HalfType,
                                                    ir.FloatType,
                                                    ir.DoubleType,
@@ -728,7 +740,7 @@ class CodeGen:
         if not typ.is_reference_type:
             raise TypingError(f'Unable to get IR Type for value type {typ}')
         
-        type_info = self.typer.get_type_info(typ)
+        type_info = typ.type_info
         assert type_info.type_class in (TypeClass.CLASS, TypeClass.ARRAY, TypeClass.STRING)
         
         if type_info.type_class == TypeClass.CLASS:
