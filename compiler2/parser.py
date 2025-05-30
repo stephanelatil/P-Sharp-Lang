@@ -6,6 +6,7 @@ from lexer import Lexer, LexemeType, Lexeme, Position
 from operations import BinaryOperation, UnaryOperation, TernaryOperator
 from llvmlite import ir, binding
 from llvmlite.ir._utils import _HasMetadata
+from pathlib import Path
 from constants import *
 from warnings import warn
 from objs import CompilationOptions
@@ -816,13 +817,14 @@ class GlobalScope(LocalScope):
                          None,
                          module_symbols or None)
         self.imported_symbols = imported_symbols or dict()
-    
-    def declare_import(self, symbol:Symbol):
-        if self.has_imported_symbol(symbol.name):
-            raise SymbolRedefinitionError(symbol.name,
-                                          self.imported_symbols[symbol.name].declaration_position,
-                                          symbol.declaration_position)
-        self.imported_symbols[symbol.name] = symbol
+
+    def declare_import(self, import_stmnt:'PImport'):
+        #TODO here when importing it should add the namespace symbol and populate what it imports:
+            # i.e. If importing N1.N2. Define symbol N1 in self,symbols (and have it have the N2 field. The N2 field should have all imports associated)
+        # AND also define all imported symbols under N1.N2.* (first level only like in C#) in self.imported symbols
+        
+        #here it should fetch and parse the imported element
+        pass
 
 @dataclass
 class ClassScope(LocalScope):
@@ -1010,6 +1012,7 @@ class NodeType(Enum):
     ARRAY_INSTANTIATION = auto()
     CAST = auto()
     ATTRIBUTE = auto()
+    IMPORT = auto()
     CLASS_PROPERTY = auto()
     METHOD_CALL = auto()
     BREAK_STATEMENT = auto()
@@ -1198,7 +1201,8 @@ class PNoop(PExpression):
 class PProgram(PScopeStatement):
     """Root node of the program"""
     statements: List[PStatement]
-    namespace_name: str
+    namespace_name: List[str]
+    imports:List['PImport']
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -1207,10 +1211,12 @@ class PProgram(PScopeStatement):
         return
 
     def __init__(self, statements: List[PStatement], lexeme: Lexeme,
-                 scope:GlobalScope, namespace:Optional[str]=None):
+                 scope:GlobalScope, namespace:Optional[List[str]]=None,
+                 imports:Optional[List['PImport']]=None):
         super().__init__(NodeType.PROGRAM, lexeme.pos, scope)
-        self.namespace_name =  namespace or "Default"
+        self.namespace_name =  namespace or ["Default"]
         self.statements = statements
+        self.imports = imports or list()
         
         namespace_symbol = Symbol(
             self.namespace_name[0], Position.default,
@@ -1566,11 +1572,7 @@ class PBlock(PScopeStatement):
             context (CodeGenContext): The context containing the current module
             build_basic_block (bool, optional): Whether to generate a new basic block for this PBlock.
             Also terminates the  current basic block and creates a new one to continue after this one. Defaults to True.
-        """        
-        #TODO: optimize this to only create a scope when ref-vars are present.
-            # need to make sure to count correctly when exiting a function scope from anywhere within a
-            # function or when leaving a loop (break/continue)!
-        #create scope and enter scope in debug info
+        """
         assert isinstance(context.builder.block, ir.Block)
         if context.compilation_opts.add_debug_symbols:
             assert context.debug_info is not None
@@ -1596,6 +1598,77 @@ class PBlock(PScopeStatement):
         assert isinstance(context.builder.block, ir.Block)
         assert context.debug_info is not None
         return context.module.add_debug_info("DILexicalBlock", self.di_location(context))
+    
+@dataclass
+class PImport(PStatement):
+    namespace_parts:List[str]
+    namespace_symbol:Symbol
+    headers:List[Union['PVariableDeclaration', PFunction, PClass]]
+    alias:Optional[str] = None
+
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        for val in super().children:
+            yield val
+        return
+    
+    @property
+    def namespace_typ(self) -> NamespaceTyp:
+        assert isinstance(self.namespace_symbol.typ, NamespaceTyp)
+        return self.namespace_symbol.typ
+    
+    @namespace_typ.setter
+    def namespace_typ(self, value:NamespaceTyp):
+        assert isinstance(value, NamespaceTyp)
+        self.namespace_symbol.typ = value
+    
+    def __init__(self, namespace_parts:List['PIdentifier'], lexeme_pos:Union[Lexeme, Position],
+                 alias:Optional[str]=None):
+        super().__init__(node_type=NodeType.IMPORT,
+                         position=lexeme_pos.pos if isinstance(lexeme_pos, Lexeme) else lexeme_pos)
+        assert len(namespace_parts) > 0
+        self.namespace_parts = [part.name for part in namespace_parts]
+        self.alias = alias
+        part = namespace_parts.pop()
+        ptype = PNamespaceType(base_type=part.name,
+                                lexeme_pos=part.position)
+        
+        
+        self.namespace_symbol = Symbol(
+            name=self.namespace_parts[0],
+            declaration_position=self.position,
+            ptype=ptype,
+            is_assigned=True
+        )
+        if alias is not None:
+            self.namespace_symbol.name = alias
+        self.headers = self.fetch_declarations()
+    
+    def fetch_declarations(self) -> List[Union['PVariableDeclaration', PFunction, PClass]]:
+        """Adds declarations to the symbol and propagates them up to the global namespace as an import-declaration.
+        If multiple declarations have the same name, only the first one will be added to the import declarations"""
+        
+        def find_header(name) -> Path:
+            """Finds the header file in the compiler's std_lib or in the current project"""
+            cwd = Path()
+            header_files = cwd.rglob(f'./{name}', case_sensitive=True)
+            header = next(header_files, None)
+            if header is None:
+                raise FileNotFoundError(f'Unable to find header in current project directory')
+            return header
+        # TODO find better way to define where to look for the headers
+        # Maybe add flags to the compiler to direct where to search like -I for gcc
+        # and search first the current 'lib' and 'out' folder of the projects
+        
+        header_name = ".".join(self.namespace_parts)+'.psh'
+        header_file_path = Path(__file__).parent.joinpath("std_lib", header_name)
+        if not header_file_path.exists():
+            header_file_path = find_header(header_name)
+
+        assert header_file_path.exists() and header_file_path.is_file()
+        with open(header_file_path, 'rt') as header_reader:
+            header_parser = Parser(Lexer(header_file_path.name, header_reader))
+            return header_parser.parse_header()
 
 @dataclass
 class PVariableDeclaration(PStatement):

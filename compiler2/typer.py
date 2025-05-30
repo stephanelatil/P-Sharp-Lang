@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Union, TextIO
 from dataclasses import dataclass, field
 from io import StringIO
 from copy import deepcopy
+from pathlib import Path
 from lexer import Lexeme, Lexer, Position
 from operations import BinaryOperation, UnaryOperation
 from parser import (TypeClass, TypeInfo, TypingError,
@@ -15,11 +16,15 @@ from parser import (TypeClass, TypeInfo, TypingError,
                     PObjectInstantiation, PReturnStatement, PStatement,
                     PTernaryOperation, PThis,PVariableDeclaration, 
                     PWhileStatement, PDiscard, PVoid, ArrayTyp,
-                    BlockProperties, IRCompatibleTyp, ValueTyp,
+                    PNamespaceType, IRCompatibleTyp, ValueTyp,
                     ReferenceTyp, NamespaceTyp, NodeType, Symbol,
-                    PFunctionType, LocalScope, ScopeType,
-                    FunctionTyp, BaseTyp)
-from constants import FUNC_PRINT
+                    PFunctionType, LocalScope, ScopeType, GlobalScope,
+                    FunctionTyp, BaseTyp, PImport)
+from constants import BUILTIN_NAMESPACE
+
+
+#TODO where to find the headers are located
+LIB_HEADER_LOC = Path(__file__).parent.joinpath('lib', 'header')
 
 
 @dataclass
@@ -466,6 +471,10 @@ class Typer:
                 self._type_statement(elem)
         self._in_class = None
         
+        # type the imports
+        for import_stmt in self._ast.imports:
+            self._type_import(import_stmt)
+        
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
             if isinstance(statement, PClass):
@@ -832,6 +841,12 @@ class Typer:
             self.all_class_methods.add(method)
             self._type_function(method)
         self._in_class = None
+        return class_typ
+        
+    def _type_import(self, pimport:PImport):
+        """Here it populates the alias and namespace types and everything within the namespace, symbols etc."""
+        for statement in pimport.headers:
+            self._type_statement(statement)
 
     def _type_ptype(self, ptype:PType) -> IRCompatibleTyp:
         """Type checks a class definition and returns its type"""

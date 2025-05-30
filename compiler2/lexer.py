@@ -46,6 +46,8 @@ class LexemeType(Enum):
     KEYWORD_CONTROL_BREAK = auto()
     KEYWORD_CONTROL_ASSERT = auto()
     KEYWORD_CONTROL_NAMESPACE = auto()
+    KEYWORD_CONTROL_IMPORT = auto()
+    KEYWORD_CONTROL_AS = auto()
     KEYWORD_TYPE_MOD_UNSIGNED = auto()
     KEYWORD_OBJECT_CLASS = auto()
     KEYWORD_OBJECT_THIS = auto()
@@ -208,6 +210,8 @@ class Lexer:
             'return':LexemeType.KEYWORD_CONTROL_RETURN,
             'for':LexemeType.KEYWORD_CONTROL_FOR,
             'while':LexemeType.KEYWORD_CONTROL_WHILE,
+            'import':LexemeType.KEYWORD_CONTROL_IMPORT,
+            'as':LexemeType.KEYWORD_CONTROL_AS,
             'namespace':LexemeType.KEYWORD_CONTROL_NAMESPACE,
             'continue':LexemeType.KEYWORD_CONTROL_CONTINUE,
             'break':LexemeType.KEYWORD_CONTROL_BREAK,
