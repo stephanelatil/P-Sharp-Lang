@@ -214,6 +214,10 @@ class ValueTyp(IRCompatibleTyp):
             'f16': ir.HalfType(),
             'f32': ir.FloatType(),
             'f64': ir.DoubleType(),
+            #TODO string should be in std?
+            'string': ir.PointerType(ir.LiteralStructType([
+                ir.IntType(ir.PointerType().get_abi_size(context.target_data)),
+                ir.ArrayType(ir.IntType(8), 0)])),
             'null': ir.PointerType() # null is a point type (points to nothing but still a pointer technically)
         }
         
@@ -884,6 +888,7 @@ class CodeGenContext:
     #the debug information. ignored if -g flag not set
     debug_info:Optional[DebugInfo]
     global_scope:GlobalScope
+    complete_namespace:str
     """A stack of tuples pointing to (condition block of loop: for continues, end of loop for break)"""
     loopinfo:List[LoopContext] = field(default_factory=list)
     builder:ir.IRBuilder = ir.IRBuilder()
@@ -892,7 +897,6 @@ class CodeGenContext:
     """A Dict where for every given string there is an associated constant string PS object. constant because strings are immutable"""
     _global_string_objs:Dict[str, ir.GlobalValue] = field(default_factory=dict)
     compilation_opts:CompilationOptions = field(default_factory=CompilationOptions)
-    namespace:str = "Default"
     
     def get_string_const(self, string:str):
         if string in self._global_string_objs:
@@ -1250,17 +1254,17 @@ class PFunction(PScopeStatement):
     return_type: 'PType'
     function_args: List['PVariableDeclaration']  # List of (type, name) tuples
     symbol:Symbol
-    body: 'PBlock'
+    body: Optional['PBlock']
     is_called: bool = False
-    _return_typ_typed:Optional[IRCompatibleTyp] = None
     is_builtin:bool=False
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
         for stmt in (self.return_type, 
-                     *self.function_args,
-                     self.body):
+                     *self.function_args):
             yield stmt
+        if self.body is not None:
+            yield self.body
         return
     
     def __hash__(self) -> int:
@@ -1268,18 +1272,31 @@ class PFunction(PScopeStatement):
 
     @staticmethod
     def get_linkable_name(function_name:str,
+                          namespace:Union[str, List[str]],
+                          class_name:Optional[str]=None):
+        if isinstance(namespace, list):
+            namespace = '.'.join(namespace)
+        if class_name is None:
+            return f"{namespace}.$${function_name}"
+        else:
+            return f"{namespace}.${class_name}.$${function_name}"
+    
     @property
     def header_is_typed(self) -> bool:
         return isinstance(self.symbol._typ, IRCompatibleTyp)
     
     @property
     def return_typ_typed(self) -> IRCompatibleTyp:
-        if self._return_typ_typed is None:
+        if not isinstance(self.symbol.typ, FunctionTyp):
             raise TypingError(f"Function has not been typed yet")
-        return self._return_typ_typed
+        return self.symbol.typ.return_type
+
+    @property
+    def explicit_arguments(self):
+        return self.function_args
 
     def __init__(self, name: str, return_type: 'PType', parameters: List['PVariableDeclaration'],
-                 body: 'PBlock', lexeme: Lexeme, scope:LocalScope, is_builtin:bool=False):
+                 body: Optional['PBlock'], lexeme: Lexeme, scope:LocalScope, is_builtin:bool=False):
         super().__init__(NodeType.FUNCTION, lexeme.pos, scope)
         self.name = name
         self.return_type = return_type
@@ -1287,14 +1304,29 @@ class PFunction(PScopeStatement):
         self.body = body
         self.is_builtin = is_builtin
         self.symbol= Symbol(
-            name, 
+            name,
             lexeme.pos,
             PFunctionType(return_type,
-                          lexeme.pos,
-                          [param.var_type for param in parameters]),
+                          lexeme_pos=lexeme.pos,
+                          argument_ptypes=[param.var_type for param in parameters]),
             arguments=parameters,
             is_assigned=self.body is not None
         )
+
+    @property
+    def is_only_declaration(self):
+        return self.body is None
+
+    @property
+    def function_typ(self) -> FunctionTyp:
+        assert isinstance(self.symbol.typ, FunctionTyp)
+        return self.symbol.typ
+
+    @function_typ.setter
+    def function_typ(self, value:FunctionTyp):
+        assert isinstance(value, FunctionTyp)
+        self.symbol.typ = value
+    
     def generate_header(self) -> str:
         """Generates the function's declarations, to be used as imports"""
         return (f"{self.return_typ_typed.full_name} {self.name}(" +
@@ -1306,6 +1338,10 @@ class PFunction(PScopeStatement):
         func = self.symbol.ir_func
         assert func is not None
         
+        if self.is_only_declaration:
+            return
+        assert self.body is not None
+
         context.builder.position_at_start(func.append_basic_block(f'__{self.name}_entrypoint_{self.position.index}'))
 
         self.parent_scope.generate_gc_scope_entry(context)
@@ -1384,7 +1420,7 @@ class PFunction(PScopeStatement):
                 {
                     "name": self.name,
                     "linkageName": self.get_linkable_name(self.name,
-                                                          context.namespace,
+                                                          context.complete_namespace,
                                                           self.class_type.name if isinstance(self, PMethod) else ''),
                     **self.di_location(context),
                     "type": subroutine_type,
@@ -1431,12 +1467,6 @@ class PMethod(PFunction):
     @property
     def explicit_arguments(self):
         return self.function_args[1:]
-    
-    @staticmethod
-    def get_linkable_name(function_name:str,
-                          namespace:str,
-                          class_name:str=''):
-        return f"{namespace}.__{class_name}.__{function_name}"
 
     @property
     def linkable_name(self):
@@ -1465,12 +1495,13 @@ class PMethod(PFunction):
         return super().__eq__(value)
 
 @dataclass
-class PClass(PScopeStatement):
+class PClass(PScopeStatement, UseCheckMixin):
     """Class definition node"""
     name: str
-    fields: List['PClassField']
+    fields: Dict[str, 'PClassField']
     methods: List[PMethod]
     _class_typ:Optional[ReferenceTyp] = None
+    _is_value_type=False
     
     @property
     def class_typ(self) ->ReferenceTyp:
@@ -1480,16 +1511,18 @@ class PClass(PScopeStatement):
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
-        for stmt in (*self.fields, 
+        for stmt in (*self.fields.values(), 
                      *self.methods):
             yield stmt
         return
 
-    def __init__(self, name: str, fields: List['PClassField'],
+    def __init__(self, name: str, fields: Dict[str, 'PClassField'],
                  methods: List[PMethod], lexeme: Lexeme,
                  scope:ClassScope):
         
-        super().__init__(NodeType.CLASS, lexeme.pos, scope)
+        super().__init__(node_type=NodeType.CLASS,
+                         position=lexeme.pos,
+                         scope=scope)
         self.name = name
         self.fields = fields
         self.methods = methods
@@ -2290,16 +2323,17 @@ class PReturnStatement(PStatement):
         return ret
 
 @dataclass
-class PFunctionCall(PExpression):
+class PCall(PExpression):
     """Function call node"""
-    function: 'PIdentifier'
+    function: Union["PIdentifier", "PDotAttribute"]
     arguments: List[PExpression]
 
-    def __init__(self, function: 'PIdentifier', arguments: List[PExpression], lexeme: Lexeme):
+    def __init__(self, function: Union["PIdentifier","PDotAttribute"], arguments: List[PExpression], lexeme: Lexeme):
         super().__init__(NodeType.FUNCTION_CALL, lexeme.pos)
         self.function = function
         self.arguments = arguments
-        if function.name == 'main':
+        
+        if isinstance(function, PIdentifier) and function.name == 'main':
             raise CompilerError(f"Cannot call main function directly")
         
     @property
@@ -2312,64 +2346,77 @@ class PFunctionCall(PExpression):
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to a function result"
         # get function pointer
+        assert isinstance(self.function.expr_type, FunctionTyp)
+        args = []
+        if self.function.expr_type.is_method:
+            if isinstance(self.function, PIdentifier):
+                # if it's just a identifier referencing a method within a class
+                this_symbol = self.parent_scope.get_symbol(PThis.NAME)
+                assert this_symbol.ir_alloca is not None
+                args.append(this_symbol.ir_alloca)
+            else:
+                # assert isinstance(self.function, PDotAttribute)
+                this = self.function.left.generate_llvm(context, False)
+                args.append(this)
         fun = self.function.generate_llvm(context)
         assert isinstance(fun, ir.Function)
         # get ptrs to all arguments
-        args = [context.builder.bitcast(arg.generate_llvm(context),expected_arg.type) 
-                for arg, expected_arg in zip(self.arguments, fun.args)]
-        assert isinstance(fun, ir.Function)
+        for arg in self.arguments:
+            args.append(arg.generate_llvm(context))
+        for i, expected_arg in enumerate(fun.args):
+            args[i] = context.builder.bitcast(args[i], expected_arg.type)
         #call function
-        ret_val = context.builder.call(fun, args)
-        if context.compilation_opts.add_debug_symbols:  
-            ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
-        return ret_val
-
-@dataclass
-class PMethodCall(PExpression):
-    """Method call node"""
-    object: PExpression
-    method_name: "PIdentifier"
-    arguments: List[PExpression]
-
-    def __init__(self, object: PExpression, method: "PIdentifier", arguments: List[PExpression], lexeme: Lexeme):
-        super().__init__(NodeType.METHOD_CALL, lexeme.pos)
-        self.object = object
-        self.method_name = method
-        self.arguments = arguments
-        
-    @property
-    def children(self) -> Generator["PStatement", None, None]:
-        for stmt in (self.object,
-                     self.method_name, 
-                     *self.arguments):
-            yield stmt
-        return
-    
-    def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
-        assert not get_ptr_to_expression, "Cannot get pointer to a function return value"
-        assert self.object.expr_type is not None
-        # TODO: get method function pointer from a v-table
-        this = self.object.generate_llvm(context, False)
-        # null_check on "this" ONLY if it's a reference type
-        if self.object.expr_type.is_reference_type:
-            null_check_func = self.parent_scope.get_symbol(FUNC_NULL_REF_CHECK,
-                                                                           self.position).ir_func
-            assert null_check_func is not None
-            context.builder.call(null_check_func, [this, context.get_char_ptr_from_string(self.position.filename),
-                                                ir.Constant(ir.IntType(32), self.position.line),
-                                                ir.Constant(ir.IntType(32), self.position.column)])
-
-        fun = self.object.expr_type.methods[self.method_name.name].symbol.ir_func
-        assert isinstance(fun, ir.Function)
-        #setup arguments
-        args = [this] + [a.generate_llvm(context) for a in self.arguments]
-        args = [context.builder.bitcast(arg,expected_arg.type) 
-                for arg, expected_arg in zip(args, fun.args)]
-        assert isinstance(fun, ir.Function)
         ret_val = context.builder.call(fun, args)
         if context.compilation_opts.add_debug_symbols:
             ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
         return ret_val
+
+# @dataclass
+# class PMethodCall(PExpression):
+#     """Method call node"""
+#     object: PExpression
+#     method_name: "PIdentifier"
+#     arguments: List[PExpression]
+
+#     def __init__(self, object: PExpression, method: "PIdentifier", arguments: List[PExpression], lexeme: Lexeme):
+#         super().__init__(NodeType.METHOD_CALL, lexeme.pos)
+#         self.object = object
+#         self.method_name = method
+#         self.arguments = arguments
+        
+#     @property
+#     def children(self) -> Generator["PStatement", None, None]:
+#         for stmt in (self.object,
+#                      self.method_name, 
+#                      *self.arguments):
+#             yield stmt
+#         return
+    
+#     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+#         assert not get_ptr_to_expression, "Cannot get pointer to a function return value"
+#         assert self.object.expr_type is not None
+#         # TODO: get method function pointer from a v-table
+#         this = self.object.generate_llvm(context, False)
+#         # null_check on "this" ONLY if it's a reference type
+#         if self.object.expr_type.is_reference_type:
+#             null_check_func = self.parent_scope.get_symbol(FUNC_NULL_REF_CHECK,
+#                                                                            self.position).ir_func
+#             assert null_check_func is not None
+#             context.builder.call(null_check_func, [this, context.get_char_ptr_from_string(self.position.filename),
+#                                                 ir.Constant(ir.IntType(32), self.position.line),
+#                                                 ir.Constant(ir.IntType(32), self.position.column)])
+
+#         fun = self.object.expr_type.methods[self.method_name.name].symbol.ir_func
+#         assert isinstance(fun, ir.Function)
+#         #setup arguments
+#         args = [this] + [a.generate_llvm(context) for a in self.arguments]
+#         args = [context.builder.bitcast(arg,expected_arg.type) 
+#                 for arg, expected_arg in zip(args, fun.args)]
+#         assert isinstance(fun, ir.Function)
+#         ret_val = context.builder.call(fun, args)
+#         if context.compilation_opts.add_debug_symbols:
+#             ret_val.set_metadata('dbg', self.add_di_location_metadata(context)) 
+#         return ret_val
 
 @dataclass
 class PIdentifier(PExpression):
@@ -2380,7 +2427,7 @@ class PIdentifier(PExpression):
         super().__init__(NodeType.IDENTIFIER, lexeme.pos)
         self.name = name
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> Union[ir.Value, ir.Function]:
         variable = self.parent_scope.get_symbol(self.name, self.position)
         
         if variable.is_function:
@@ -2641,7 +2688,7 @@ class PDotAttribute(PExpression):
         yield self.right
         return
     
-    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
+    def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> Union[ir.Value, ir.Function]:
         # It's an actual variable we're trying to access
         if isinstance(self.left.expr_type, IRCompatibleTyp):
             # left**
@@ -2660,7 +2707,8 @@ class PDotAttribute(PExpression):
                                                 ir.Constant(ir.IntType(32), self.position.column)])
             
             assert isinstance(left_ptr.type, ir.PointerType)
-            for i, field in enumerate(self.left.expr_type.fields):
+            for i, field in enumerate(sorted(self.left.expr_type.fields.values(),
+                                             key=lambda f:f.field_index)):
                 if field.name == self.right.name:
                     assert isinstance(field, PClassField)
                     # found the correct field
@@ -2681,9 +2729,6 @@ class PDotAttribute(PExpression):
                         return context.builder.load(field_ptr,
                                                     typ=field.typer_pass_var_type.get_llvm_value_type(context))
             raise TypingError(f"Cannot find field {self.right.name} in type {self.left.expr_type}")
-        elif isinstance(self.left, PNamespace):
-            #TODO handle imported symbol here (or builtin)
-            raise NotImplementedError()
         else: 
             # Here for static Class access
             raise NotImplementedError()
@@ -3141,17 +3186,16 @@ class Parser:
     def current_lexeme(self):
         return self.lexeme_stream.peek()
 
-    def _expect(self, lexeme_type: LexemeType) -> Lexeme:
+    def _expect(self, *lexeme_types: LexemeType) -> Lexeme:
         """Verify current lexeme is of expected type and advance"""
         if self.current_lexeme is Lexeme.default:
-            raise ParserError(f"Got Empty Lexeme instead of {lexeme_type.name}",
+            raise ParserError(f"Got Empty Lexeme instead of {' or '.join(lt.name for lt in lexeme_types)}",
                               Lexeme.default)
-        if self.current_lexeme.type != lexeme_type:
+        if self.current_lexeme.type not in lexeme_types:
             raise ParserError(
-                f"Expected {lexeme_type.name}, got {self.current_lexeme.type.name if self.current_lexeme else 'EOF'}",
+                f"Expected one of ({','.join(lt.name for lt in lexeme_types)}), got {self.current_lexeme.type.name if self.current_lexeme else 'EOF'}",
                 self.current_lexeme)
-        lexeme = self.lexeme_stream.advance()
-        return lexeme
+        return self.lexeme_stream.advance()
 
     def _match(self, *lexeme_types: LexemeType) -> bool:
         """Check if current lexeme matches any of the given types"""
@@ -3172,7 +3216,7 @@ class Parser:
         Returns:
             List[Union['PVariableDeclaration', PFunction, PClass]]: _description_
         """
-        parsed_header = self.parse()
+        parsed_header = self.parse(add_std_lib=False)
         header_elements:List[Union['PVariableDeclaration', PFunction, PClass]] = []
         
         for statement in parsed_header.statements:
@@ -3190,24 +3234,35 @@ class Parser:
         return header_elements
         
 
-    def parse(self) -> PProgram:
+    def parse(self, add_std_lib:bool=True) -> PProgram:
         """Parse the entire program"""
-        statements = []
+        statements:List[PStatement] = list()
+        imports:List[PImport] = []
+        if add_std_lib:
+            # Adds default Std namespace to the project (only the used functions will be included in the final executable so no prob for size)
+            imports.append(PImport([PIdentifier(BUILTIN_NAMESPACE,
+                                                Lexeme.default)],
+                                    Position.default))
         start_lexeme = self.current_lexeme
-        namespace = "Default"
+        namespace_parts = None
         
         if self._match(LexemeType.KEYWORD_CONTROL_NAMESPACE):
             #handle namespace decleration
-            namespace = self._parse_namespace_name()
+            namespace_parts = self._parse_namespace_name()
         block_properties = BlockProperties()
 
         while self.current_lexeme and self.current_lexeme.type != LexemeType.EOF:
-            statements.append(self._parse_statement(block_properties))
+            stmt = self._parse_statement(block_properties)
+            if isinstance(stmt, PImport):
+                imports.append(stmt)
+            else:
+                statements.append(stmt)
 
         assert isinstance(block_properties.current_scope, GlobalScope)
         pprogram = PProgram(statements, start_lexeme,
                             scope=block_properties.current_scope,
-                            namespace=namespace)
+                            namespace=namespace_parts,
+                            imports=imports)
         return pprogram
 
     def _parse_object_instantiation(self) -> Union[PObjectInstantiation,PArrayInstantiation]:
@@ -3244,9 +3299,9 @@ class Parser:
         else:
             raise ParserError("Invalid Lexeme: Expected opening bracket or opening parenthesis", self.current_lexeme)
 
-    def _parse_namespace_name(self) -> str:
-        namespace_lexeme = self._expect(LexemeType.KEYWORD_CONTROL_NAMESPACE)
+    def _parse_namespace_name(self) -> List[str]:
         parts:List[str] = []
+        self._expect(LexemeType.KEYWORD_CONTROL_NAMESPACE)
         #handle top level of namspace
         ident = self._expect(LexemeType.IDENTIFIER)
         parts.append(ident.value)
@@ -3259,7 +3314,7 @@ class Parser:
         #ensure properly terminated
         self._expect(LexemeType.PUNCTUATION_SEMICOLON)
         
-        return '.'.join(parts)
+        return parts
         
     def _parse_statement(self, block_properties:BlockProperties) -> PStatement:
         """Parse a single statement"""
@@ -3267,7 +3322,7 @@ class Parser:
             raise ParserError("Unexpected end of file", self.current_lexeme)
 
         # Match statement type
-        if self._match(*self.type_keywords):
+        if self._check_declaration(block_properties):
             decl = self._parse_declaration(block_properties)
             block_properties.current_scope.declare_local(decl.symbol)
             return decl
@@ -3299,6 +3354,8 @@ class Parser:
             return self._parse_continue_statement()
         elif self._match(LexemeType.KEYWORD_CONTROL_ASSERT):
             return self._parse_assert_statement()
+        elif self._match(LexemeType.KEYWORD_CONTROL_IMPORT):
+            return self._parse_import(block_properties)
         elif self._match(LexemeType.DISCARD):
             return self._parse_discard()
         elif self._match(LexemeType.KEYWORD_OBJECT_CLASS):
@@ -3316,6 +3373,57 @@ class Parser:
         expr = self._parse_expression()
         self._expect(LexemeType.PUNCTUATION_SEMICOLON)
         return expr
+    
+    def _parse_import(self, block_properties:BlockProperties) -> PImport:
+        #TODO change to make closer to C# style
+        if not block_properties.is_top_level:
+            raise ParserError("All imports must be at the top level of the progam", self.current_lexeme)
+        self._expect(LexemeType.KEYWORD_CONTROL_IMPORT)
+        namespace_id = self._expect(LexemeType.IDENTIFIER)
+        first_lexeme = namespace_id
+        parts = [PIdentifier(namespace_id.value,
+                                namespace_id)]
+        while self._match(LexemeType.OPERATOR_DOT):
+            self._expect(LexemeType.OPERATOR_DOT)
+            namespace_id = self._expect(LexemeType.IDENTIFIER)
+            parts.append(PIdentifier(namespace_id.value,
+                                     namespace_id))
+
+        if self._match(LexemeType.KEYWORD_CONTROL_AS):
+            self._expect(LexemeType.KEYWORD_CONTROL_AS)
+            namespace_alias = self._expect(LexemeType.IDENTIFIER)
+        
+            self._expect(LexemeType.PUNCTUATION_SEMICOLON)
+                
+            return PImport(parts,
+                           namespace_alias,
+                           alias=namespace_alias.value)
+        
+        self._expect(LexemeType.PUNCTUATION_SEMICOLON)
+        return PImport(parts, first_lexeme)
+    
+    def _check_declaration(self, block_properties:BlockProperties) -> bool:
+        """Checks whether the folowing lexemes start a valid declaration (variable or function)
+
+        Returns:
+            bool: True if it's a valid declaration (or starts like one), False otherwise
+        """
+        
+        self.lexeme_stream.save_position()
+        try:
+            if not self._match(*self.type_keywords, LexemeType.IDENTIFIER):
+                return False
+            self._parse_type()
+            self._expect(LexemeType.IDENTIFIER)
+            # check if var decl
+            return self._match(LexemeType.PUNCTUATION_SEMICOLON, 
+                               LexemeType.PUNCTUATION_OPENPAREN,
+                               LexemeType.OPERATOR_BINARY_ASSIGN)
+        except:
+            #failed
+            return False
+        finally:
+            self.lexeme_stream.pop_saved_position()
 
     def _parse_declaration(self, block_properties:BlockProperties) -> Union[PVariableDeclaration, PFunction]:
         """Parse a variable or function declaration"""
@@ -3378,8 +3486,12 @@ class Parser:
                 self._expect(LexemeType.PUNCTUATION_COMMA)
 
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
-        body = self._parse_block(block_properties.copy_with(
-                                    scope=NullScope(scope_type=ScopeType.BlockScope,
+        if self._match(LexemeType.PUNCTUATION_SEMICOLON):
+            self._expect(LexemeType.PUNCTUATION_SEMICOLON)
+            body = None
+        else:
+            body = self._parse_block(block_properties.copy_with(
+                                     scope=NullScope(scope_type=ScopeType.BlockScope,
                                                     parent=function_scope)))
 
         return PFunction(name, return_type, parameters, body,
@@ -3415,14 +3527,14 @@ class Parser:
                                 or PArrayType for array types)
         """
         # Parse base type first
-        if not self._match(*self.type_keywords, LexemeType.IDENTIFIER):
-            raise ParserError("Expected type name", self.current_lexeme)
-
-        type_lexeme = self.lexeme_stream.advance()
+        type_lexeme = self._expect(*self.type_keywords, LexemeType.IDENTIFIER)
         base_type = PType(type_lexeme.value, type_lexeme)
         while self._match(LexemeType.OPERATOR_DOT):
-            base_type = PNamespaceType.fromPtype(base_type)
-            
+            self._expect(LexemeType.OPERATOR_DOT)
+            lexeme = self._expect(LexemeType.IDENTIFIER, *self.type_keywords)
+            base_type = PType(base_type=lexeme.value,
+                              lexeme_pos=lexeme,
+                              parent_namespace=PNamespaceType.fromPtype(base_type))
 
         # Check for array brackets
         while self._match(LexemeType.PUNCTUATION_OPENBRACKET) and self._peek_matches(1, LexemeType.PUNCTUATION_CLOSEBRACKET):
@@ -3694,7 +3806,7 @@ class Parser:
 
         raise ParserError("Invalid literal", lexeme)
 
-    def _parse_identifier_or_call_or_array_indexing(self) -> Union[PThis, PIdentifier, PFunctionCall, PMethodCall, PDotAttribute, PArrayIndexing]:
+    def _parse_identifier_or_call_or_array_indexing(self) -> Union[PThis, PCall, PIdentifier, PDotAttribute, PArrayIndexing]:
         """Parse an identifier and any subsequent field accesses, method calls, or function calls.
 
         This method handles the following patterns:
@@ -3703,9 +3815,10 @@ class Parser:
         - Property access: myObject.field
         - Method call: myObject.method()
         - Chained access: myObject.field.subField.method()
+        - Array Indexing: some_array[index] 
 
         Returns:
-            Union[PExpression, PIdentifier, PFunctionCall, PMethodCall, PDotAttribute]: The parsed expression
+            Union[PExpression, PIdentifier, PArrayIndexing, PDotAttribute]: The parsed expression
 
         Raises:
             ParserError: If there's an invalid token in the expression
@@ -3716,9 +3829,6 @@ class Parser:
         else:
             id_lexeme = self._expect(LexemeType.IDENTIFIER)
             expr = PIdentifier(id_lexeme.value, id_lexeme)
-            # Check for function call first (no dot)
-            if self._match(LexemeType.PUNCTUATION_OPENPAREN):
-                expr = self._parse_function_arguments(expr)
 
         while True:
             # Check for field access or method call
@@ -3728,6 +3838,11 @@ class Parser:
             # Handle indexing identifier
             elif self._match(LexemeType.PUNCTUATION_OPENBRACKET):
                 expr = self._parse_array_indexing(expr)
+            elif self._match(LexemeType.PUNCTUATION_OPENPAREN):
+                if not isinstance(expr, (PIdentifier, PDotAttribute)):
+                    raise ParserError(f"Cannot call a {type(expr)}. Only an identifier can be called",
+                                    self.current_lexeme)
+                expr = self._parse_call_and_arguments(expr)
 
             # No more chaining
             else:
@@ -3735,11 +3850,11 @@ class Parser:
 
         return expr
 
-    def _parse_function_arguments(self, function: PIdentifier) -> PFunctionCall:
+    def _parse_call_and_arguments(self, function: Union[PIdentifier,PDotAttribute]) -> PCall:
         """Parse function call arguments.
 
         Args:
-            function (PExpression): The function expression to be called
+            function (PIdentifier|PDotAttribute): The function expression to be called
 
         Returns:
             PFunctionCall: The parsed function call
@@ -3759,16 +3874,16 @@ class Parser:
                 self._expect(LexemeType.PUNCTUATION_COMMA)
 
         self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
-        return PFunctionCall(function, arguments, open_paren_lexeme)
+        return PCall(function, arguments, open_paren_lexeme)
 
-    def _parse_member_access(self, left: PExpression) -> Union[PMethodCall, PDotAttribute]:
-        """Parse a member access expression (either field access or method call).
+    def _parse_member_access(self, left: PExpression) -> PDotAttribute:
+        """Parse a member access expression, a field access.
 
         Args:
             left (PExpression): The expression before the dot operator
 
         Returns:
-            Union[PMethodCall, PDotAttribute]: The parsed member access
+            PDotAttribute: The parsed member access
 
         Raises:
             ParserError: If there's a syntax error in the member access
@@ -3780,39 +3895,8 @@ class Parser:
         member_lexeme = self._expect(LexemeType.IDENTIFIER)
         member_identifier = PIdentifier(member_lexeme.value, member_lexeme)
 
-        # If followed by parentheses, it's a method call
-        if self._match(LexemeType.PUNCTUATION_OPENPAREN):
-            return self._parse_method_call(left, member_identifier)
-
-        # Otherwise it's a field access
+        # Generate PDot for the field/method access
         return PDotAttribute(left, member_identifier)
-
-    def _parse_method_call(self, object_expr: PExpression, method_name: PIdentifier) -> PMethodCall:
-        """Parse a method call including its arguments.
-
-        Args:
-            object_expr (PExpression): The object expression being called on
-            method_name (str): The name of the method
-
-        Returns:
-            PMethodCall: The parsed method call
-
-        Raises:
-            ParserError: If there's a syntax error in the method call
-        """
-        open_paren_lexeme = self._expect(LexemeType.PUNCTUATION_OPENPAREN)
-        arguments = []
-
-        # Parse arguments if any
-        if not self._match(LexemeType.PUNCTUATION_CLOSEPAREN):
-            while True:
-                arguments.append(self._parse_expression())
-                if not self._match(LexemeType.PUNCTUATION_COMMA):
-                    break
-                self._expect(LexemeType.PUNCTUATION_COMMA)
-
-        self._expect(LexemeType.PUNCTUATION_CLOSEPAREN)
-        return PMethodCall(object_expr, method_name, arguments, open_paren_lexeme)
 
     def _parse_if_statement(self, block_properties:BlockProperties) -> PIfStatement:
         """Parse an if statement"""
@@ -3970,7 +4054,6 @@ class Parser:
         
         block_properties = block_properties.copy_with(is_class=True,
                                                       scope=class_scope)
-
         while not self._match(LexemeType.PUNCTUATION_CLOSEBRACE):
             if self._match(*self.type_keywords, LexemeType.IDENTIFIER):
                 # Parse field or method type

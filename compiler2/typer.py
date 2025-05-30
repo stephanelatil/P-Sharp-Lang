@@ -11,8 +11,8 @@ from parser import (TypeClass, TypeInfo, TypingError,
                     PBlock, PArrayType, PAssertStatement, PAssignment,
                     PBinaryOperation, PBreakStatement, PCast, PClass,
                     PContinueStatement, PDotAttribute, PExpression,
-                    PForStatement, PUnaryOperation, PFunctionCall, PNoop,
-                    PIfStatement, PLiteral, PMethodCall, PMethod,
+                    PForStatement, PUnaryOperation, PNoop,
+                    PIfStatement, PLiteral, PMethod, PCall,
                     PObjectInstantiation, PReturnStatement, PStatement,
                     PTernaryOperation, PThis,PVariableDeclaration, 
                     PWhileStatement, PDiscard, PVoid, ArrayTyp,
@@ -35,16 +35,20 @@ class CompilerWarning(Warning):
     def __str__(self):
         return self.message + f" at location {self.position}"
 
-def create_property(name: str, type_str: str) -> PClassField:
+def create_property(name: str, type_str: str, index:int) -> PClassField:
     """Helper function to create a class property"""
-    return PClassField(
+    field = PClassField(
         name=name,
         type=PType(type_str, Lexeme.default),
         is_public=True,
+        field_index=index,
         lexeme=Lexeme.default,
         default_value=None,
-        is_builtin=True
     )
+    # set assigned & read for builtins
+    field.is_assigned = True
+    field.is_read = True
+    return field
 
 def create_method(name: str, return_type: str, class_type_string:str, params: List[tuple[str, str]], builtin:bool=True) -> PMethod:
     """Helper function to create a method"""
@@ -60,7 +64,7 @@ def create_method(name: str, return_type: str, class_type_string:str, params: Li
                                     arg.name:Symbol(arg.name, arg.position, arg.var_type)
                                     for arg in arguments
                                 })
-    function_symbol = Symbol(name=PMethod.get_linkable_name(name,'__Builtin', class_type_string),
+    function_symbol = Symbol(name=PMethod.get_linkable_name(name, BUILTIN_NAMESPACE, class_type_string),
                              declaration_position=Position.default,
                              ptype=PFunctionType(
                                  typestring_to_ptype(return_type),
@@ -75,9 +79,7 @@ def create_method(name: str, return_type: str, class_type_string:str, params: Li
         name=name,
         return_type=typestring_to_ptype(return_type),
         function_args=arguments,
-        body=PBlock([], Lexeme.default,
-                    block_properties=BlockProperties(is_class=True, is_top_level=False,
-                                                     in_function=True)),
+        body=None,
         is_builtin=builtin,
         scope=function_scope,
         symbol=function_symbol
@@ -384,6 +386,7 @@ class Typer:
         self.is_assignment = False #set to true when typing an identifier to be assigned
         self.warnings: List[CompilerWarning] = []
         self._ast: Optional[PProgram] = None
+        self.current_namespace:NamespaceTyp = NamespaceTyp('')
         
         self.all_symbols: set[Symbol] = set()  # Track all symbols
         self.all_functions: set[PFunction] = set()  # Track all functions
@@ -403,8 +406,8 @@ class Typer:
             PTernaryOperation: self._type_ternary_operation,
 
             # Functions and calls
-            PFunctionCall: self._type_function_call,
-            PMethodCall: self._type_method_call,
+            PCall: self._type_call,
+            # PMethodCall: self._type_method_call,
 
             # Control flow
             PIfStatement: self._type_if_statement,
@@ -432,6 +435,8 @@ class Typer:
             PCast: self._type_cast,
             PType: self._type_ptype,
             PArrayType: self._type_ptype,
+            PFunctionType: self._type_ptype,
+            PNamespaceType: self._type_ptype,
 
             # Program structure
             PBlock: self._type_block,
@@ -445,7 +450,21 @@ class Typer:
     def _print_warnings(self):
         for warning in self.warnings:
             print(str(warning))
-        
+            
+    def _setup_namespace(self):
+        assert self._ast is not None
+        self.current_namespace = NamespaceTyp(self._ast.namespace_name[0])
+        i = 1
+        while len(self._ast.namespace_name) > i:
+            self.current_namespace = NamespaceTyp(self._ast.namespace_name[i],
+                                                 parent_namespace=self.current_namespace)
+            i += 1
+        self._ast.scope.get_symbol(self._ast.namespace_name[0]).typ = self.current_namespace
+        for part in self._ast.namespace_name[1:]:
+            p_node = PIdentifier(part, Lexeme.default)
+            self.current_namespace.fields[part] = p_node
+            p_node.expr_type = NamespaceTyp(part)
+            self.current_namespace = p_node.expr_type
 
     def type_program(self, warnings:bool = False) -> PProgram:
         """Type check the entire source code and return the typed AST"""
@@ -453,13 +472,9 @@ class Typer:
             self._print_warnings()
             return self._ast
         self._ast = self.parser.parse()
+        self._setup_namespace()
         # make tree traversable in both directions
         self._ast._setup_parents()
-        
-        #TODO print function should be imported for stdlib
-        # self._scope_manager.define_function(PFunction(FUNC_PRINT, PType('i32', Position.default),
-        #                                               [PVariableDeclaration('s', PType("string", Lexeme.default), None, Lexeme.default)],
-        #                                               PBlock([], Lexeme.default, BlockProperties()), Lexeme.default))
 
         #type builtin methods
         for typ in list(self.known_types.values()):
@@ -467,8 +482,9 @@ class Typer:
                 continue
             #make sure to say the class we're in
             self._in_class = self._ptype_from_typ(typ)
-            for elem in [*typ.fields, *typ.methods.values()]:
+            for elem in [*typ.fields.values(), *typ.methods.values()]:
                 self._type_statement(elem)
+                    
         self._in_class = None
         
         # type the imports
@@ -478,9 +494,15 @@ class Typer:
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
             if isinstance(statement, PClass):
-                self.known_types[statement.name] = ReferenceTyp(statement.name, 
+                statement._class_typ = ReferenceTyp(statement.name, 
                                                        methods={m.name:m for m in statement.methods},
-                                                       fields=statement.fields) #type: ignore python typer mistake it's valid
+                                                       fields=statement.fields)
+                self.current_namespace.fields[statement.name] = statement
+                self.known_types[statement.name] = statement.class_typ
+            elif isinstance(statement, PFunction):
+                self.current_namespace.fields[statement.name] = statement
+            elif isinstance(statement, PVariableDeclaration):
+                self.current_namespace.fields[statement.name] = statement
             continue
 
         # Full tree traversal pass
@@ -540,22 +562,6 @@ class Typer:
             return PType(typ.name, pos)
         #typ is array
         return PArrayType(self._ptype_from_typ(typ.element_typ), pos)
-
-    def get_type_info(self, type_: IRCompatibleTyp) -> TypeInfo:
-        """Get TypeInfo for a given type, handling array types"""
-
-        # Handle array types
-        if isinstance(type_, ArrayTyp):
-            return TypeInfo(TypeClass.ARRAY, is_signed=False)
-
-        type_str = type_.name
-
-        # Look up built-in type
-        if type_str in TYPE_INFO:
-            return TYPE_INFO[type_str]
-
-        # Must be a custom class
-        return TypeInfo(TypeClass.CLASS, is_builtin=False)
 
     def is_numeric_type(self, type_: Union[IRCompatibleTyp, TypeInfo]) -> bool:
         """Check if type is numeric (integer or float)"""
@@ -785,21 +791,21 @@ class Typer:
                 
         return False
 
-    def _type_statement(self, statement: PStatement) -> Optional[IRCompatibleTyp|NamespaceTyp]:
+    def _type_statement(self, statement: PStatement) -> Optional[BaseTyp]:
         """Type checks a statement (or expression) and returns its type"""
         if isinstance(statement, PExpression):
             return self._type_expression(statement)
         assert isinstance(statement, (PArrayIndexing, PArrayInstantiation,
                                           PIdentifier, PLiteral, PBinaryOperation,
                                           PUnaryOperation, PTernaryOperation,
-                                          PFunctionCall, PMethodCall, PClass,
                                           PIfStatement, PWhileStatement,
                                           PForStatement, PReturnStatement,
                                           PBreakStatement, PContinueStatement,
                                           PAssertStatement, PVariableDeclaration,
                                           PClassField, PDotAttribute, PDiscard,
                                           PObjectInstantiation, PCast, PType,
-                                          PArrayType, PBlock, PFunction, PThis))
+                                          PCall, PClass, PArrayType, PBlock,
+                                          PFunction, PThis))
         typer_func = self._node_function_map.get(type(statement), None)
         assert typer_func is not None
         return typer_func(statement)
@@ -809,9 +815,9 @@ class Typer:
         assert isinstance(expression, (PArrayIndexing, PArrayInstantiation,
                                           PIdentifier, PLiteral, PBinaryOperation,
                                           PUnaryOperation, PTernaryOperation,
-                                          PFunctionCall, PMethodCall, PThis,
-                                          PDotAttribute, PObjectInstantiation,
-                                          PCast, PNoop, PVoid, PAssignment))
+                                          PCall, PThis, PDotAttribute,
+                                          PObjectInstantiation, PCast,
+                                          PNoop, PVoid, PAssignment))
         typer_func = self._node_function_map.get(type(expression), None)
         assert typer_func is not None
         return typer_func(expression)
@@ -826,9 +832,9 @@ class Typer:
         void.expr_type = self.known_types['void']
         return void.expr_type
 
-    def _type_class(self, class_def: PClass) -> None:
+    def _type_class(self, class_def: PClass) -> BaseTyp:
         """Type checks a class definition and returns its type"""
-        for prop in class_def.fields:
+        for prop in class_def.fields.values():
             self._type_class_field(prop)
         
         # self._scope_manager.enter_scope()
@@ -850,8 +856,30 @@ class Typer:
 
     def _type_ptype(self, ptype:PType) -> IRCompatibleTyp:
         """Type checks a class definition and returns its type"""
-        if ptype.type_string in self.known_types:
-            return self.known_types[ptype.type_string]
+        #TODO handle function type here
+        if isinstance(ptype, PFunctionType):
+            return FunctionTyp(ptype.type_string,
+                               return_type=self._type_ptype(ptype.return_ptype),
+                               arguments=[self._type_ptype(arg) for arg in ptype.argument_ptypes],
+                               is_method=False)
+        elif str(ptype) in self.known_types:
+            return self.known_types[str(ptype)]
+        #TODO handle namespaces heres
+        elif ptype.parent_namespace is not None:
+            type_stack = []
+            parent = ptype
+            while parent is not None:
+                type_stack.append(parent.type_string)
+                parent = parent.parent_namespace
+            symbol = ptype.parent_scope.get_symbol(type_stack.pop())
+            typ = symbol.typ
+            while len(type_stack) > 0:
+                assert isinstance(typ, NamespaceTyp)
+                typ = typ.fields[type_stack.pop()]
+            assert isinstance(typ, IRCompatibleTyp)
+            self.known_types[str(ptype)] = typ
+            return typ
+            
         elif isinstance(ptype, PArrayType):
             element_typ = self._type_ptype(ptype.element_type)
             arrTyp = ArrayTyp(element_type=element_typ)
@@ -867,10 +895,10 @@ class Typer:
             #return to prev state
             self._in_class = tmp_class
             return arrTyp
-        else:
-            raise UnknownTypeError(ptype)
 
-    def _type_function(self, func: PFunction|PMethod) -> None:
+        raise UnknownTypeError(ptype)
+    
+    def _type_function_header(self, func: PFunction|PMethod) -> FunctionTyp:
         """Type checks a function definition"""
         if isinstance(func, PMethod):
             assert self._in_class is not None #if method: ensure we're in a class!
@@ -894,20 +922,26 @@ class Typer:
                 func.symbol.is_read = True
                 func.symbol.is_assigned = True
         
-        func._return_typ_typed = self._type_ptype(func.return_type)
-        func.symbol.typ = FunctionTyp(func.symbol.ptype.type_string,
-                                    is_builtin=False,
-                                    return_type=func.return_typ_typed,
-                                    arguments=[arg.typer_pass_var_type for arg in func.function_args])
-        if not func.is_builtin:
-            # TODO with namespaces this is not useful anymore?
-            #ignore body for builtin functions (just a declaration)
-            assert self.expected_return_type is None
-            self.expected_return_type = func._return_typ_typed
+        return_typ = self._type_ptype(func.return_type)
+        func.function_typ = FunctionTyp(func.symbol.ptype.type_string,
+                                    return_type=return_typ,
+                                    arguments=[arg.typer_pass_var_type for arg in func.function_args],
+                                    is_method=isinstance(func, PMethod))
+        return func.function_typ
+
+    def _type_function(self, func: PFunction|PMethod) -> FunctionTyp:
+        if not func.header_is_typed: 
+            #not yet typed
+            self._type_function_header(func)
+            
+        if not func.is_only_declaration:
+            assert func.body is not None
+            #ignore None body it's just a declarations
+            self.expected_return_type = func.return_typ_typed
             self._type_block(func.body)
 
             #add implicit return at the end of a void function if there isn't one already
-            if self.get_type_info(self.expected_return_type.type_info.type_class == TypeClass.VOID:
+            if self.expected_return_type.type_info.type_class == TypeClass.VOID:
                 if len(func.body.statements) == 0:
                     func.body.statements.append(
                         PReturnStatement.implicit_return(func.body.position, func.body))
@@ -917,22 +951,25 @@ class Typer:
                             func.body.statements[-1].position,
                             func.body))
             self.expected_return_type = None
+        return func.function_typ
 
     def _type_block(self, block: PBlock) -> None:
         """Type checks a block of statements, optionally verifying return type"""
         for statement in block.statements:
             self._type_statement(statement)
 
-    def _type_variable_declaration(self, var_decl: PVariableDeclaration) -> None:
+    def _type_variable_declaration(self, var_decl: PVariableDeclaration) -> BaseTyp:
         """Type checks a variable declaration"""
         if var_decl.symbol._typ is None:
             self.all_symbols.add(var_decl.symbol)
             var_decl.typer_pass_var_type = self._type_ptype(var_decl.var_type)
 
         if var_decl.initial_value is None:
-            return
+            return var_decl.typer_pass_var_type
         
-        symbol.is_assigned = True
+        var_decl.symbol.is_assigned = True
+        var_type = var_decl.symbol.typ
+        assert isinstance(var_type, IRCompatibleTyp)
         expr_type = self._type_expression(var_decl.initial_value)
         assert isinstance(expr_type, IRCompatibleTyp)
         #TODO if check fails here add to errors and suppose it's fine, continue
@@ -941,6 +978,7 @@ class Typer:
         if expr_type != var_type:
             var_decl.initial_value = self._add_implicit_cast(
                                             var_decl.initial_value, var_type)
+        return var_decl.typer_pass_var_type
 
     def _type_discard(self, discard:PDiscard) -> None:
         self._type_expression(discard.expression)
@@ -950,7 +988,7 @@ class Typer:
         var_type = self._type_ptype(prop.var_type)
         self._error_if_not_ir_type(var_type, prop.var_type.position)
         prop._typer_pass_var_type = var_type
-        self.all_class_properties.append(prop)
+        self.all_class_properties.add(prop)
 
         if prop.default_value is None:
             return
@@ -1063,23 +1101,25 @@ class Typer:
                                         return_stmt.value,
                                         self.expected_return_type)
 
-    def _type_function_call(self, func_call: PFunctionCall) -> IRCompatibleTyp:
+    def _type_call(self, func_call: PCall) -> IRCompatibleTyp:
         """Type checks a function call and returns its return type"""
         func_ident = func_call.function
-        symbol = func_call.parent_scope.get_symbol(func_ident.name, func_ident.position)
         
-        if not symbol.is_function:
-            raise TypingError(f"Symbol {symbol.name} of type '{symbol.typ}' is not callable at {func_call.position}")
+        func_typ = self._type_expression(func_ident)
+        if not isinstance(func_typ, FunctionTyp):
+            raise TypingError(f"The type {func_typ} is not callable at {func_ident.position}")
+        if isinstance(func_ident, PDotAttribute) and not isinstance(func_ident.left.expr_type, NamespaceTyp):
+            func_typ.is_method = True
         
-        symbol.is_read = True
-        assert symbol.arguments is not None
+        expected_arguments = func_typ.arguments.copy()
+        if func_typ.is_method and len(expected_arguments) > 0:
+            expected_arguments.pop(0)
         
-        if len(symbol.arguments) != len(func_call.arguments):
-            raise TypingError(f"The function expects {len(func_call.arguments)} arguments but got {len(symbol.arguments)}"+\
+        if len(expected_arguments) != len(func_call.arguments):
+            raise TypingError(f"The function expects {len(func_call.arguments)} arguments but got {len(expected_arguments)}"+\
                               f" at location {func_call.position}")
         
-        for i, (expected_param, actual) in enumerate(zip(symbol.arguments, func_call.arguments)):
-            expected_type = self._type_ptype(expected_param.var_type)
+        for i, (expected_type, actual) in enumerate(zip(expected_arguments, func_call.arguments)):
             actual_type = self._type_expression(actual)
             assert isinstance(actual_type, IRCompatibleTyp)
             if not self.check_types_match(expected_type, actual_type):
@@ -1087,30 +1127,42 @@ class Typer:
             if expected_type != actual_type:
                 func_call.arguments[i] = self._add_implicit_cast(actual, expected_type)
         
-        assert isinstance(symbol.typ, FunctionTyp)
-        func_call.expr_type = symbol.typ.return_type
+        func_call.expr_type = func_typ.return_type
         return func_call.expr_type
 
-    def _type_method_call(self, method_call: PMethodCall) -> IRCompatibleTyp:
-        """Type checks a method call and returns its return type"""
-        obj_type = self._type_expression(method_call.object)
-        if not method_call.method_name.name in obj_type.methods:
-            raise TypingError(f"Method {method_call.method_name.name} of type {obj_type} if unknown at location {method_call.position}")
-        method = obj_type.methods[method_call.method_name.name]
-        method.is_called = True
-        if len(method.explicit_arguments) != len(method_call.arguments):
-            raise TypingError(f"The function expects {len(method.function_args)} arguments but got {len(method_call.arguments)}"+\
-                              f" at location {method_call.position}")
+    # def _type_method_call(self, method_call: PMethodCall) -> IRCompatibleTyp:
+    #     """Type checks a method call and returns its return type"""
+    #     obj_type = self._type_expression(method_call.object)
+    #     if isinstance(obj_type, NamespaceTyp):
+    #         assert method_call.method_name.name in obj_type.fields
+    #         func = obj_type.fields[method_call.method_name.name]
+    #         assert isinstance(func.expr_type, FunctionTyp)
 
-        for expected_param, actual in zip(method.explicit_arguments, method_call.arguments):
-            expected_type = self._type_ptype(expected_param.var_type)
-            actual_type = self._type_expression(actual)
-            assert isinstance(actual_type, IRCompatibleTyp)
-            if not self.check_types_match(expected_type, actual_type):
-                raise TypingConversionError(actual_type, expected_type, actual)
-        
-        method_call.expr_type = self._type_ptype(method.return_type)
-        return method_call.expr_type
+    #         for expected_type, actual in zip(func.expr_type.arguments, method_call.arguments):
+    #             actual_type = self._type_expression(actual)
+    #             assert isinstance(actual_type, IRCompatibleTyp)
+    #             if not self.check_types_match(expected_type, actual_type):
+    #                 raise TypingConversionError(actual_type, expected_type, actual)
+    #         method_call.expr_type = func.expr_type.return_type
+    #     else:
+    #         if not method_call.method_name.name in obj_type.methods:
+    #             raise TypingError(f"Method {method_call.method_name.name} of type {obj_type} if unknown at location {method_call.position}")
+    #         method = obj_type.methods[method_call.method_name.name]
+    #         method.is_called = True
+    #         if len(method.explicit_arguments) != len(method_call.arguments):
+    #             raise TypingError(f"The function expects {len(method.function_args)} arguments but got {len(method_call.arguments)}"+\
+    #                             f" at location {method_call.position}")
+
+    #         for expected_param, actual in zip(method.explicit_arguments, method_call.arguments):
+    #             expected_type = self._type_ptype(expected_param.var_type)
+    #             actual_type = self._type_expression(actual)
+    #             assert isinstance(actual_type, IRCompatibleTyp)
+    #             if not self.check_types_match(expected_type, actual_type):
+    #                 raise TypingConversionError(actual_type, expected_type, actual)
+            
+    #         method_call.expr_type = self._type_ptype(method.return_type)
+
+    #     return method_call.expr_type
 
     def _type_identifier(self, identifier: PIdentifier) -> IRCompatibleTyp:
         """Type checks an identifier and returns its type"""
@@ -1216,7 +1268,7 @@ class Typer:
         array_init.expr_type = self._type_ptype(PArrayType(array_init.element_type, array_init.element_type.position))
         array_size_type = self._type_expression(array_init.size)
         assert isinstance(array_size_type, IRCompatibleTyp)
-        if self.get_type_info(array_size_type.type_info.type_class != TypeClass.INTEGER:
+        if array_size_type.type_info.type_class != TypeClass.INTEGER:
             raise TypingError(f"Expected an array size of type Integer but got '{array_size_type}'")
         if array_size_type != self.known_types['u64']:
             array_init.size = self._add_implicit_cast(array_init.size, self.known_types['u64'])
@@ -1230,21 +1282,24 @@ class Typer:
         self.is_assignment = False
         left_type = self._type_expression(dot_attr.left)
         if isinstance(left_type, IRCompatibleTyp):
-            for field in left_type.fields:
+            if dot_attr.right.name in left_type.fields:
+                field = left_type.fields[dot_attr.right.name]
                 assert isinstance(field, PClassField)
-                if field.name == dot_attr.right.name:
-                    if dot_attr.right.expr_type is None:
-                        dot_attr.right.expr_type = self._type_ptype(field.var_type)
-                    dot_attr.expr_type = dot_attr.right.expr_type
-                    field.is_assigned |= tmp_assignment
-                    break
+                if dot_attr.right.expr_type is None:
+                    dot_attr.right.expr_type = self._type_ptype(field.var_type)
+                dot_attr.expr_type = dot_attr.right.expr_type
+                field.is_assigned |= tmp_assignment
+            elif dot_attr.right.name in left_type.methods:
+                method = left_type.methods[dot_attr.right.name]
+                assert isinstance(method, PFunction)
+                dot_attr.right.expr_type = method.function_typ
+                dot_attr.expr_type = dot_attr.right.expr_type
             else:
                 raise TypingError(f"'{dot_attr.right.name}' is not a known property of '{left_type}'")
         elif isinstance(left_type, NamespaceTyp):
-            for field in left_type.fields:
-                if field.name == dot_attr.right.name:
-                    assert dot_attr.right.expr_type is not None
-                    dot_attr.expr_type = dot_attr.right.expr_type
+            field = left_type.fields.get(dot_attr.right.name, None)
+            assert dot_attr.right.expr_type is not None
+            dot_attr.expr_type = dot_attr.right.expr_type
         else:
             raise TypingError(f"'Invalid symbol in {dot_attr.left.position}")
         assert isinstance(dot_attr.expr_type, (NamespaceTyp, IRCompatibleTyp))
