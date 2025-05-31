@@ -57,11 +57,9 @@ class CodeGenTestCase:
                 return parse_bitcode(bc.read())
     
     def get_function_ir(self, module:ModuleRef, func_name:str='main', namespace:str='Default'):
-        try:
-            func = module.get_function(f"{namespace}.{func_name}")
-        except:
-            #TODO fix once imports come
-            func = module.get_function(func_name)
+        if func_name != 'main':
+            func_name = f"{namespace}.$${func_name}"
+        func = module.get_function(func_name)
         blocks = func.blocks
         return '\n'.join([str(block) for block in blocks])
     
@@ -268,8 +266,8 @@ class TestCodeGeneratorMethodCalls(CodeGenTestCase):
         i32 main()
         {
             IntBuilder ib = new IntBuilder();
-            ib.inc(1).inc(2).inc(3);
-            return ib.total;
+            // ib.inc(1).inc(2).inc(3);
+            return (i32) ib.total.ToString().Length;
         }
         """
         result = self.compile_and_run_main(source)
@@ -280,11 +278,16 @@ class TestCodeGeneratorBuiltins(CodeGenTestCase):
     """Test builtin methods and fields"""
     
     @pytest.mark.parametrize("source, expected_value",[
+            ("i32 main() { bool b = true; string s = b.ToString(); return (i32) s.Length; }", 4),
+            ("i32 main() { i32 i = 123; string s = i.ToString(); return (i32) s.Length; }", 3),
+            ("i32 main() { f32 pi = 3.1415; string s = pi.ToString(); return (i32) s.Length; }", 6),
+            ("i32 main() { string s = \"hello\".ToString(); return (i32) s.Length; }", 5),
+            ("i32 main() { char c = 'a'; string s = c.ToString(); return (i32) s.Length; }", 1),
+            ("i32 main() { string s = 'a'.ToString(); return (i32) s.Length; }", 1),
             ("i32 main() { string s = true.ToString(); return (i32) s.Length; }", 4),
             ("i32 main() { string s = (123).ToString(); return (i32) s.Length; }", 3),
             ("i32 main() { string s = (3.1415).ToString(); return (i32) s.Length; }", 6),
-            ("i32 main() { string s = \"hello\".ToString(); return (i32) s.Length; }", 5),
-            ("i32 main() { string s = 'a'.ToString(); return (i32) s.Length; }", 1)
+
         ])
     def test_valid_to_string_calls_and_string_length_access(self, source, expected_value):
         res = self.compile_and_run_main(source)

@@ -4,15 +4,14 @@ from io import StringIO
 from parser import (Parser, ParserError, NodeType, PProgram, PFunction, PBlock,
                    PVariableDeclaration, PAssignment, PBinaryOperation,
                    PUnaryOperation, PIfStatement, PWhileStatement, PForStatement,
-                   PReturnStatement, PFunctionCall, PIdentifier, PLiteral,
-                   PCast, PClassField, PMethodCall, PBreakStatement,
+                   PReturnStatement, PCall, PIdentifier, PLiteral,
+                   PCast, PClassField, PBreakStatement,
                    PContinueStatement, PAssertStatement, PTernaryOperation,
                    PClass, PDotAttribute, PExpression, PArrayIndexing,
                    PArrayInstantiation, PObjectInstantiation,
-                   PDiscard, PArrayType, PType)
+                   PDiscard, PArrayType, PType, LexemeStream)
 from lexer import Lexer, LexemeType
 from operations import BinaryOperation, UnaryOperation
-from typing import Any, Type
 
 class TestParserBase:
     """Base class for parser tests with common utilities."""
@@ -110,6 +109,54 @@ class TestParserUtilities(TestParserBase):
         assert LexemeType.KEYWORD_TYPE_FLOAT64 in type_keywords
         assert LexemeType.KEYWORD_TYPE_BOOLEAN in type_keywords
         assert LexemeType.KEYWORD_TYPE_STRING in type_keywords
+        
+    def test_lexeme_stream_save_pop_position(self):
+        source = """while (x < 100)"""
+        lexer = Lexer("test.psc", StringIO(source))
+        stream = LexemeStream(lexer.lex(), "test.psc")
+        assert stream.peek().type == LexemeType.KEYWORD_CONTROL_WHILE
+        stream.save_position()
+        lexemes = [LexemeType.KEYWORD_CONTROL_WHILE, LexemeType.PUNCTUATION_OPENPAREN,
+                   LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_BOOL_LT,
+                   LexemeType.NUMBER_INT, LexemeType.PUNCTUATION_CLOSEPAREN]
+        for lexeme in lexemes:
+            assert stream.advance().type == lexeme
+        #should revert to previous position
+        stream.pop_saved_position()
+        #and replay the same lexemes
+        for lexeme in lexemes:
+            assert stream.advance().type == lexeme
+        
+    def test_lexeme_stream_save_pop_multiple(self):
+        #source is a space-separated list of numbers from 0 to 199
+        source = " ".join((str(x) for x in range(200)))
+        lexer = Lexer("test.psc", StringIO(source))
+        stream = LexemeStream(lexer.lex(), "test.psc")
+        assert stream.advance().value == "0"
+        for i in range(1, 100):
+            stream.save_position()
+            assert stream.advance().value == str(i)
+        for i in range(99, 0, -1):
+            stream.pop_saved_position()
+            assert stream.advance().value == str(i)
+        
+    def test_lexeme_stream_save_drop_position(self):
+        source = """while (x < 100){}"""
+        lexer = Lexer("test.psc", StringIO(source))
+        stream = LexemeStream(lexer.lex(), "test.psc")
+        assert stream.peek().type == LexemeType.KEYWORD_CONTROL_WHILE
+        stream.save_position()
+        lexemes = [LexemeType.KEYWORD_CONTROL_WHILE, LexemeType.PUNCTUATION_OPENPAREN,
+                   LexemeType.IDENTIFIER, LexemeType.OPERATOR_BINARY_BOOL_LT,
+                   LexemeType.NUMBER_INT, LexemeType.PUNCTUATION_CLOSEPAREN]
+        for lexeme in lexemes:
+            assert stream.advance().type == lexeme
+        #should revert to previous position
+        stream.drop_saved_position()
+        #and replay the same lexemes
+        for lexeme in [LexemeType.PUNCTUATION_OPENBRACE,
+                       LexemeType.PUNCTUATION_CLOSEBRACE]:
+            assert stream.advance().type == lexeme
 
 class TestParserPrimaryExpressions(TestParserBase):
     """Test suite for primary expression parsing."""
@@ -402,13 +449,16 @@ class TestParserOperators(TestParserBase):
             obj.method1(!x).method2(--y);
             """,
             """
-            getValue().process(x++);
+            process(x++);
+            """,
+            """
+            (1).ToString();
             """
         ])
     def test_unary_operations_with_method_calls(self, source):
         """Test unary operations in method call contexts."""
         program = self.parse_source(source)
-        assert any(isinstance(stmt, (PMethodCall, PFunctionCall)) \
+        assert any(isinstance(stmt, PCall) \
                         for stmt in program.statements)
 
     @pytest.mark.parametrize("source",[
@@ -982,7 +1032,7 @@ class TestParserFunctionDefinitions(TestParserBase):
         """Test parsing of various function call patterns."""
         program = self.parse_source(source)
         call = program.statements[0]
-        assert isinstance(call, PFunctionCall)
+        assert isinstance(call, PCall)
 
     @pytest.mark.parametrize("source",[
             # Void return
@@ -1022,6 +1072,7 @@ class TestParserFunctionDefinitions(TestParserBase):
         func = program.statements[0]
         assert isinstance(func, PFunction)
         # Find the return statement in the function body
+        assert func.body is not None
         return_stmt = func.body.statements[-1]
         assert isinstance(return_stmt, PReturnStatement)
 
@@ -1099,9 +1150,9 @@ class TestParserClassDefinitions(TestParserBase):
         #test properties
         assert len(class_def.fields) == 2
         for i,(typ, name) in enumerate([('i32[]', 'elements'), ("i32","size")]):
-            assert isinstance(class_def.fields[i], PClassField)
-            assert typ == str(class_def.fields[i].var_type)
-            assert name == class_def.fields[i].name
+            assert isinstance(class_def.fields[name], PClassField)
+            assert typ == str(class_def.fields[name].var_type)
+            assert name == class_def.fields[name].name
 
         #test methods
         assert len(class_def.methods) == 3
@@ -1128,7 +1179,7 @@ class TestParserClassDefinitions(TestParserBase):
         """Test parsing of various method call patterns."""
         program = self.parse_source(source)
         stmt = program.statements[0]
-        assert isinstance(stmt, (PMethodCall,PFunctionCall))
+        assert isinstance(stmt, PCall)
 
     @pytest.mark.parametrize("source",[
             # Missing class name
@@ -1349,13 +1400,13 @@ class TestParserNamespace(TestParserBase):
     def test_default_namespace(self):
         """When no namespace is declared, PProgram.namespace should be 'Default'."""
         program = self.parse_source("")
-        assert program.namespace_name == "Default"
+        assert program.namespace_name == ["Default"]
 
     def test_valid_namespace_declaration(self):
         """A single namespace at the top should be parsed correctly."""
         src = "namespace Alpha.Beta.Gamma; i32 x = 42;"
         program = self.parse_source(src)
-        assert program.namespace_name == "Alpha.Beta.Gamma"
+        assert program.namespace_name == ["Alpha","Beta","Gamma"]
         # also make sure parsing continues normally
         assert isinstance(program.statements[0], PVariableDeclaration)
 

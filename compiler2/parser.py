@@ -2440,8 +2440,9 @@ class PIdentifier(PExpression):
     """Identifier node"""
     name: str
 
-    def __init__(self, name: str, lexeme: Lexeme):
-        super().__init__(NodeType.IDENTIFIER, lexeme.pos)
+    def __init__(self, name: str, lexeme_pos: Union[Lexeme, Position]):
+        super().__init__(NodeType.IDENTIFIER, 
+                         lexeme_pos.pos if isinstance(lexeme_pos, Lexeme) else lexeme_pos)
         self.name = name
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> Union[ir.Value, ir.Function]:
@@ -2851,7 +2852,7 @@ class PObjectInstantiation(PExpression):
         # Implicit constructor
         # Element is allocated
         # Now we need to allocate all of its fields
-        for field_num, field in enumerate(self.expr_type.fields):
+        for field_num, field in enumerate(self.expr_type.fields.values()):
             assert isinstance(field, PClassField)
             if field.default_value is None:
                 continue #not set it's a null_ptr (zero-ed out field for value types)

@@ -2,12 +2,17 @@ import pytest
 from io import StringIO
 from lexer import Position, Lexeme
 from parser import (PProgram, PType, PArrayType, PVariableDeclaration,
-                    PExpression, PMethodCall, PCast, PClass, PClassField,
+                    PExpression, PCall, PCast, PClass, PClassField,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
                     PWhileStatement, PForStatement, PTernaryOperation,
-                    SymbolNotFoundError, SymbolRedefinitionError)
-from typer import (Typer, TypeClass, ReferenceTyp, ArrayTyp, ValueTyp,
-                  UnknownTypeError, TypingError, TypingConversionError)
+                    SymbolNotFoundError, SymbolRedefinitionError,
+                    PDotAttribute, PIdentifier, TypeInfo, TypeClass)
+from typer import (Typer, TypeClass, ReferenceTyp, ArrayTyp,
+                   ValueTyp, FunctionTyp, UnknownTypeError,
+                   TypingError, TypingConversionError)
+from constants import BUILTIN_NAMESPACE
+from pathlib import Path
+from random import randbytes
 
 class TestTypeConversions:
     """Test type conversion logic and compatibility checks"""
@@ -31,7 +36,8 @@ class TestTypeConversions:
             PType("f16", Position.default),
             PType("f32", Position.default),
             PType("f64", Position.default),
-            PType("char", Position.default)
+            PType("char", Position.default),
+            PType("ul", Position.default)
         ])
     def test_numeric_type_detection(self, type_):
         """Test detection of numeric types"""
@@ -124,8 +130,8 @@ class TestTypeConversions:
         ])
     def test_array_type_compatibility(self, type1, type2, expected):
         """Test array type compatibility checks"""
-        self.typer.known_types["MyClass"] = ReferenceTyp("MyClass", methods={}, fields=[])
-        self.typer.known_types["OtherClass"] = ReferenceTyp("OtherClass", methods={}, fields=[])
+        self.typer.known_types["MyClass"] = ReferenceTyp("MyClass")
+        self.typer.known_types["OtherClass"] = ReferenceTyp("OtherClass")
         
         actual = self.typer.check_types_match(
             self.typer._type_ptype(type1),
@@ -227,7 +233,7 @@ class TestTypeInfoHandling:
         ])
     def test_builtin_type_info(self, type_name, expected_class, expected_width, expected_signed):
         """Test TypeInfo for built-in types"""
-        info = self.typer.get_type_info(self.typer.known_types[type_name])
+        info = self.typer.known_types[type_name].type_info
         assert info.type_class == expected_class
         assert info.bit_width == expected_width
         assert info.is_signed == expected_signed
@@ -242,12 +248,12 @@ class TestTypeInfoHandling:
     def test_array_type_info(self, var_decl):
         """Test TypeInfo for array types"""
         self.typer = Typer('text.cs', StringIO(var_decl))
-        self.typer.known_types["MyClass"] = ReferenceTyp("MyClass", methods={}, fields=[])
+        self.typer.known_types["MyClass"] = ReferenceTyp("MyClass")
         ast = self.typer.type_program()
         assert isinstance(ast.statements[0], PVariableDeclaration)
         assert isinstance(ast.statements[0].var_type, PArrayType)
         typ_ = self.typer._type_ptype(ast.statements[0].var_type)
-        info = self.typer.get_type_info(typ_)
+        info = typ_.type_info
         assert info.type_class == TypeClass.ARRAY
         assert info.bit_width == 0
         assert info.is_builtin
@@ -256,9 +262,9 @@ class TestTypeInfoHandling:
     def test_custom_class_type_info(self, class_name):
         """Test TypeInfo for custom class types"""
         # Add some custom classes
-        self.typer.known_types[class_name] = ReferenceTyp(class_name, methods={}, fields=[])
+        self.typer.known_types[class_name] = ReferenceTyp(class_name)
 
-        info = self.typer.get_type_info(self.typer.known_types[class_name])
+        info = self.typer.known_types[class_name].type_info
         assert info.type_class == TypeClass.CLASS
         assert info.bit_width == 0
         assert not info.is_builtin
@@ -365,10 +371,10 @@ class TestTyperBasicDeclarations:
             self.parse_and_type(source)
 
     @pytest.mark.parametrize("source, expected_type",[
-            ("i32[] numbers = new i32[10];", ArrayTyp(ValueTyp('i32'))),
-            ("string[] names = new string[5];", ArrayTyp(ReferenceTyp('string'))),
-            ("bool[] flags = new bool[3];", ArrayTyp(ValueTyp('bool'))),
-            ("i32[][] matrix = new i32[3][];", ArrayTyp(ArrayTyp(ValueTyp('i32'))))
+            ("i32[] numbers = new i32[10];", ArrayTyp(ValueTyp('i32', type_info=TypeInfo(TypeClass.INTEGER, 32)))),
+            ("string[] names = new string[5];", ArrayTyp(ReferenceTyp('string', type_info=TypeInfo(TypeClass.STRING)))),
+            ("bool[] flags = new bool[3];", ArrayTyp(ValueTyp('bool', type_info=TypeInfo(TypeClass.INTEGER, 1)))),
+            ("i32[][] matrix = new i32[3][];", ArrayTyp(ArrayTyp(ValueTyp('i32', type_info=TypeInfo(TypeClass.INTEGER, 32)))))
         ])
     def test_valid_array_declarations(self, source, expected_type):
         """Test valid array declarations"""
@@ -559,10 +565,10 @@ class TestTyperClassDeclarations:
         assert typ.is_reference_type
         assert len(typ.methods) == 0
         assert len(typ.fields) == 2
-        assert isinstance(typ.fields[0], PClassField)
-        assert isinstance(typ.fields[1], PClassField)
-        assert typ.fields[0].var_type.type_string == "i32"
-        assert typ.fields[1].var_type.type_string == "i32"
+        assert isinstance(typ.fields['x'], PClassField)
+        assert isinstance(typ.fields['y'], PClassField)
+        assert typ.fields['x'].var_type.type_string == "i32"
+        assert typ.fields['y'].var_type.type_string == "i32"
 
     def test_valid_class_with_methods(self):
         """Test valid class with method declarations"""
@@ -586,7 +592,7 @@ class TestTyperClassDeclarations:
         assert isinstance(class_decl, PClass)
         assert len(class_decl.fields) == 2
         assert len(class_decl.methods) == 2
-        assert class_decl.name in self.typer.known_types
+        assert class_decl.full_name in self.typer.known_types
 
     @pytest.mark.parametrize("source",[
             """
@@ -627,6 +633,48 @@ class TestTyperClassDeclarations:
         with pytest.raises(TypingError):
             self.parse_and_type(source)
 
+class TestTyperImportAndNamespaceAccess:
+    """Test accessing functions, types or functions from other namespaces"""
+    def setup_method(self):
+        # add empty typer just for lexer
+        self.typer = Typer('test.ps', StringIO(''))
+        rand_hex = randbytes(8).hex()
+        self.to_include = f"TestHeader_{rand_hex}" #adds a random hex to make sure if multiple tests are run in parallel they all have their own import
+        self.test_header = Path(__file__).parent.joinpath(f"{self.to_include}.psh")
+        # add a helper namespace header
+        self.test_header.write_text(
+            f"""
+            namespace {self.to_include};
+            
+            f32 PI;
+            
+            class SomeObject{{
+              bool BoolField;
+              f32 FloatField;
+              void VoidMethod();
+              i32 IntMethod();
+            }}
+            
+            char GetChar();
+            """, encoding='utf8')
+
+    def parse_and_type(self, source: str) -> PProgram:
+        """Helper method to parse and type check source code"""
+        self.typer = Typer('test.ps', StringIO(source))
+        return self.typer.type_program()
+
+    def teardown_method(self, test_method):
+        # tear down self.attribute
+        self.test_header.unlink(True)
+
+    def test_import_from_header(self):
+        source = f"import {self.to_include};"
+        prog = self.parse_and_type(source)
+        prog.scope.has_imported_symbol("PI")
+        prog.scope.has_imported_symbol("SomeObject")
+        prog.scope.has_imported_symbol("GetChar")
+        prog.scope.has_symbol(self.to_include)
+
 class TestTyperMethodCalls:
     """Test method calls and method chaining"""
     def setup_method(self):
@@ -655,11 +703,12 @@ class TestTyperMethodCalls:
         assert last.initial_value is not None
         assert last.initial_value is not None
         method_call = last.initial_value
-        assert isinstance(method_call, PMethodCall)
+        assert isinstance(method_call, PCall)
+        assert isinstance(method_call.function, PDotAttribute)
         assert len(method_call.arguments) == 2
         assert method_call.expr_type is not None
         assert method_call.expr_type is not None
-        assert method_call.object.expr_type == self.typer.known_types['Calculator']
+        assert method_call.function.left.expr_type == self.typer.known_types['Calculator']
         assert method_call.expr_type == self.typer.known_types['i32']
         
     @pytest.mark.parametrize("source",[
@@ -675,11 +724,14 @@ class TestTyperMethodCalls:
         assert isinstance(var_decl, PVariableDeclaration)
         assert var_decl.initial_value is not None
         method_call = var_decl.initial_value
-        assert isinstance(method_call, PMethodCall)
+        assert isinstance(method_call, PCall)
         assert len(method_call.arguments) == 0
-        assert method_call.method_name.name == 'ToString'
+        assert isinstance(method_call.function, PDotAttribute)
+        assert isinstance(method_call.function.right, PIdentifier)
+        assert method_call.function.right.name == 'ToString'
         assert method_call.expr_type is not None
         assert method_call.expr_type == self.typer.known_types['string']
+        assert isinstance(method_call.function.right.expr_type, FunctionTyp)
 
     def test_valid_method_chaining(self):
         """Test valid method chaining"""
@@ -708,11 +760,12 @@ class TestTyperMethodCalls:
         method_call = last.initial_value
         #go up the call tree
         for _ in range(4):
-            assert isinstance(method_call, PMethodCall)
+            assert isinstance(method_call, PCall)
             assert method_call.expr_type is not None
             assert method_call.expr_type is not None
-            assert method_call.object.expr_type == self.typer.known_types['StringBuilder']
-            method_call = method_call.object
+            assert isinstance(method_call.function, PDotAttribute)
+            assert method_call.function.left.expr_type == self.typer.known_types['StringBuilder']
+            method_call = method_call.function.left
 
     @pytest.mark.parametrize("source",[
             """
