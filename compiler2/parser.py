@@ -509,6 +509,7 @@ class Symbol(UseCheckMixin):
     ir_func:Optional[ir.Function]=None
     _typ:Optional[BaseTyp] = None
     arguments:Optional[List['PVariableDeclaration']] = None # only used if it's a callable
+    ambiguous_other_declarations:List['Symbol'] = field(default_factory=list)
     
     def __init__(self, name:str, declaration_position:Position, ptype:'PType',
                  ir_alloca:Optional[ir.NamedValue]=None, ir_func:Optional[ir.Function]=None,
@@ -524,6 +525,10 @@ class Symbol(UseCheckMixin):
         self.arguments = arguments
         self.is_assigned = is_assigned
         self.is_read = is_read
+        
+    @property
+    def is_ambiguous(self) -> bool:
+        return len(self.ambiguous_other_declarations) > 0
     
     @property
     def typ(self) -> BaseTyp:
@@ -557,7 +562,17 @@ class Symbol(UseCheckMixin):
         return (self.name == value.name
                 and self.ptype == value.ptype
                 and self._typ == value._typ)
-        
+
+class SymbolAmbiguousException(Exception):
+    """Raise when the compiler cannot decide what symbol it's supposed to consider
+    (i.e. if multiple imported namespaces define the same symbol and the parent namespace is not defined explicitly)"""
+    def __init__(self, symbol:Symbol):
+        assert symbol.is_ambiguous
+        super().__init__(f"Compiler has an ambiguous reference between and cannot decide between declarations from"
+                         f"{symbol.typ.full_name} in {symbol.declaration_position}, "
+                         ','.join(f"{sym.typ.full_name} in {sym.declaration_position}"
+                                  for sym in symbol.ambiguous_other_declarations))
+
 class SymbolRedefinitionError(Exception):
     """Raised when attempting to redefine a symbol in the same scope"""
     def __init__(self, name: str, original_position: Position, new_declaration_position: Position):
@@ -822,13 +837,12 @@ class GlobalScope(LocalScope):
                          module_symbols or None)
         self.imported_symbols = imported_symbols or dict()
 
-    def declare_import(self, import_stmnt:'PImport'):
-        #TODO here when importing it should add the namespace symbol and populate what it imports:
-            # i.e. If importing N1.N2. Define symbol N1 in self,symbols (and have it have the N2 field. The N2 field should have all imports associated)
-        # AND also define all imported symbols under N1.N2.* (first level only like in C#) in self.imported symbols
-        
-        #here it should fetch and parse the imported element
-        pass
+    def declare_import(self, symbol:Symbol):
+        """Adds the imported symbol to the list. Makes symbol ambiguous if already defined"""
+        if symbol.name in self.imported_symbols:
+            self.imported_symbols[symbol.name].ambiguous_other_declarations.append(symbol)
+        else:
+            self.imported_symbols[symbol.name] = symbol
 
 @dataclass
 class ClassScope(LocalScope):
