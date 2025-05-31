@@ -466,6 +466,9 @@ class NamespaceTyp(BaseTyp):
         
         super().__init__(name, parent_namespace=parent_namespace)
         self.fields = fields or dict()
+    
+    def __eq__(self, value: object) -> bool:
+        return isinstance(value, NamespaceTyp) and value.full_name == self.full_name
         
     def di_type(self, context: 'CodeGenContext') -> Optional[ir.DIValue]:
         raise NotImplementedError('A namespace does not have a type')
@@ -603,7 +606,6 @@ class ScopeType(Enum):
 @dataclass    
 class LocalScope:
     """The current scope of the block. It lists known symbols"""
-    
     scope_type:ScopeType = ScopeType.BlockScope
     """The type of scope"""
     parent:Optional['LocalScope'] = None
@@ -1585,6 +1587,7 @@ class PClassField(PStatement):
         self.is_public = is_public
         self.default_value = default_value
         self.is_builtin = is_builtin
+        self.field_index = field_index
         
     def __hash__(self) -> int:
         return hash(self.name) + hash(self.var_type)

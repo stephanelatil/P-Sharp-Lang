@@ -453,23 +453,30 @@ class Typer:
             
     def _setup_namespace(self):
         assert self._ast is not None
+        symbol = Symbol(
+            name=self._ast.namespace_name[0],
+            declaration_position=self._ast.position,
+            ptype=PNamespaceType(self._ast.namespace_name[0], self._ast.position))
+        
+        self._ast.scope.declare_local(symbol)
+        #the current namespace is the end of the namespace chain: in the A.B.C namespace, current_namespace is C
         self.current_namespace = NamespaceTyp(self._ast.namespace_name[0])
-        i = 1
-        while len(self._ast.namespace_name) > i:
-            self.current_namespace = NamespaceTyp(self._ast.namespace_name[i],
-                                                 parent_namespace=self.current_namespace)
-            i += 1
-        self._ast.scope.get_symbol(self._ast.namespace_name[0]).typ = self.current_namespace
+        symbol.typ = self.current_namespace
         for part in self._ast.namespace_name[1:]:
-            p_node = PIdentifier(part, Lexeme.default)
-            self.current_namespace.fields[part] = p_node
-            p_node.expr_type = NamespaceTyp(part)
-            self.current_namespace = p_node.expr_type
+            # Also add sub-namespace field to all intermediate
+            # i.e. in A.B.C, A has a B namespace field and B has C namespace field
+            next_one_down = NamespaceTyp(part,
+                                         parent_namespace=self.current_namespace)
+            pnode = PIdentifier(part, Lexeme.default)
+            self.current_namespace.fields[part] = pnode
+            pnode.expr_type = next_one_down
+            self.current_namespace = next_one_down
 
     def type_program(self, warnings:bool = False) -> PProgram:
         """Type check the entire source code and return the typed AST"""
         if self._ast is not None:
-            self._print_warnings()
+            if warnings:
+                self._print_warnings()
             return self._ast
         self._ast = self.parser.parse()
         self._setup_namespace()
@@ -834,14 +841,14 @@ class Typer:
 
     def _type_class(self, class_def: PClass) -> BaseTyp:
         """Type checks a class definition and returns its type"""
+        
+        self._in_class = PType(class_def.name, class_def.position)
+        class_typ = self.known_types[class_def.full_name]
+        assert isinstance(class_typ, ReferenceTyp)
+        class_def.class_typ = class_typ
+        
         for prop in class_def.fields.values():
             self._type_class_field(prop)
-        
-        # self._scope_manager.enter_scope()
-        self._in_class = PType(class_def.name, class_def.position)
-        class_typ =  self.known_types[class_def.name]
-        assert isinstance(class_typ, ReferenceTyp)
-        class_def._class_typ = class_typ
         
         for method in class_def.methods:
             self.all_class_methods.add(method)
