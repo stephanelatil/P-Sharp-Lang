@@ -100,10 +100,104 @@ class TypeInfo:
     is_builtin: bool = True
 
 @dataclass
-class BaseTyp:
+class UseCheckMixin:
+    """Mixin used to check whether a symbol or field/method or similar has been written to or read"""
+    is_assigned: bool
+    """Flag for whether the symbol is assigned (Automatically True if it's a global or imported value)"""
+    is_read: bool 
+    """Flag for whether the symbol is read (Should be after assignment)"""
+    def __init__(self, *args, is_assigned=False, is_read=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.is_assigned = is_assigned
+        self.is_read = is_read
+
+@dataclass
+class Symbol(UseCheckMixin):
+    name:str
+    declaration_position:Position
+    ir_alloca:Optional[ir.NamedValue]=None
+    ir_func:Optional[ir.Function]=None
+    _typ:Optional[Union['BaseTyp', 'TypeTyp']] = None
+    arguments:Optional[List['PVariableDeclaration']] = None # only used if it's a callable
+    ambiguous_other_declarations:List['Symbol'] = field(default_factory=list)
+    
+    def __init__(self, name:str, declaration_position:Position,
+                 ir_alloca:Optional[ir.NamedValue]=None, ir_func:Optional[ir.Function]=None,
+                 _typ:Optional['BaseTyp'] = None,
+                 arguments:Optional[List['PVariableDeclaration']] = None,
+                 is_assigned:bool = False, is_read:bool = False):
+        self.name = name
+        self.declaration_position = declaration_position
+        self.ir_alloca = ir_alloca
+        self.ir_func = ir_func
+        self._typ = _typ
+        self.arguments = arguments
+        self.is_assigned = is_assigned
+        self.is_read = is_read
+        
+    @property
+    def is_ambiguous(self) -> bool:
+        return len(self.ambiguous_other_declarations) > 0
+    
+    @property
+    def typ(self) -> Union['BaseTyp', 'TypeTyp']:
+        if self._typ is None:
+            raise TypingError('Symbol not typed yet')
+        return self._typ
+    
+    @typ.setter
+    def typ(self, value:Union['BaseTyp', 'TypeTyp']):
+        assert isinstance(value, (BaseTyp, TypeTyp))
+        self._typ = value
+        
+    @property
+    def is_function(self):
+        return isinstance(self.typ, FunctionTyp)
+    
+    @property
+    def is_namespace(self):
+        return isinstance(self.typ, NamespaceTyp)
+    
+    @property
+    def is_variable(self):
+        return isinstance(self.typ, (ReferenceTyp, ValueTyp))
+    
+    def __hash__(self) -> int:
+        return (hash(self.name) << 13) + hash(self.declaration_position)
+
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, Symbol):
+            return False
+        return (self.name == value.name
+                and self._typ == value._typ
+                and self.is_namespace == value.is_namespace
+                and self.is_function == value.is_function
+                and self.is_variable == value.is_variable)
+
+class TypContainer:
+    @property
+    def typ_element(self) -> 'BaseTyp':
+        if isinstance(self, TypeTyp):
+            return self.pointed_type
+        assert isinstance(self, BaseTyp)
+        return self
+
+@dataclass
+class BaseTyp(TypContainer):
     """Represents a type in the P# language with its methods and fields"""
     name:str
-    parent_namespace:Optional['NamespaceTyp'] = None
+    parent_namespace:Optional['NamespaceTyp']
+    symbol:'Symbol'
+    
+    def __init__(self, name:str,
+                 parent_namespace:Optional['NamespaceTyp']=None,
+                 declaration_position:Position=Position.default):
+        self.name = name
+        self.parent_namespace = parent_namespace
+        self.symbol = Symbol(self.name,
+                             declaration_position=declaration_position)
+        self.symbol.typ = TypeTyp(self)
+        self.symbol.is_assigned = True
     
     def __hash__(self) -> int:
         return hash(self.name)
@@ -136,6 +230,20 @@ class IRCompatibleTyp(BaseTyp):
     _cached_di_type:Optional[ir.DIValue] = None
     type_info:TypeInfo = field(default_factory=lambda : TypeInfo(TypeClass.CLASS, is_builtin=False))
     
+    def __init__(self,name: str,
+                 parent_namespace: Optional['NamespaceTyp']=None,
+                 declaration_position:Position=Position.default,
+                 fields:Optional[Dict[str, 'PClassField']]=None,
+                 methods:Optional[Dict[str, 'PMethod']]=None,
+                 type_info:Optional[TypeInfo]=None):
+        super().__init__(name=name,
+                         parent_namespace=parent_namespace,
+                         declaration_position=declaration_position)
+        self.fields = fields or {}
+        self.methods = methods or {}
+        self._cached_di_type = None
+        self.type_info = type_info or TypeInfo(TypeClass.CLASS, is_builtin=False)
+    
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
     
@@ -157,7 +265,20 @@ class IRCompatibleTyp(BaseTyp):
         raise NotImplementedError()
 
 @dataclass
-class ValueTyp(IRCompatibleTyp): 
+class ValueTyp(IRCompatibleTyp):
+    def __init__(self,name: str,
+                 parent_namespace: Optional['NamespaceTyp']=None,
+                 declaration_position:Position=Position.default,
+                 fields:Optional[Dict[str, 'PClassField']]=None,
+                 methods:Optional[Dict[str, 'PMethod']]=None,
+                 type_info:Optional[TypeInfo]=None):
+        super().__init__(name=name,
+                         parent_namespace=parent_namespace,
+                         declaration_position=declaration_position,
+                         fields=fields,
+                         methods=methods,
+                         type_info=type_info)
+    
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
     
@@ -233,6 +354,19 @@ class ValueTyp(IRCompatibleTyp):
 
 @dataclass
 class ReferenceTyp(IRCompatibleTyp):
+    def __init__(self,name: str,
+                 parent_namespace: Optional['NamespaceTyp']=None,
+                 declaration_position:Position=Position.default,
+                 fields:Optional[Dict[str, 'PClassField']]=None,
+                 methods:Optional[Dict[str, 'PMethod']]=None,
+                 type_info:Optional[TypeInfo]=None):
+        super().__init__(name=name,
+                         parent_namespace=parent_namespace,
+                         declaration_position=declaration_position,
+                         fields=fields,
+                         methods=methods,
+                         type_info=type_info)
+
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
     
@@ -396,16 +530,23 @@ class FunctionTyp(IRCompatibleTyp):
     arguments:List[IRCompatibleTyp] = field(default_factory=list)
     is_method:bool = False
     
-    def __init__(self, str_name:str,
+    def __init__(self,
+                 decl_position:Position,
                  return_type:IRCompatibleTyp = IRCompatibleTyp.default,
-                 arguments:List[IRCompatibleTyp] = field(default_factory=list),
-                 is_method:bool = False, parent_namespace:Optional['NamespaceTyp']=None):
-        super().__init__(str_name, parent_namespace=parent_namespace)
+                 arguments:Optional[List[IRCompatibleTyp]] = None,
+                 is_method:bool = False,
+                 parent_namespace:Optional['NamespaceTyp']=None):
         self.return_type = return_type
-        self.arguments = arguments
+        self.arguments = arguments or list()
+        #TODO for future use with delegate/function types in the code
+        func_symbol = Symbol("fn<>",
+                            declaration_position=decl_position)
+        func_symbol.typ = self        
+        super().__init__(f"fn<{','.join(str(arg) for arg in self.arguments)}=>{self.return_type}",
+                         parent_namespace=parent_namespace)
         self.is_method = is_method
         self.type_info.type_class = TypeClass.FUNCTION
-    
+
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
     
@@ -451,6 +592,10 @@ class FunctionTyp(IRCompatibleTyp):
 #     pass
 
 @dataclass
+class TypeTyp(TypContainer):
+    pointed_type:BaseTyp
+
+@dataclass
 class NamespaceTyp(BaseTyp):
     fields: Dict[str, Union['PClass', 'PFunction', 'PVariableDeclaration', 'PIdentifier']] = field(default_factory=dict)
     builtin:ClassVar['NamespaceTyp'] = None #type: ignore # this is just a placeholder it will be populated after the class definition
@@ -490,81 +635,6 @@ class ParserError(Exception):
 class TypingError(Exception):
     def __init__(self, msg) -> None:
         super().__init__(msg)
-
-@dataclass
-class UseCheckMixin:
-    """Mixin used to check whether a symbol or field/method or similar has been written to or read"""
-    is_assigned: bool
-    """Flag for whether the symbol is assigned (Automatically True if it's a global or imported value)"""
-    is_read: bool 
-    """Flag for whether the symbol is read (Should be after assignment)"""
-    def __init__(self, *args, is_assigned=False, is_read=False, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.is_assigned = is_assigned
-        self.is_read = is_read
-
-@dataclass
-class Symbol(UseCheckMixin):
-    name:str
-    declaration_position:Position
-    ptype:'PType'
-    ir_alloca:Optional[ir.NamedValue]=None
-    ir_func:Optional[ir.Function]=None
-    _typ:Optional[BaseTyp] = None
-    arguments:Optional[List['PVariableDeclaration']] = None # only used if it's a callable
-    ambiguous_other_declarations:List['Symbol'] = field(default_factory=list)
-    
-    def __init__(self, name:str, declaration_position:Position, ptype:'PType',
-                 ir_alloca:Optional[ir.NamedValue]=None, ir_func:Optional[ir.Function]=None,
-                 _typ:Optional[BaseTyp] = None,
-                 arguments:Optional[List['PVariableDeclaration']] = None,
-                 is_assigned:bool = False, is_read:bool = False):
-        self.name = name
-        self.declaration_position = declaration_position
-        self.ptype = ptype
-        self.ir_alloca = ir_alloca
-        self.ir_func = ir_func
-        self._typ = _typ
-        self.arguments = arguments
-        self.is_assigned = is_assigned
-        self.is_read = is_read
-        
-    @property
-    def is_ambiguous(self) -> bool:
-        return len(self.ambiguous_other_declarations) > 0
-    
-    @property
-    def typ(self) -> BaseTyp:
-        if self._typ is None:
-            raise TypingError('Symbol not typed yet')
-        return self._typ
-    
-    @typ.setter
-    def typ(self, value:BaseTyp):
-        assert isinstance(value, BaseTyp)
-        self._typ = value
-        
-    @property
-    def is_function(self):
-        return isinstance(self.typ, FunctionTyp)
-    
-    @property
-    def is_namespace(self):
-        return isinstance(self.typ, NamespaceTyp)
-    
-    @property
-    def is_variable(self):
-        return isinstance(self.typ, (ReferenceTyp, ValueTyp))
-    
-    def __hash__(self) -> int:
-        return (hash(self.name) << 13) ^ hash(self.ptype) + hash(self.declaration_position)
-
-    def __eq__(self, value: object) -> bool:
-        if not isinstance(value, Symbol):
-            return False
-        return (self.name == value.name
-                and self.ptype == value.ptype
-                and self._typ == value._typ)
 
 class SymbolAmbiguousException(Exception):
     """Raise when the compiler cannot decide what symbol it's supposed to consider
@@ -961,51 +1031,6 @@ class CodeGenContext:
         zero = ir.Constant(ir.IntType(32), 0)
         one = ir.Constant(ir.IntType(32), 1)
         return self.builder.gep(string_obj, [zero, one, zero], inbounds=True, source_etype=string_typ)
-    
-    # def enter_scope(self, ref_vars:int=0):
-    #     """Enter a scope both in the GC and context scope manager"""
-    #     # scope manager enters scope
-    #     self.scopes.enter_scope()
-    #     # GC create scope
-    #     size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
-    #     enter_scope_func = self.scopes.get_symbol(FUNC_GC_ENTER_SCOPE).func_ptr
-    #     assert enter_scope_func is not None
-    #     self.builder.call(enter_scope_func,
-    #                          [ir.Constant(size_t_type, ref_vars)])
-    
-    # def leave_scope(self, scopes_to_leave:int=1):            
-    #     """Leave N scopes both in the GC and a single one in the context scope manager.
-    #     The context scope if popped only once because we will continue to parse other statement in the parent block"""
-    #     if scopes_to_leave < 1:
-    #         return
-    #     size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data)*8)
-    #     leave_scope_func = self.scopes.get_symbol(FUNC_GC_LEAVE_SCOPE).func_ptr
-    #     assert leave_scope_func is not None
-    #     self.builder.call(leave_scope_func,
-    #                       #leave a single scope
-    #                       [ir.Constant(size_t_type, scopes_to_leave)])
-    #     #pop the scope we are currently leaving
-    #     self.scopes.leave_scope()
-        
-    # def add_root_to_gc(self, alloca:ir.NamedValue, type_:ReferenceTyp, var_name:str):
-    #     """Adds variable root location to GC"""
-    #     if type_.is_reference_type:
-    #         if isinstance(type_, ArrayTyp):
-    #             if type_.element_typ.is_reference_type:
-    #                 type_id = REFERENCE_ARRAY_TYPE_ID
-    #             else:
-    #                 type_id = VALUE_ARRAY_TYPE_ID
-    #         else:
-    #             type_id = self.type_ids[type_.name]
-            
-    #         size_t_type = ir.IntType(ir.PointerType().get_abi_size(self.target_data) * 8)
-    #         register_root_func = self.scopes.get_symbol(FUNC_GC_REGISTER_ROOT_VARIABLE_IN_CURRENT_SCOPE).func_ptr
-    #         assert register_root_func is not None
-    #         self.builder.call(register_root_func,
-    #                              [alloca, #location of root in memory. (ptr to the held ref vars)
-    #                               ir.Constant(size_t_type, type_id), #type id
-    #                               self.get_char_ptr_from_string(var_name) #variable name TODO: remove this. It should be in the debug symbols!
-    #                               ])
 
 class NodeType(Enum):
     """Enumeration of all possible node types in the parser tree"""
@@ -1238,10 +1263,8 @@ class PProgram(PScopeStatement):
         self.statements = statements
         self.imports = imports or list()
         
-        namespace_symbol = Symbol(
-            self.namespace_name[0], Position.default,
-            PNamespaceType(self.namespace_name[0],Position.default)
-        )
+        namespace_symbol = Symbol(self.namespace_name[0],
+                                  Position.default)
         self.scope.declare_local(namespace_symbol)
         
     def generate_header(self) -> str:
@@ -1262,6 +1285,12 @@ class PProgram(PScopeStatement):
         header += "\n".join((c.generate_header() for c in classes)) + "\n\n"
         header += "\n".join((f.generate_header() for f in functions)) + "\n\n"
         return header
+
+    def _setup_parents(self):
+        super()._setup_parents()
+        for import_stmt in self.imports:
+            import_stmt._parent = self
+            import_stmt._setup_parents()
 
 @dataclass
 class PFunction(PScopeStatement):
@@ -1322,9 +1351,6 @@ class PFunction(PScopeStatement):
         self.symbol= Symbol(
             name,
             lexeme.pos,
-            PFunctionType(return_type,
-                          lexeme_pos=lexeme.pos,
-                          argument_ptypes=[param.var_type for param in parameters]),
             arguments=parameters,
             is_assigned=self.body is not None
         )
@@ -1463,8 +1489,6 @@ class PMethod(PFunction):
         pfunc.function_args.insert(0, this)
         #update symbol 
         pfunc.symbol.arguments = pfunc.function_args
-        assert isinstance(pfunc.symbol.ptype, PFunctionType)
-        pfunc.symbol.ptype.argument_ptypes = [arg.var_type for arg in pfunc.function_args]
         #declare symbol in scope
         pfunc.parent_scope.declare_local(this.symbol)
         #ignore warnings for implicit symbol
@@ -1516,14 +1540,24 @@ class PClass(PScopeStatement, UseCheckMixin):
     name: str
     fields: Dict[str, 'PClassField']
     methods: List[PMethod]
-    _class_typ:Optional[ReferenceTyp] = None
+    symbol:Symbol
     _is_value_type=False
     
     @property
-    def class_typ(self) ->ReferenceTyp:
-        if self._class_typ is None:
+    def full_name(self) -> str:
+        return self.class_typ.pointed_type.full_name
+    
+    @property
+    def class_typ(self) -> TypeTyp:
+        if self.symbol._typ is None:
             raise TypingError('Class has not been typed yet')
-        return self._class_typ
+        assert isinstance(self.symbol.typ, TypeTyp)
+        return self.symbol.typ
+        
+    @class_typ.setter
+    def class_typ(self, value:TypeTyp):
+        assert isinstance(value, TypeTyp)
+        self.symbol._typ = value
         
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -1533,7 +1567,7 @@ class PClass(PScopeStatement, UseCheckMixin):
         return
 
     def __init__(self, name: str, fields: Dict[str, 'PClassField'],
-                 methods: List[PMethod], lexeme: Lexeme,
+                 methods: List[PMethod], lexeme: Lexeme, type_symbol:Symbol,
                  scope:ClassScope):
         
         super().__init__(node_type=NodeType.CLASS,
@@ -1542,6 +1576,7 @@ class PClass(PScopeStatement, UseCheckMixin):
         self.name = name
         self.fields = fields
         self.methods = methods
+        self.symbol = type_symbol
 
     def generate_header(self) -> str:
         """Generates the function's declarations, to be used as imports"""
@@ -1658,14 +1693,20 @@ class PImport(PStatement):
 
     @property
     def children(self) -> Generator["PStatement", None, None]:
-        for val in super().children:
-            yield val
+        for declaration in self.headers:
+            yield declaration
         return
     
     @property
     def namespace_typ(self) -> NamespaceTyp:
         assert isinstance(self.namespace_symbol.typ, NamespaceTyp)
         return self.namespace_symbol.typ
+    
+    def _setup_parents(self):
+        assert self._parent is not None
+        for child in self.children:
+            child._setup_parents()
+            child._parent = self.parent
     
     @namespace_typ.setter
     def namespace_typ(self, value:NamespaceTyp):
@@ -1687,7 +1728,6 @@ class PImport(PStatement):
         self.namespace_symbol = Symbol(
             name=self.namespace_parts[0],
             declaration_position=self.position,
-            ptype=ptype,
             is_assigned=True
         )
         if alias is not None:
@@ -1759,7 +1799,6 @@ class PVariableDeclaration(PStatement):
         
         self.symbol = Symbol(self.name,
                              self.position,
-                             self.var_type,
                              is_assigned=self.initial_value is not None)
     
     def __hash__(self) -> int:
@@ -2076,7 +2115,10 @@ class PUnaryOperation(PExpression):
     def generate_llvm(self, context:CodeGenContext, get_ptr_to_expression=False) -> ir.Value:
         assert not get_ptr_to_expression, "Cannot get pointer to an operation result"
         
-        operand = self.operand.generate_llvm(context, get_ptr_to_expression=self.operand.is_lvalue)
+        operand = self.operand.generate_llvm(context, 
+                                             get_ptr_to_expression=self.operation in (
+                                                 UnaryOperation.POST_DECREMENT, UnaryOperation.POST_INCREMENT,
+                                                 UnaryOperation.PRE_DECREMENT, UnaryOperation.PRE_INCREMENT))
         assert isinstance(self.operand.expr_type, IRCompatibleTyp)
         assert isinstance(self.expr_type, IRCompatibleTyp)
         
@@ -2694,6 +2736,7 @@ class PAssertStatement(PStatement):
 class PDotAttribute(PExpression):
     left:PExpression
     right:PIdentifier
+    ir_value_left:Optional[ir.Value] #Used to avoid dubplicate calculations of the left side when calling methods
 
     def __init__(self, left: PExpression, right:PIdentifier):
         super().__init__(NodeType.ATTRIBUTE, left.position)
@@ -2708,9 +2751,11 @@ class PDotAttribute(PExpression):
     
     def generate_llvm(self, context: CodeGenContext, get_ptr_to_expression=False) -> Union[ir.Value, ir.Function]:
         # It's an actual variable we're trying to access
+        # TODO fix for mew method calling 
         if isinstance(self.left.expr_type, IRCompatibleTyp):
             # left**
-            left_mem_loc = self.left.generate_llvm(context, get_ptr_to_expression=True)
+            left_mem_loc = self.ir_value_left or self.left.generate_llvm(context, get_ptr_to_expression=True)
+            self.ir_value_left = left_mem_loc
             assert isinstance(left_mem_loc, ir.NamedValue)
             assert self.left.expr_type is not None
             left_type = self.left.expr_type.get_llvm_value_type(context)
@@ -2956,7 +3001,7 @@ class PType(PStatement):
         return str(self) == str(value)
     
     @property
-    def children(self):
+    def children(self) -> Generator["PStatement", None, None]:
         if self.parent_namespace is not None:
             yield self.parent_namespace
         return
@@ -2999,6 +3044,15 @@ class PFunctionType(PType):
                                                     self.argument_ptypes),
                          lexeme_pos=lexeme_pos,
                          parent_namespace=parent_namespace)
+    
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.return_ptype
+        if self.parent_namespace is not None:
+            yield self.parent_namespace
+        for arg_ptype in self.argument_ptypes:
+            yield arg_ptype
+        return
         
     def __hash__(self) -> int:
         return super().__hash__()
@@ -3034,6 +3088,13 @@ class PArrayType(PType):
         if not isinstance(value, PArrayType):
             return False
         return str(self) == str(value)
+    
+    @property
+    def children(self) -> Generator["PStatement", None, None]:
+        yield self.element_type
+        if self.parent_namespace is not None:
+            yield self.parent_namespace
+        return
     
     @property
     def dimensions(self):
@@ -4067,6 +4128,13 @@ class Parser:
         methods: List[PMethod] = []
         
         class_ptype = PType(class_name_lexeme.value, class_name_lexeme)
+        class_symbol = Symbol(
+            class_name_lexeme.value,
+            class_name_lexeme.pos,
+            class_ptype
+        )
+        block_properties.current_scope.declare_local(class_symbol)
+        
         class_scope = ClassScope(block_properties.current_scope,
                                  class_ptype)
         
@@ -4117,7 +4185,8 @@ class Parser:
             field.field_index = i
             class_fields[field.name] = field
         return PClass(class_name_lexeme.value, class_fields, methods,
-                      class_lexeme, scope=class_scope)
+                      class_lexeme, type_symbol=class_symbol,
+                      scope=class_scope)
 
     def _parse_ternary_operation(self, condition) -> PTernaryOperation:
         """Parse a ternary operation (condition ? true_value : false_value)"""

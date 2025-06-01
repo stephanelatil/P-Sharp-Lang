@@ -19,7 +19,7 @@ from parser import (TypeClass, TypeInfo, TypingError,
                     PNamespaceType, IRCompatibleTyp, ValueTyp,
                     ReferenceTyp, NamespaceTyp, NodeType, Symbol,
                     PFunctionType, LocalScope, ScopeType, GlobalScope,
-                    FunctionTyp, BaseTyp, PImport)
+                    FunctionTyp, BaseTyp, PImport, TypeTyp)
 from constants import BUILTIN_NAMESPACE
 
 
@@ -61,16 +61,11 @@ def create_method(name: str, return_type: str, class_type_string:str, params: Li
     arguments = [PVariableDeclaration(n, typestring_to_ptype(t), None, Lexeme.default) for t, n in params]
     function_scope = LocalScope(ScopeType.FunctionScope,
                                 symbols={
-                                    arg.name:Symbol(arg.name, arg.position, arg.var_type)
+                                    arg.name:Symbol(arg.name, arg.position)
                                     for arg in arguments
                                 })
     function_symbol = Symbol(name=PMethod.get_linkable_name(name, BUILTIN_NAMESPACE, class_type_string),
                              declaration_position=Position.default,
-                             ptype=PFunctionType(
-                                 typestring_to_ptype(return_type),
-                                 Lexeme.default,
-                                 [arg.var_type for arg in arguments]
-                             ),
                              arguments=arguments
                              )
     return PMethod(
@@ -381,7 +376,7 @@ class Typer:
         self.parser = Parser(Lexer(filename, file))
         self.known_types = deepcopy(_builtin_types)
         self.known_types['ul'].type_info.bit_width = ptr_size
-        self._in_class:Optional[PType] = None
+        self._in_class:Optional[IRCompatibleTyp] = None
         self.expected_return_type:Optional[IRCompatibleTyp] = None
         self.is_assignment = False #set to true when typing an identifier to be assigned
         self.warnings: List[CompilerWarning] = []
@@ -453,12 +448,7 @@ class Typer:
             
     def _setup_namespace(self):
         assert self._ast is not None
-        symbol = Symbol(
-            name=self._ast.namespace_name[0],
-            declaration_position=self._ast.position,
-            ptype=PNamespaceType(self._ast.namespace_name[0], self._ast.position))
-        
-        self._ast.scope.declare_local(symbol)
+        symbol = self._ast.scope.get_symbol(self._ast.namespace_name[0])
         #the current namespace is the end of the namespace chain: in the A.B.C namespace, current_namespace is C
         self.current_namespace = NamespaceTyp(self._ast.namespace_name[0])
         symbol.typ = self.current_namespace
@@ -483,12 +473,13 @@ class Typer:
         # make tree traversable in both directions
         self._ast._setup_parents()
 
-        #type builtin methods
+        #type builtin methods and add symbols to the global namespace
         for typ in list(self.known_types.values()):
+            self._ast.scope.declare_local(typ.symbol)
             if typ.name in ['void', 'null']:
                 continue
             #make sure to say the class we're in
-            self._in_class = self._ptype_from_typ(typ)
+            self._in_class = typ
             for elem in [*typ.fields.values(), *typ.methods.values()]:
                 self._type_statement(elem)
                     
@@ -501,11 +492,12 @@ class Typer:
         # First pass (quick) to build type list with user defined classes
         for statement in self._ast.statements:
             if isinstance(statement, PClass):
-                statement._class_typ = ReferenceTyp(statement.name, 
+                statement.class_typ = TypeTyp(ReferenceTyp(statement.name, 
                                                        methods={m.name:m for m in statement.methods},
-                                                       fields=statement.fields)
+                                                       fields=statement.fields))
                 self.current_namespace.fields[statement.name] = statement
-                self.known_types[statement.name] = statement.class_typ
+                assert isinstance(statement.class_typ.pointed_type, ReferenceTyp)
+                self.known_types[statement.full_name] = statement.class_typ.pointed_type
             elif isinstance(statement, PFunction):
                 self.current_namespace.fields[statement.name] = statement
             elif isinstance(statement, PVariableDeclaration):
@@ -518,7 +510,8 @@ class Typer:
         
         self._check_unused_symbols()
 
-        self._print_warnings()
+        if warnings:
+            self._print_warnings()
         self._cfg_check(self._ast)
         return self._ast
 
@@ -841,11 +834,9 @@ class Typer:
 
     def _type_class(self, class_def: PClass) -> BaseTyp:
         """Type checks a class definition and returns its type"""
-        
-        self._in_class = PType(class_def.name, class_def.position)
         class_typ = self.known_types[class_def.full_name]
+        self._in_class = class_typ
         assert isinstance(class_typ, ReferenceTyp)
-        class_def.class_typ = class_typ
         
         for prop in class_def.fields.values():
             self._type_class_field(prop)
@@ -858,20 +849,57 @@ class Typer:
         
     def _type_import(self, pimport:PImport):
         """Here it populates the alias and namespace types and everything within the namespace, symbols etc."""
+        #first add namespace to symbols and sub-namespaces if there are any
+        global_scope = pimport.parent_scope
+        assert isinstance(global_scope, GlobalScope)
+        imported_namespace:Optional[NamespaceTyp] = None
+        if global_scope.has_symbol(pimport.namespace_parts[0]):
+            namespace_typ = global_scope.get_symbol(pimport.namespace_parts[0]).typ
+            assert isinstance(namespace_typ, NamespaceTyp)
+            imported_namespace = namespace_typ
+        else:
+            imported_namespace = NamespaceTyp(pimport.namespace_parts[0])
+            global_scope.declare_local(imported_namespace.symbol)
+        
+        for part in pimport.namespace_parts[1:]:
+            next_one_down = NamespaceTyp(part,
+                                         parent_namespace=imported_namespace)
+            pnode = PIdentifier(part, pimport.position)
+            pnode.expr_type = next_one_down
+            imported_namespace.fields[part] = pnode
+            imported_namespace = next_one_down
+        assert imported_namespace is not None
+        pimport.namespace_typ = imported_namespace
+        
+        #first pass to add types to namespace and to also add to scope
+        for statement in pimport.headers:
+            if isinstance(statement, PClass):
+                statement.class_typ = TypeTyp(ReferenceTyp(statement.name, 
+                                                    methods={m.name:m for m in statement.methods},
+                                                    fields=statement.fields,
+                                                    parent_namespace=imported_namespace))
+                imported_namespace.fields[statement.name] = statement
+                assert isinstance(statement.class_typ.pointed_type, ReferenceTyp)
+                self.known_types[statement.full_name] = statement.class_typ.pointed_type
+                global_scope.declare_import(statement.class_typ.pointed_type.symbol)
+            elif isinstance(statement, PFunction):
+                imported_namespace.fields[statement.name] = statement
+            elif isinstance(statement, PVariableDeclaration):
+                imported_namespace.fields[statement.name] = statement
+            global_scope.declare_import
+        #pass to add all 
         for statement in pimport.headers:
             self._type_statement(statement)
 
     def _type_ptype(self, ptype:PType) -> IRCompatibleTyp:
         """Type checks a class definition and returns its type"""
-        #TODO handle function type here
         if isinstance(ptype, PFunctionType):
-            return FunctionTyp(ptype.type_string,
+            return FunctionTyp(decl_position=ptype.position,
                                return_type=self._type_ptype(ptype.return_ptype),
                                arguments=[self._type_ptype(arg) for arg in ptype.argument_ptypes],
                                is_method=False)
         elif str(ptype) in self.known_types:
             return self.known_types[str(ptype)]
-        #TODO handle namespaces heres
         elif ptype.parent_namespace is not None:
             type_stack = []
             parent = ptype
@@ -886,14 +914,13 @@ class Typer:
             assert isinstance(typ, IRCompatibleTyp)
             self.known_types[str(ptype)] = typ
             return typ
-            
         elif isinstance(ptype, PArrayType):
             element_typ = self._type_ptype(ptype.element_type)
             arrTyp = ArrayTyp(element_type=element_typ)
             self.known_types[ptype.type_string] = arrTyp
             #store tmp class location fo type builtins (TODO: should be done another way, typing it somewhere else)
             tmp_class = self._in_class
-            self._in_class = ptype
+            self._in_class = arrTyp
             for field in arrTyp.fields.values():
                 assert isinstance(field, PClassField)
                 self._type_class_field(field)
@@ -902,14 +929,19 @@ class Typer:
             #return to prev state
             self._in_class = tmp_class
             return arrTyp
-
+        elif ptype.parent_scope.has_symbol(ptype.type_string): # here ptype.parent_namespace is None
+            typ_symbol = ptype.parent_scope.get_symbol(ptype.type_string, ptype.position)
+            assert isinstance(typ_symbol.typ, TypeTyp)
+            if not isinstance(typ_symbol.typ.pointed_type, IRCompatibleTyp):
+                raise TypingError(f"{ptype.type_string} is not a valid type")
+            return typ_symbol.typ.pointed_type
         raise UnknownTypeError(ptype)
     
     def _type_function_header(self, func: PFunction|PMethod) -> FunctionTyp:
         """Type checks a function definition"""
         if isinstance(func, PMethod):
             assert self._in_class is not None #if method: ensure we're in a class!
-            class_typ = self._type_ptype(self._in_class)
+            class_typ = self._in_class
             assert isinstance(class_typ, IRCompatibleTyp)
             func._class_type = class_typ
         else: # function not a method
@@ -930,10 +962,10 @@ class Typer:
                 func.symbol.is_assigned = True
         
         return_typ = self._type_ptype(func.return_type)
-        func.function_typ = FunctionTyp(func.symbol.ptype.type_string,
-                                    return_type=return_typ,
-                                    arguments=[arg.typer_pass_var_type for arg in func.function_args],
-                                    is_method=isinstance(func, PMethod))
+        func.function_typ = FunctionTyp(decl_position=func.position,
+                                        return_type=return_typ,
+                                        arguments=[arg.typer_pass_var_type for arg in func.function_args],
+                                        is_method=isinstance(func, PMethod))
         return func.function_typ
 
     def _type_function(self, func: PFunction|PMethod) -> FunctionTyp:
@@ -1174,7 +1206,9 @@ class Typer:
     def _type_identifier(self, identifier: PIdentifier) -> IRCompatibleTyp:
         """Type checks an identifier and returns its type"""
         symbol = identifier.parent_scope.get_symbol(identifier.name, identifier.position)
-        identifier.expr_type = self._type_ptype(symbol.ptype)
+        if not isinstance(symbol.typ, IRCompatibleTyp):
+            raise TypingError(f"{symbol.typ} is not a valid type for this identifier")
+        identifier.expr_type = symbol.typ
         if self.is_assignment:
             symbol.is_assigned = True
         else:
@@ -1216,7 +1250,7 @@ class Typer:
         """Type checks a cast expression and returns the target type"""
         if self._in_class is None:
             raise TypingError("'this' is not defined outside of a class")
-        this_keyword.expr_type = self.known_types[self._in_class.type_string]
+        this_keyword.expr_type = self._in_class
         return this_keyword.expr_type
 
     def _type_cast(self, cast: PCast) -> IRCompatibleTyp:
