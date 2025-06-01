@@ -38,7 +38,7 @@ void* __PS_U8ToString(uint8_t number){
     return __PS_cstr_to_string(cstr);
 }
 
-void* __PS_I16oString(int16_t number){
+void* __PS_I16ToString(int16_t number){
     int max_size = 7;
     char cstr[max_size]; //biggest possible is "-10000" 6 chars + null byte
     snprintf(cstr, max_size, "%" PRId16, number);
@@ -52,7 +52,7 @@ void* __PS_U16ToString(uint16_t number){
     return __PS_cstr_to_string(cstr);
 }
 
-void* __PS_I32oString(int32_t number){
+void* __PS_I32ToString(int32_t number){
     int max_size = 12;
     char cstr[max_size]; //biggest possible is "-1000000000" 11 chars + null byte
     snprintf(cstr, max_size, "%" PRId32, number);
@@ -66,7 +66,7 @@ void* __PS_U32ToString(uint32_t number){
     return __PS_cstr_to_string(cstr);
 }
 
-void* __PS_I64oString(int64_t number){
+void* __PS_I64ToString(int64_t number){
     int max_size = 22;
     char cstr[max_size]; //biggest possible is "-10000000000000000000" 21 chars + null byte
     snprintf(cstr, max_size, "%" PRId64, number);
@@ -80,6 +80,13 @@ void* __PS_U64ToString(uint64_t number){
     return __PS_cstr_to_string(cstr);
 }
 
+void* __PS_ULToString(uint64_t number){
+    int max_size = 21;
+    char cstr[max_size]; //biggest possible is "10000000000000000000" 20 chars + null byte
+    snprintf(cstr, max_size, "%" PRIuPTR, number);
+    return __PS_cstr_to_string(cstr);
+}
+
 void* __PS_F16ToString(_Float16 number){
     int max_size = 12;
     char cstr[max_size]; //biggest possible is "3.14159e+10" 11 chars + null byte
@@ -87,7 +94,7 @@ void* __PS_F16ToString(_Float16 number){
     return __PS_cstr_to_string(cstr);
 }
 
-void* __PS_F32oString(_Float32 number){
+void* __PS_F32ToString(_Float32 number){
     int max_size = 13;
     char cstr[max_size]; //biggest possible is "3.14159e+100" 12 chars + null byte
     snprintf(cstr, max_size, "%g", number);

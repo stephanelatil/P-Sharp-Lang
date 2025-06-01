@@ -13,14 +13,14 @@ void* __PS_BoolToString(bool);
 void* __PS_CharToString(uint8_t);
 void* __PS_I8ToString(int8_t);
 void* __PS_U8ToString(uint8_t);
-void* __PS_I16oString(int16_t);
+void* __PS_I16ToString(int16_t);
 void* __PS_U16ToString(uint16_t);
-void* __PS_I32oString(int32_t);
+void* __PS_I32ToString(int32_t);
 void* __PS_U32ToString(uint32_t);
-void* __PS_I64oString(int64_t);
+void* __PS_I64ToString(int64_t);
 void* __PS_U64ToString(uint64_t);
 void* __PS_F16ToString(_Float16);
-void* __PS_F32oString(_Float32);
+void* __PS_F32ToString(_Float32);
 void* __PS_F64ToString(_Float64);
 void* __PS_StringToString(void*);
 
