@@ -1728,7 +1728,8 @@ class PImport(PStatement):
         self.namespace_symbol = Symbol(
             name=self.namespace_parts[0],
             declaration_position=self.position,
-            is_assigned=True
+            is_assigned=True,
+            is_read=True
         )
         if alias is not None:
             self.namespace_symbol.name = alias
@@ -1746,6 +1747,18 @@ class PImport(PStatement):
             if header is None:
                 raise FileNotFoundError(f'Unable to find header in current project directory')
             return header
+        
+        def set_assigned_and_read(node:Union[PVariableDeclaration, PFunction, PClass]):
+            node.symbol.is_assigned=True
+            node.symbol.is_read=True
+            if isinstance(node, PFunction):
+                for arg in node.function_args:
+                    set_assigned_and_read(arg)
+                node.is_called = True
+            elif isinstance(node, PClass):
+                for func in node.methods:
+                    set_assigned_and_read(func)
+                
         # TODO find better way to define where to look for the headers
         # Maybe add flags to the compiler to direct where to search like -I for gcc
         # and search first the current 'lib' and 'out' folder of the projects
@@ -1758,7 +1771,10 @@ class PImport(PStatement):
         assert header_file_path.exists() and header_file_path.is_file()
         with open(header_file_path, 'rt') as header_reader:
             header_parser = Parser(Lexer(header_file_path.name, header_reader))
-            return header_parser.parse_header()
+            headers = header_parser.parse_header()
+            for header in headers:
+                set_assigned_and_read(header)
+            return headers
 
 @dataclass
 class PVariableDeclaration(PStatement):

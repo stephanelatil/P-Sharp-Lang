@@ -1169,40 +1169,6 @@ class Typer:
         func_call.expr_type = func_typ.return_type
         return func_call.expr_type
 
-    # def _type_method_call(self, method_call: PMethodCall) -> IRCompatibleTyp:
-    #     """Type checks a method call and returns its return type"""
-    #     obj_type = self._type_expression(method_call.object)
-    #     if isinstance(obj_type, NamespaceTyp):
-    #         assert method_call.method_name.name in obj_type.fields
-    #         func = obj_type.fields[method_call.method_name.name]
-    #         assert isinstance(func.expr_type, FunctionTyp)
-
-    #         for expected_type, actual in zip(func.expr_type.arguments, method_call.arguments):
-    #             actual_type = self._type_expression(actual)
-    #             assert isinstance(actual_type, IRCompatibleTyp)
-    #             if not self.check_types_match(expected_type, actual_type):
-    #                 raise TypingConversionError(actual_type, expected_type, actual)
-    #         method_call.expr_type = func.expr_type.return_type
-    #     else:
-    #         if not method_call.method_name.name in obj_type.methods:
-    #             raise TypingError(f"Method {method_call.method_name.name} of type {obj_type} if unknown at location {method_call.position}")
-    #         method = obj_type.methods[method_call.method_name.name]
-    #         method.is_called = True
-    #         if len(method.explicit_arguments) != len(method_call.arguments):
-    #             raise TypingError(f"The function expects {len(method.function_args)} arguments but got {len(method_call.arguments)}"+\
-    #                             f" at location {method_call.position}")
-
-    #         for expected_param, actual in zip(method.explicit_arguments, method_call.arguments):
-    #             expected_type = self._type_ptype(expected_param.var_type)
-    #             actual_type = self._type_expression(actual)
-    #             assert isinstance(actual_type, IRCompatibleTyp)
-    #             if not self.check_types_match(expected_type, actual_type):
-    #                 raise TypingConversionError(actual_type, expected_type, actual)
-            
-    #         method_call.expr_type = self._type_ptype(method.return_type)
-
-    #     return method_call.expr_type
-
     def _type_identifier(self, identifier: PIdentifier) -> IRCompatibleTyp:
         """Type checks an identifier and returns its type"""
         symbol = identifier.parent_scope.get_symbol(identifier.name, identifier.position)
