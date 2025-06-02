@@ -560,8 +560,8 @@ class TestTyperClassDeclarations:
         }
         """
         self.parse_and_type(source)
-        assert 'Point' in self.typer.known_types
-        typ = self.typer.known_types['Point']
+        assert 'Default.Point' in self.typer.known_types
+        typ = self.typer.known_types['Default.Point']
         assert isinstance(typ, ReferenceTyp)
         assert not isinstance(typ, ArrayTyp)
         assert typ.is_reference_type
@@ -831,7 +831,7 @@ class TestTyperMethodCalls:
         assert len(method_call.arguments) == 2
         assert method_call.expr_type is not None
         assert method_call.expr_type is not None
-        assert method_call.function.left.expr_type == self.typer.known_types['Calculator']
+        assert method_call.function.left.expr_type == self.typer.known_types['Default.Calculator']
         assert method_call.expr_type == self.typer.known_types['i32']
         
     @pytest.mark.parametrize("source",[
@@ -887,7 +887,7 @@ class TestTyperMethodCalls:
             assert method_call.expr_type is not None
             assert method_call.expr_type is not None
             assert isinstance(method_call.function, PDotAttribute)
-            assert method_call.function.left.expr_type == self.typer.known_types['StringBuilder']
+            assert method_call.function.left.expr_type == self.typer.known_types['Default.StringBuilder']
             method_call = method_call.function.left
 
     @pytest.mark.parametrize("source",[
