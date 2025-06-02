@@ -494,7 +494,9 @@ class Typer:
             if isinstance(statement, PClass):
                 statement.class_typ = TypeTyp(ReferenceTyp(statement.name, 
                                                        methods={m.name:m for m in statement.methods},
-                                                       fields=statement.fields))
+                                                       fields=statement.fields,
+                                                       symbol=statement.symbol,
+                                                       parent_namespace=self.current_namespace))
                 self.current_namespace.fields[statement.name] = statement
                 assert isinstance(statement.class_typ.pointed_type, ReferenceTyp)
                 self.known_types[statement.full_name] = statement.class_typ.pointed_type
@@ -846,7 +848,7 @@ class Typer:
             self._type_function(method)
         self._in_class = None
         return class_typ
-        
+    
     def _type_import(self, pimport:PImport):
         """Here it populates the alias and namespace types and everything within the namespace, symbols etc."""
         #first add namespace to symbols and sub-namespaces if there are any
@@ -854,12 +856,18 @@ class Typer:
         assert isinstance(global_scope, GlobalScope)
         imported_namespace:Optional[NamespaceTyp] = None
         if global_scope.has_symbol(pimport.namespace_parts[0]):
-            namespace_typ = global_scope.get_symbol(pimport.namespace_parts[0]).typ
+            symbol = global_scope.get_symbol(pimport.namespace_parts[0])
+            if symbol.is_typed:
+                namespace_typ = symbol.typ.typ_element
+            else:
+                namespace_typ = NamespaceTyp(pimport.namespace_parts[0],
+                                             symbol=symbol)
             assert isinstance(namespace_typ, NamespaceTyp)
             imported_namespace = namespace_typ
         else:
             imported_namespace = NamespaceTyp(pimport.namespace_parts[0])
             global_scope.declare_local(imported_namespace.symbol)
+            imported_namespace.symbol.typ = imported_namespace.typ_element
         
         for part in pimport.namespace_parts[1:]:
             next_one_down = NamespaceTyp(part,
@@ -869,7 +877,10 @@ class Typer:
             imported_namespace.fields[part] = pnode
             imported_namespace = next_one_down
         assert imported_namespace is not None
-        pimport.namespace_typ = imported_namespace
+        
+        #Type all aliases
+        for alias_symbol in pimport.aliases:
+            alias_symbol.typ = imported_namespace
         
         #first pass to add types to namespace and to also add to scope
         for statement in pimport.headers:
@@ -881,12 +892,11 @@ class Typer:
                 imported_namespace.fields[statement.name] = statement
                 assert isinstance(statement.class_typ.pointed_type, ReferenceTyp)
                 self.known_types[statement.full_name] = statement.class_typ.pointed_type
-                global_scope.declare_import(statement.class_typ.pointed_type.symbol)
             elif isinstance(statement, PFunction):
                 imported_namespace.fields[statement.name] = statement
             elif isinstance(statement, PVariableDeclaration):
                 imported_namespace.fields[statement.name] = statement
-            global_scope.declare_import
+            global_scope.declare_import(statement.symbol)
         #pass to add all 
         for statement in pimport.headers:
             self._type_statement(statement)

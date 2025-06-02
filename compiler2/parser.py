@@ -126,15 +126,20 @@ class Symbol(UseCheckMixin):
                  _typ:Optional['BaseTyp'] = None,
                  arguments:Optional[List['PVariableDeclaration']] = None,
                  is_assigned:bool = False, is_read:bool = False):
+        super().__init__(is_assigned=is_assigned,
+                         is_read = is_read)
         self.name = name
         self.declaration_position = declaration_position
         self.ir_alloca = ir_alloca
         self.ir_func = ir_func
         self._typ = _typ
         self.arguments = arguments
-        self.is_assigned = is_assigned
-        self.is_read = is_read
-        
+        self.ambiguous_other_declarations:List['Symbol'] = []
+    
+    @property
+    def is_typed(self) -> bool:
+        return self._typ is not None
+    
     @property
     def is_ambiguous(self) -> bool:
         return len(self.ambiguous_other_declarations) > 0
@@ -172,7 +177,8 @@ class Symbol(UseCheckMixin):
                 and self._typ == value._typ
                 and self.is_namespace == value.is_namespace
                 and self.is_function == value.is_function
-                and self.is_variable == value.is_variable)
+                and self.is_variable == value.is_variable
+                and self.declaration_position == value.declaration_position)
 
 class TypContainer:
     @property
@@ -191,11 +197,15 @@ class BaseTyp(TypContainer):
     
     def __init__(self, name:str,
                  parent_namespace:Optional['NamespaceTyp']=None,
-                 declaration_position:Position=Position.default):
+                 declaration_position:Position=Position.default,
+                 symbol:Optional[Symbol]=None):
         self.name = name
         self.parent_namespace = parent_namespace
-        self.symbol = Symbol(self.name,
-                             declaration_position=declaration_position)
+        if symbol is not None:
+            self.symbol = symbol
+        else:
+            self.symbol = Symbol(self.name,
+                                declaration_position=declaration_position)
         self.symbol.typ = TypeTyp(self)
         self.symbol.is_assigned = True
     
@@ -203,7 +213,7 @@ class BaseTyp(TypContainer):
         return hash(self.name)
     
     def __eq__(self, value: object) -> bool:
-        if not isinstance(value, BaseTyp):
+        if not isinstance(value, type(self)):
             return False
         return self.name == value.name
 
@@ -235,10 +245,12 @@ class IRCompatibleTyp(BaseTyp):
                  declaration_position:Position=Position.default,
                  fields:Optional[Dict[str, 'PClassField']]=None,
                  methods:Optional[Dict[str, 'PMethod']]=None,
-                 type_info:Optional[TypeInfo]=None):
+                 type_info:Optional[TypeInfo]=None,
+                 symbol:Optional[Symbol]=None):
         super().__init__(name=name,
                          parent_namespace=parent_namespace,
-                         declaration_position=declaration_position)
+                         declaration_position=declaration_position,
+                         symbol=symbol)
         self.fields = fields or {}
         self.methods = methods or {}
         self._cached_di_type = None
@@ -271,13 +283,15 @@ class ValueTyp(IRCompatibleTyp):
                  declaration_position:Position=Position.default,
                  fields:Optional[Dict[str, 'PClassField']]=None,
                  methods:Optional[Dict[str, 'PMethod']]=None,
-                 type_info:Optional[TypeInfo]=None):
+                 type_info:Optional[TypeInfo]=None,
+                 symbol:Optional[Symbol]=None):
         super().__init__(name=name,
                          parent_namespace=parent_namespace,
                          declaration_position=declaration_position,
                          fields=fields,
                          methods=methods,
-                         type_info=type_info)
+                         type_info=type_info,
+                         symbol=symbol)
     
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
@@ -359,13 +373,15 @@ class ReferenceTyp(IRCompatibleTyp):
                  declaration_position:Position=Position.default,
                  fields:Optional[Dict[str, 'PClassField']]=None,
                  methods:Optional[Dict[str, 'PMethod']]=None,
-                 type_info:Optional[TypeInfo]=None):
+                 type_info:Optional[TypeInfo]=None,
+                 symbol:Optional[Symbol]=None):
         super().__init__(name=name,
                          parent_namespace=parent_namespace,
                          declaration_position=declaration_position,
                          fields=fields,
                          methods=methods,
-                         type_info=type_info)
+                         type_info=type_info,
+                         symbol=symbol)
 
     def __eq__(self, value: object) -> bool:
         return super().__eq__(value)
@@ -539,7 +555,7 @@ class FunctionTyp(IRCompatibleTyp):
         self.return_type = return_type
         self.arguments = arguments or list()
         #TODO for future use with delegate/function types in the code
-        func_symbol = Symbol("fn<>",
+        func_symbol = Symbol(f"fn({','.join(str(arg) for arg in self.arguments)})<{return_type}>",
                             declaration_position=decl_position)
         func_symbol.typ = self        
         super().__init__(f"fn<{','.join(str(arg) for arg in self.arguments)}=>{self.return_type}",
@@ -600,16 +616,19 @@ class NamespaceTyp(BaseTyp):
     fields: Dict[str, Union['PClass', 'PFunction', 'PVariableDeclaration', 'PIdentifier']] = field(default_factory=dict)
     builtin:ClassVar['NamespaceTyp'] = None #type: ignore # this is just a placeholder it will be populated after the class definition
     
-    def __init__(self, name:str, fields:Optional[Dict[str, Union['PClass', 'PFunction', 'PVariableDeclaration', 'PIdentifier']]]=None,
-                 parent_namespace:Optional['NamespaceTyp']=None):
+    def __init__(self, name:str,
+                 fields:Optional[Dict[str, Union['PClass', 'PFunction', 'PVariableDeclaration', 'PIdentifier']]]=None,
+                 parent_namespace:Optional['NamespaceTyp']=None,
+                 symbol:Optional[Symbol]=None):
         """Creates a new namespace type. The fields is used to defined what is available to import from this namespace
 
         Args:
             name (str): The name of this namespace
             fields (List[PIdentifier]): The list of global vars functions and types that are usable when imported from this namespace
         """
-        
-        super().__init__(name, parent_namespace=parent_namespace)
+        super().__init__(name=name,
+                         parent_namespace=parent_namespace,
+                         symbol=symbol)
         self.fields = fields or dict()
     
     def __eq__(self, value: object) -> bool:
@@ -642,8 +661,8 @@ class SymbolAmbiguousException(Exception):
     def __init__(self, symbol:Symbol):
         assert symbol.is_ambiguous
         super().__init__(f"Compiler has an ambiguous reference between and cannot decide between declarations from"
-                         f"{symbol.typ.full_name} in {symbol.declaration_position}, "
-                         ','.join(f"{sym.typ.full_name} in {sym.declaration_position}"
+                         f"{symbol.typ.typ_element.full_name} in {symbol.declaration_position}, "
+                         ','.join(f"{sym.typ.typ_element.full_name} in {sym.declaration_position}"
                                   for sym in symbol.ambiguous_other_declarations))
 
 class SymbolRedefinitionError(Exception):
@@ -765,7 +784,10 @@ class LocalScope:
     def get_imported_symbol(self, name:str, symbol_query_pos:Position) -> Symbol:
         if isinstance(self, GlobalScope):
             if name in self.imported_symbols:
-                return self.imported_symbols[name]
+                symbol = self.imported_symbols[name]
+                if symbol.is_ambiguous:
+                    raise SymbolAmbiguousException(symbol)
+                return symbol
         if self.parent is not None:
             return self.parent.get_imported_symbol(name, symbol_query_pos)
         raise SymbolNotFoundError(name, symbol_query_pos)
@@ -1687,9 +1709,8 @@ class PBlock(PScopeStatement):
 @dataclass
 class PImport(PStatement):
     namespace_parts:List[str]
-    namespace_symbol:Symbol
     headers:List[Union['PVariableDeclaration', PFunction, PClass]]
-    alias:Optional[str] = None
+    aliases:List[Symbol]
 
     @property
     def children(self) -> Generator["PStatement", None, None]:
@@ -1697,21 +1718,11 @@ class PImport(PStatement):
             yield declaration
         return
     
-    @property
-    def namespace_typ(self) -> NamespaceTyp:
-        assert isinstance(self.namespace_symbol.typ, NamespaceTyp)
-        return self.namespace_symbol.typ
-    
     def _setup_parents(self):
         assert self._parent is not None
         for child in self.children:
             child._setup_parents()
             child._parent = self.parent
-    
-    @namespace_typ.setter
-    def namespace_typ(self, value:NamespaceTyp):
-        assert isinstance(value, NamespaceTyp)
-        self.namespace_symbol.typ = value
     
     def __init__(self, namespace_parts:List['PIdentifier'], lexeme_pos:Union[Lexeme, Position],
                  alias:Optional[str]=None):
@@ -1719,20 +1730,13 @@ class PImport(PStatement):
                          position=lexeme_pos.pos if isinstance(lexeme_pos, Lexeme) else lexeme_pos)
         assert len(namespace_parts) > 0
         self.namespace_parts = [part.name for part in namespace_parts]
-        self.alias = alias
-        part = namespace_parts.pop()
-        ptype = PNamespaceType(base_type=part.name,
-                                lexeme_pos=part.position)
-        
-        
-        self.namespace_symbol = Symbol(
-            name=self.namespace_parts[0],
-            declaration_position=self.position,
-            is_assigned=True,
-            is_read=True
-        )
+        self.aliases = []
         if alias is not None:
-            self.namespace_symbol.name = alias
+            self.aliases.append(Symbol(alias,
+                                       declaration_position=self.position,
+                                       is_assigned=True,
+                                       is_read=True))
+
         self.headers = self.fetch_declarations()
     
     def fetch_declarations(self) -> List[Union['PVariableDeclaration', PFunction, PClass]]:
@@ -3327,29 +3331,37 @@ class Parser:
                     method.body = None #clear unused and makes sure it's just a header
                 header_elements.append(statement)
         return header_elements
-        
 
     def parse(self, add_std_lib:bool=True) -> PProgram:
         """Parse the entire program"""
         statements:List[PStatement] = list()
-        imports:List[PImport] = []
+        imports:Dict[str, PImport] = {}
+        block_properties = BlockProperties()
         if add_std_lib:
             # Adds default Std namespace to the project (only the used functions will be included in the final executable so no prob for size)
-            imports.append(PImport([PIdentifier(BUILTIN_NAMESPACE,
-                                                Lexeme.default)],
-                                    Position.default))
+            imports[BUILTIN_NAMESPACE] = PImport([PIdentifier(BUILTIN_NAMESPACE, Lexeme.default)],
+                                                 Position.default,
+                                                 alias=BUILTIN_NAMESPACE)
+            block_properties.current_scope.declare_local(imports[BUILTIN_NAMESPACE].aliases[0])
         start_lexeme = self.current_lexeme
         namespace_parts = None
         
         if self._match(LexemeType.KEYWORD_CONTROL_NAMESPACE):
             #handle namespace decleration
             namespace_parts = self._parse_namespace_name()
-        block_properties = BlockProperties()
 
         while self.current_lexeme and self.current_lexeme.type != LexemeType.EOF:
             stmt = self._parse_statement(block_properties)
             if isinstance(stmt, PImport):
-                imports.append(stmt)
+                #ignore duplicates but keep multiple alisases
+                full_name = ".".join(stmt.namespace_parts)
+                if full_name in imports:
+                    # if import is known (already imported) add alias (to a set so ignore known aliases)
+                    if len(stmt.aliases) > 0:
+                        imports[full_name].aliases.append(stmt.aliases[0])
+                else:
+                    # New one: add to imports
+                    imports[full_name] = stmt
             else:
                 statements.append(stmt)
 
@@ -3357,7 +3369,7 @@ class Parser:
         pprogram = PProgram(statements, start_lexeme,
                             scope=block_properties.current_scope,
                             namespace=namespace_parts,
-                            imports=imports)
+                            imports=list(imports.values()))
         return pprogram
 
     def _parse_object_instantiation(self) -> Union[PObjectInstantiation,PArrayInstantiation]:
@@ -3490,9 +3502,11 @@ class Parser:
         
             self._expect(LexemeType.PUNCTUATION_SEMICOLON)
                 
-            return PImport(parts,
+            imp = PImport(parts,
                            namespace_alias,
                            alias=namespace_alias.value)
+            block_properties.current_scope.declare_local(imp.aliases[0])
+            return imp
         
         self._expect(LexemeType.PUNCTUATION_SEMICOLON)
         return PImport(parts, first_lexeme)
@@ -4145,9 +4159,8 @@ class Parser:
         
         class_ptype = PType(class_name_lexeme.value, class_name_lexeme)
         class_symbol = Symbol(
-            class_name_lexeme.value,
-            class_name_lexeme.pos,
-            class_ptype
+            name=class_name_lexeme.value,
+            declaration_position=class_name_lexeme.pos
         )
         block_properties.current_scope.declare_local(class_symbol)
         

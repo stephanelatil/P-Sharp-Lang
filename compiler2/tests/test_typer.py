@@ -6,7 +6,8 @@ from parser import (PProgram, PType, PArrayType, PVariableDeclaration,
                     PBinaryOperation, PUnaryOperation, PIfStatement,
                     PWhileStatement, PForStatement, PTernaryOperation,
                     SymbolNotFoundError, SymbolRedefinitionError,
-                    PDotAttribute, PIdentifier, TypeInfo, TypeClass)
+                    PDotAttribute, PIdentifier, TypeInfo, TypeClass,
+                    NamespaceTyp, SymbolAmbiguousException)
 from typer import (Typer, TypeClass, ReferenceTyp, ArrayTyp,
                    ValueTyp, FunctionTyp, UnknownTypeError,
                    TypingError, TypingConversionError)
@@ -286,8 +287,9 @@ class TestErrorHandling:
         ])
     def test_unknown_type_error(self, type_name):
         """Test UnknownTypeError is raised for unknown types"""
+        source = f"{type_name} var;"
         with pytest.raises(UnknownTypeError):
-            self.typer._type_ptype(PType(type_name, Position.default))
+            self.parse_and_type(source)
 
     def test_typing_conversion_error(self):
         """Test TypingConversionError is raised for invalid conversions"""
@@ -636,27 +638,19 @@ class TestTyperClassDeclarations:
 class TestTyperImportAndNamespaceAccess:
     """Test accessing functions, types or functions from other namespaces"""
     def setup_method(self):
-        # add empty typer just for lexer
         self.typer = Typer('test.ps', StringIO(''))
+        self.importable:list[str] = []
+        
+    def add_importable(self, source:str) -> str:
+        """Makes a new importable header with the given source and returns the namespace name"""
+        # add empty typer just for lexer
         rand_hex = randbytes(8).hex()
-        self.to_include = f"TestHeader_{rand_hex}" #adds a random hex to make sure if multiple tests are run in parallel they all have their own import
-        self.test_header = Path(__file__).parent.joinpath(f"{self.to_include}.psh")
-        # add a helper namespace header
-        self.test_header.write_text(
-            f"""
-            namespace {self.to_include};
-            
-            f32 PI;
-            
-            class SomeObject{{
-              bool BoolField;
-              f32 FloatField;
-              void VoidMethod();
-              i32 IntMethod();
-            }}
-            
-            char GetChar();
-            """, encoding='utf8')
+        namespace_name = f"TestHeader_{rand_hex}" #adds a random hex to make sure if multiple tests are run in parallel they all have their own import
+        test_header = Path(__file__).parent.joinpath(f"{namespace_name}.psh")
+        test_header.write_text(f"namespace {namespace_name};\n"+source,
+                               encoding='utf8')
+        self.importable.append(namespace_name)
+        return namespace_name
 
     def parse_and_type(self, source: str) -> PProgram:
         """Helper method to parse and type check source code"""
@@ -665,15 +659,144 @@ class TestTyperImportAndNamespaceAccess:
 
     def teardown_method(self, test_method):
         # tear down self.attribute
-        self.test_header.unlink(True)
+        for namespace_name in self.importable:
+            f = Path(__file__).parent
+            f = f.joinpath(f"{namespace_name}.psh")
+            f.unlink(True)
 
     def test_import_from_header(self):
-        source = f"import {self.to_include};"
+        to_include = self.add_importable("""
+                                    f32 PI;
+                                    
+                                    class SomeObject{
+                                        bool BoolField;
+                                        f32 FloatField;
+                                        void VoidMethod();
+                                        i32 IntMethod(i32 x);
+                                    }
+                                    
+                                    char GetChar();
+                                    """)
+        source = f"import {to_include};"
         prog = self.parse_and_type(source)
-        prog.scope.has_imported_symbol("PI")
-        prog.scope.has_imported_symbol("SomeObject")
-        prog.scope.has_imported_symbol("GetChar")
-        prog.scope.has_symbol(self.to_include)
+        assert prog.scope.has_symbol("PI")
+        assert prog.scope.has_symbol("SomeObject")
+        assert prog.scope.has_symbol("GetChar")
+        assert prog.scope.has_symbol(to_include)
+
+    def test_import_multiple_times_with_aliases(self):
+        #setup header
+        to_include = self.add_importable("""
+                                    f32 PI;
+                                    class SomeObject{}
+                                    char GetChar();
+                                    """)
+        #import it twice in the same file with various aliases
+        source = f"""
+                    import {to_include};
+                    import {to_include} as import2;
+                    import {to_include} as import3;
+                    """
+        prog = self.parse_and_type(source)
+        
+        #make sure symbols are available
+        assert prog.scope.has_symbol("PI")
+        assert not prog.scope.get_symbol("PI").is_ambiguous
+        assert prog.scope.has_symbol("SomeObject")
+        assert not prog.scope.get_symbol("SomeObject").is_ambiguous
+        assert prog.scope.has_symbol("GetChar")
+        assert not prog.scope.get_symbol("GetChar").is_ambiguous
+        assert prog.scope.has_symbol(to_include)
+        assert not prog.scope.get_symbol(to_include).is_ambiguous
+        assert prog.scope.has_symbol("import2")
+        assert prog.scope.has_symbol("import3")
+        
+        import2 = prog.scope.get_symbol("import2")
+        import3 = prog.scope.get_symbol("import2")
+        assert import2.typ == import3.typ
+
+    def test_import_with_aliases(self):
+        #setup header
+        to_include = self.add_importable("""f32 PI;""")
+        #import it twice in the same file with various aliases
+        source = f"import {to_include} as Lib;"
+        prog = self.parse_and_type(source)
+        
+        #make sure symbols are available
+        assert prog.scope.has_symbol("PI")
+        assert not prog.scope.get_symbol("PI").is_ambiguous
+        
+        pi = prog.scope.get_symbol("PI")
+        lib = prog.scope.get_symbol("Lib")
+        assert isinstance(lib.typ, NamespaceTyp)
+        lib_pi = lib.typ.fields["PI"]
+        assert isinstance(lib_pi, PVariableDeclaration)
+        assert pi == lib_pi.symbol
+
+    def test_import_multiple_times(self):
+        #setup header
+        to_include = self.add_importable("""
+                                    f32 PI;
+                                    class SomeObject{}
+                                    char GetChar();
+                                    """)
+        #import it twice in the same file
+        source = f"""
+                    import {to_include};
+                    import {to_include};
+                    """
+        prog = self.parse_and_type(source)
+        
+        #make sure symbols are available
+        assert prog.scope.has_symbol("PI")
+        assert not prog.scope.get_symbol("PI").is_ambiguous
+        assert prog.scope.has_symbol("SomeObject")
+        assert not prog.scope.get_symbol("SomeObject").is_ambiguous
+        assert prog.scope.has_symbol("GetChar")
+        assert not prog.scope.get_symbol("GetChar").is_ambiguous
+        assert prog.scope.has_symbol(to_include)
+        assert not prog.scope.get_symbol(to_include).is_ambiguous
+
+    def test_ambiguous_imported_symbols(self):
+        import1 = self.add_importable("i32 Number;")
+        import2 = self.add_importable("i32 Number;")
+        
+        source = f"""
+                    import {import1};
+                    import {import2};
+                    
+                    i32 OtherNumber = Number;
+                    """
+        with pytest.raises(SymbolAmbiguousException):
+            self.parse_and_type(source)
+        
+    def test_shadow_import(self):
+        namespace_name = self.add_importable("""
+                                    class SomeObject{
+                                        void VoidMethod();
+                                        i32 IntMethod(i32 x);
+                                    }""")
+        source = f"""
+                import {namespace_name};
+                class SomeObject{{}}
+                // This class was already defined in the imported symbols. This should be fine it can be 
+                """
+        prog = self.parse_and_type(source)
+        symbol = prog.scope.get_symbol('SomeObject')
+        #get the Class's type (get TypeTyp's pointed type)
+        classTyp = symbol.typ.typ_element
+        # Make sure 
+        assert isinstance(classTyp, ReferenceTyp)
+        assert classTyp.full_name == "Default.SomeObject"
+        assert len(classTyp.methods) == 0
+        #can find the original imported object
+        imported_symbol = prog.scope.get_symbol(namespace_name)
+        assert imported_symbol.is_namespace and isinstance(imported_symbol.typ, NamespaceTyp)
+        assert "SomeObject" in imported_symbol.typ.fields
+        imported_class = imported_symbol.typ.fields["SomeObject"]
+        assert isinstance(imported_class, PClass)
+        assert len(imported_class.methods) == 2
+        
 
 class TestTyperMethodCalls:
     """Test method calls and method chaining"""
